@@ -24,12 +24,26 @@ find . -name "._*" -not -path "./dist/*" -delete >/dev/null 2>&1 || true
 
 say "== 2. 导入冒烟 =="
 if ( cd moshan && MOSHAN_HOME="${TMPDIR:-/tmp}/moshan-check" PYTHONPATH=. python3 - <<'PY' >/dev/null 2>&1
-import paths, server, version, updater, welcome, bootstrap, launcher
+import paths, server, version, updater, welcome, bootstrap, launcher, about
 assert "/welcome" in {r.path for r in server.app.routes}
+assert "/about" in {r.path for r in server.app.routes}
 assert paths.describe()["state_dir"] != paths.describe()["library_dir"]
 assert version.is_newer("0.2.0", "0.1.0")
 PY
 ); then ok "模块导入与路由注册正常"; else bad "导入失败（先 pip install -r requirements.txt）"; fi
+
+# 更新器的资产名匹配：曾经把 (?i) 写在正则中间，Python 直接抛 PatternError，
+# 「检查更新」对所有人都是 500，而单元测试没覆盖到。这里钉死一条断言。
+if ( cd moshan && PYTHONPATH=. python3 - <<'PY' >/dev/null 2>&1
+import updater
+arm = updater._asset_pattern("macos-arm64")
+win = updater._asset_pattern("windows-x64")
+assert arm.search("Moshan-0.1.0-macos-arm64.dmg")
+assert win.search("Moshan-0.1.0-windows-x64-Setup.exe")
+assert not arm.search("Moshan-0.1.0-macos-x64.dmg")      # 架构不能串
+assert not win.search("Moshan-0.1.0-windows-x64-Setup.exe.sha256")
+PY
+); then ok "更新资产匹配规则正常"; else bad "updater 资产正则失效（检查 (?i) 的写法）"; fi
 
 say "== 3. 硬编码路径 =="
 if grep -rIl "/Users/" moshan/*.py 2>/dev/null | grep -v "ocr_runner.py" | grep -q .; then

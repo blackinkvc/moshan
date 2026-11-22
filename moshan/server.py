@@ -55,6 +55,7 @@ import brief as briefmod
 import ledger
 import transfer
 import metrics
+import sysinfo
 # import fleet as fleetmod      # 多机监控已拆成独立服务（2026-11-21），见下方挂载处注释
 import report
 import report_runner
@@ -76,7 +77,8 @@ from webdav import build_router
 #   只能靠服务端转发，还多一个常驻进程。现在直接 import 同一个模块，
 #   采样线程挂在口袋进程里，页面同源取数，8775 彻底不需要了。
 #   找不到 cuntu 目录也不报错：这台机器没装就不显示，别把口袋拖死。
-CUNTU_DIR = Path.home() / "Documents" / "cuntu"
+#   分发版默认没有 cuntu（那是作者的扩展插件集），用 MOSHAN_CUNTU 指向自己的目录即可。
+CUNTU_DIR = Path(os.environ.get("MOSHAN_CUNTU") or "~/Documents/cuntu").expanduser()
 if CUNTU_DIR.is_dir():
     sys.path.insert(0, str(CUNTU_DIR))
 try:
@@ -86,6 +88,11 @@ except Exception as _hw_err:                           # noqa: BLE001
     _HW_IMPORT_ERR = f"{type(_hw_err).__name__}: {_hw_err}"
 else:
     _HW_IMPORT_ERR = ""
+
+try:                                                   # TRAE 自报一笔 → TRAE 卡
+    import trae_work as twmod
+except Exception:                                      # noqa: BLE001
+    twmod = None
 
 CFG_PATH = paths.config_file()
 UI_PATH = BASE / "ui.html"
@@ -209,6 +216,16 @@ try:
     welcomemod.register(app, CFG, TOKEN)
 except Exception as _e:                                # noqa: BLE001
     print(f"[警告] 引导页注册失败：{_e}")
+
+# 关于 / 更新（/about）：版本、数据目录、检查并安装更新。
+# 单独成模块的理由见 about.py 顶部：ui.html 是逐字同步文件，往里加按钮会被同步覆盖，
+# 所以这里注册独立页面，并在 index() 里注入一个小入口。
+try:
+    import about as aboutmod
+    aboutmod.register(app, CFG, TOKEN)
+except Exception as _e:                                # noqa: BLE001
+    aboutmod = None                                    # type: ignore[assignment]
+    print(f"[警告] 关于页注册失败：{_e}")
 
 # 手机接入（/pair）：把「打开就能用」的链接摆出来、一键发到微信。
 # 数据仍来自 8778 的 /api/mobile/pair，这里只做展示和投递 —— 口袋常驻，
@@ -433,6 +450,8 @@ def index() -> HTMLResponse:
         ts_ip = tlsmod.tailscale_ip() or ""
         if ts_ip:
             html = html.replace("__TS_IP__", ts_ip)
+        if aboutmod is not None:                       # 角落里的「关于 / 新版本」入口
+            html = aboutmod.inject(html)
         return HTMLResponse(html, headers={
             "Cache-Control": "no-store, max-age=0",
             "Referrer-Policy": "no-referrer",       # 别让 URL 里的路径/令牌随 Referer 外流
@@ -816,6 +835,20 @@ def ocr_run() -> dict:
     threading.Thread(target=ocr_runner.run_once, args=(CFG,), daemon=True).start()
     log({"event": "ocr_manual"})
     return {"ok": True, "started": True}
+
+
+@app.get("/api/sys", dependencies=[Depends(auth)])
+def sys_now() -> dict:
+    """这台机器现在的内存 / CPU / 负载 / 开机多久（2026-11-22）。
+
+    和 /api/overview 分开是刻意的：那一条要算 token、读进程库、翻日聚合，
+    一百多 KB 起步；虫巢那边的「内存」卡片只要五个数，30 秒问一次，
+    不该为了它把整包账走一遍。实现全在 sysinfo.py，Windows 也认。
+    """
+    try:
+        return sysinfo.sample()
+    except Exception as e:                     # noqa: BLE001  量不到就说量不到
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"[:160]}
 
 
 @app.get("/api/status", dependencies=[Depends(auth)])
@@ -1302,6 +1335,69 @@ def agent_read(ns: str = "all", since: str = "7d", limit: int = 100,
                q: str = "", client: str = "") -> dict:
     return agentbus.read(dashmod._root(CFG), ns=ns, since=since,
                          limit=limit, q=q, client=client)
+
+
+@app.post("/api/trae/note", dependencies=[Depends(auth_agent)])
+async def trae_note(request: Request) -> dict:
+    """TRAE 收尾时自报一笔「这一轮干了什么」，进 **TRAE 卡**。
+
+    跟 /api/agent/event 的分工：那条进 agent 总线（给别的 agent 读），
+    这条落 `_本机工作/TRAE自述.jsonl`，由 trae_work.note_rounds() 读成逐轮记录。
+    同一 task 5 分钟内只记一次，防止模型每轮重复刷同一句。
+    """
+    if twmod is None:
+        return JSONResponse({"ok": False, "error": "cuntu/trae_work.py 没找到"},
+                            status_code=503)
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "body 不是 JSON"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "error": "body 要是对象"}, status_code=400)
+    task = " ".join(str(body.get("task") or "").split())[:80]
+    if not task:
+        return JSONResponse({"ok": False, "error": "task 必填"}, status_code=400)
+    try:
+        at = float(body.get("at") or time.time())
+    except (TypeError, ValueError):
+        at = time.time()
+    rec = {
+        "at": round(at, 1),
+        "task": task,
+        "summary": " ".join(str(body.get("summary") or "").split())[:400],
+        "project": str(body.get("project") or "").strip()[:120],
+        "source": "TRAE 自述",
+    }
+    p = Path(twmod.NOTE_PATH)
+    recent: set[str] = set()
+    if p.exists():
+        try:
+            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()[-80:]
+        except OSError:
+            lines = []
+        for ln in lines:
+            try:
+                d = json.loads(ln)
+            except ValueError:
+                continue
+            try:
+                if abs(float(d.get("at") or 0) - at) < 300:
+                    recent.add(str(d.get("task") or ""))
+            except (TypeError, ValueError):
+                continue
+    if task in recent:
+        return {"ok": True, "dup": True, "note": rec}
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except OSError as e:
+        return JSONResponse({"ok": False, "error": f"写不进去：{e}"}, status_code=500)
+    if hwmod is not None:                       # 让下一次 pulse 立刻重算，别等 20 秒
+        cache = getattr(hwmod, "_PULSE_CACHE", None)
+        if isinstance(cache, dict):
+            cache["at"] = 0.0
+    return {"ok": True, "note": rec}
 
 
 @app.get("/api/agent/brief", dependencies=[Depends(auth_agent)])

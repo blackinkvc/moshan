@@ -50,13 +50,20 @@ def platform_key() -> str:
 
 
 def _asset_pattern(key: str) -> re.Pattern:
-    """在 Release 资产名里找当前平台对应的那个。"""
+    """在 Release 资产名里找当前平台对应的那个。
+
+    忽略大小写必须用 re.IGNORECASE 标志，不能写内联 (?i)：
+    Python 只允许 (?i) 出现在表达式最开头，`a|(?i)b` 这种写法会直接抛
+    re.error: global flags not at the start of the expression。
+    这个坑真实踩过 —— 检查更新对所有人都是 500，直到有人在断网环境里试才发现。
+    """
     if key.startswith("macos"):
         arch = "arm64" if key.endswith("arm64") else "x64"
-        return re.compile(rf"(?i)macos.*{arch}.*\.(dmg|zip)$|(?i){arch}.*macos.*\.(dmg|zip)$")
+        return re.compile(
+            rf"macos.*{arch}.*\.(dmg|zip)$|{arch}.*macos.*\.(dmg|zip)$", re.IGNORECASE)
     if key.startswith("windows"):
-        return re.compile(r"(?i)windows.*(setup|installer).*\.exe$|(?i)setup.*\.exe$")
-    return re.compile(r"(?i)linux.*\.(tar\.gz|zip)$")
+        return re.compile(r"windows.*(setup|installer).*\.exe$|setup.*\.exe$", re.IGNORECASE)
+    return re.compile(r"linux.*\.(tar\.gz|zip)$", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------- HTTP
@@ -227,3 +234,78 @@ def cleanup(keep: int = 2) -> int:
         except OSError:
             pass
     return removed
+
+
+# ---------------------------------------------------------------- 命令行
+#
+# 界面里点「检查更新」走的是同一套函数；这里只是给它一个能在终端跑的壳，
+# 方便发版后自测、或在没有图形界面的机器上确认更新源是否可达。
+#
+#   python moshan/updater.py --check       只看有没有新版
+#   python moshan/updater.py --download    下载并校验，不安装
+#   python moshan/updater.py --apply       下载、校验、唤起安装包
+
+def main(argv: Optional[list] = None) -> int:
+    import argparse
+
+    ap = argparse.ArgumentParser(
+        prog="updater", description="检查 / 下载 / 安装 Moshan 更新")
+    ap.add_argument("--check", action="store_true", help="只检查是否有新版本（默认行为）")
+    ap.add_argument("--download", action="store_true", help="下载并校验，不安装")
+    ap.add_argument("--apply", action="store_true", help="下载、校验并打开安装包")
+    ap.add_argument("--repo", default="", help="覆盖更新源，形如 owner/name")
+    ap.add_argument("--timeout", type=float, default=10.0, help="网络超时秒数")
+    args = ap.parse_args(argv)
+
+    print(f"当前版本 {version.VERSION}   平台 {platform_key()}")
+    try:
+        info = check(args.repo, timeout=args.timeout)
+    except UpdateError as exc:
+        print(f"检查失败：{exc}")
+        return 1
+
+    if not info.get("has_update"):
+        print(f"已是最新（远端 {info.get('latest') or '未知'}）")
+        return 0
+
+    asset = info.get("asset") or {}
+    print(f"发现新版本 {info['latest']}（当前 {version.VERSION}）")
+    if asset:
+        size = int(asset.get("size") or 0)
+        print(f"  安装包 {asset.get('name')}  {size / 1048576:.1f} MB")
+    if info.get("notes"):
+        print("\n更新说明：")
+        print("\n".join(f"  {ln}" for ln in str(info["notes"]).splitlines()[:20]))
+
+    if not (args.download or args.apply):
+        print("\n加 --download 下载，加 --apply 直接下载并安装。")
+        return 0
+
+    if not asset:
+        print("这个版本没有当前平台的安装包。")
+        return 1
+
+    def on_progress(done: int, total: int) -> None:
+        if total <= 0:
+            return
+        pct = done * 100 // total
+        bar = "#" * (pct // 4)
+        sys.stdout.write(f"\r  [{bar:<25}] {pct:3d}%  {done / 1048576:.1f}/{total / 1048576:.1f} MB")
+        sys.stdout.flush()
+
+    try:
+        path = download(asset, on_progress=on_progress)
+    except UpdateError as exc:
+        print(f"\n下载失败：{exc}")
+        return 1
+    print(f"\n已下载并校验通过：{path}")
+
+    if args.apply:
+        print(launch_installer(path))
+    else:
+        print("要安装就把这个文件打开，或加 --apply 让脚本代劳。")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

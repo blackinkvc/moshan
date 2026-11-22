@@ -4,13 +4,13 @@
 """
 from __future__ import annotations
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 BUILD = ""          # 构建时由 CI 注入短 SHA，源码运行时为空
 CHANNEL = "stable"  # stable | beta
 
 # 更新源：GitHub Release 的 latest 资产地址。
 # 用户可在 config.json 的 update.repo 覆盖（镜像或自建）。
-DEFAULT_REPO = "pamphile0117/moshan"
+DEFAULT_REPO = "blackinkvc/moshan"
 
 
 def version_tuple(v: str = VERSION) -> tuple:
