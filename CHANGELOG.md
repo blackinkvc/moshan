@@ -26,6 +26,20 @@
   没装 cuntu 扩展时接口返回 503 并说明原因，不影响其他功能
 
 ### 修复
+- **交付版缺 `textfmt.py`，新用户装完打不开**。`article.py` 在模块顶层 `import textfmt`，
+  而这个文件只在作者的 cuntu 扩展目录里，仓库里没有；开发机上有 cuntu 所以本机永远正常，
+  CI 一跑导入冒烟就红。现已把 `textfmt.py`（纯标准库，17KB）纳入仓库，并在同步脚本里
+  加了 `EXTERNAL` 机制从 `cuntu/` 取这类文件，避免下次再漏
+- **`check.sh` 的导入冒烟只抽查 8 个模块，且用真实 HOME 跑**，所以「本地全绿、CI 全红」
+  成了常态。现在改成导入 `moshan/` 下全部 43 个模块，并把 `HOME` 指向空目录 ——
+  开发机上的 `~/Documents/cuntu` 再也掩盖不了缺文件
+- **交付版会把数据写进别人的 `~/Documents/AI项目`**：`article` / `linkbox` / `heartbeat` /
+  `metrics` / `pending` / `ocr_runner` 各自写死了开发机的目录结构，其中三处在启动时
+  `mkdir`，等于在用户的 `Documents` 里凭空造出一个中文目录。新增 `paths.data_root()`
+  作为唯一出口，分发版即资料库；`MOSHAN_CUNTU` 统一到这几个模块，Windows 的
+  cuntu 解释器路径也改对了（`Scripts/python.exe`）
+- **`metrics.py` 读的是程序目录里的 `config.json`**，打包后那个位置没有配置，
+  于是永远退化到写死路径。改用 `paths.config_file()`
 - **`updater._asset_pattern` 的正则写错**：`(?i)` 只能出现在表达式开头，写成
   `a|(?i)b` 会抛 `re.error: global flags not at the start of the expression`。
   结果「检查更新」对所有人都是 500。改用 `re.IGNORECASE`，并在 `scripts/check.sh`

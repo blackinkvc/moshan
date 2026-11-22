@@ -45,6 +45,13 @@ bash scripts/check.sh
 更新资产名匹配（防止正则写错）、硬编码家目录扫描、密钥与运行时数据、版本号一致性。
 全绿再提交。
 
+**导入冒烟为什么要把 `HOME` 换成空目录**：开发机上有 `~/Documents/cuntu`，
+交付版里几个模块会去那里拿东西（`article.py` 拿 `textfmt`）。用真实 `HOME` 跑，
+本机永远全绿，而 CI（干净的机器）直接红。空 `HOME` 才是新用户的真实处境。
+
+同类道理：**别用 `Path.home() / "Documents" / ...` 拼路径**，一律走 `paths.data_root()`，
+否则你会在别人的 `Documents` 里造出自己的目录结构。
+
 ## README 里的截图怎么更新
 
 截图放在 `docs/images/`，用真实界面截取，不要 P 图或手工改字：
