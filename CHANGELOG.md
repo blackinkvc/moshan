@@ -10,6 +10,36 @@
 - 应用内托盘图标与「退出」菜单
 - 真正的原子更新（versions/ + current 符号链接，替换正在运行的程序）
 
+## [0.2.0] - 2026-11-23
+
+### 新增
+- **关于 / 更新页 `/about`**：显示版本、构建、平台、三层数据目录，并能检查更新、
+  下载（带进度）、打开安装包。首页右下角注入一个小入口，有新版本时自动变成
+  「新版本 x.y.z」；后台每 6 小时静默查一次，等于把更新推到你眼前
+- 更新器命令行入口：`--check` / `--download` / `--apply`，发版后可在终端自测更新链路
+- `sysinfo.py`：内存 / CPU 核数 / 负载 / 开机时长 / 进程数的跨平台采集。装了 `psutil`
+  就用它，没装则分平台兜底（macOS 调 `sysctl` + `vm_stat`、Linux 读 `/proc/meminfo`、
+  Windows 用 `ctypes` 调 `GlobalMemoryStatusEx`）；量不到就返回 `null`，不编数字
+- `GET /api/sys`：轻量机器状态，供需要高频轮询的卡片使用；与偏重的 `/api/status`
+  分开，避免为了五个数把整包账算一遍
+- `POST /api/trae/note`：Agent 收尾时自报「这一轮干了什么」，同一任务 5 分钟内只记一次；
+  没装 cuntu 扩展时接口返回 503 并说明原因，不影响其他功能
+
+### 修复
+- **`updater._asset_pattern` 的正则写错**：`(?i)` 只能出现在表达式开头，写成
+  `a|(?i)b` 会抛 `re.error: global flags not at the start of the expression`。
+  结果「检查更新」对所有人都是 500。改用 `re.IGNORECASE`，并在 `scripts/check.sh`
+  里加了一条断言（用 CI 真实产出的资产名做匹配），防止再犯
+- 更新源的默认仓库地址写错（`pamphile0117/moshan` → `blackinkvc/moshan`），
+  会导致「检查更新」直接 404
+- `CUNTU_DIR` 从写死的家目录改为可被 `MOSHAN_CUNTU` 覆盖，与 `ocr_runner.py` 一致；
+  分发版没有这个扩展目录时静默跳过
+
+### 文档
+- README 重写：能力清单（标出哪些功能需要模型）、安装与首次引导、数据三层与
+  「更新不丢东西」的原因、更新流程、目录结构、构建与发版、Agent 接口、安全模型、
+  已知限制
+
 ## [0.1.0] - 2026-11-22
 
 首个可分发的版本。
