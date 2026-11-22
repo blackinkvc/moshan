@@ -27,7 +27,7 @@ jobs:
         # 需要 Intel 包时：本地在 Intel Mac 上跑 packages/macos/build.sh，
         # 或把下面的注释项解开并确认该 runner 仍然可用。
         include:
-          - runner: macos-14      # Apple Silicon
+          - runner: macos-latest  # Apple Silicon，跟随当前受支持镜像
             arch: arm64
           # - runner: macos-13      # Intel（退役中，谨慎启用）
           #   arch: x64
