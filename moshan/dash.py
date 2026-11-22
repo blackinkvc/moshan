@@ -2041,9 +2041,14 @@ def _collapse(items: list[dict]) -> list[dict]:
 
 _WB_HOME = Path.home() / ".workbuddy"
 _WB_SESSIONS = _WB_HOME / "projects"
-# Cherry Studio 用 SQLite 存对话，比 jsonl 还好读：一张 message 表就是一本账
-_CHERRY_DB = (Path.home() / "Library" / "Application Support"
-              / "CherryStudio" / "Data" / "cherrystudio.sqlite")
+# Cherry Studio 用 SQLite 存对话，比 jsonl 还好读：一张 message 表就是一本账。
+# 库在哪按平台找 —— macOS 在 Application Support，Windows 在 %APPDATA%，
+# Linux 在 ~/.config。以前只写了 macOS 那一条，别的系统上这格永远是空的。
+_CHERRY_REL = (
+    ("Library", "Application Support", "CherryStudio", "Data", "cherrystudio.sqlite"),
+    ("AppData", "Roaming", "CherryStudio", "Data", "cherrystudio.sqlite"),
+    (".config", "CherryStudio", "Data", "cherrystudio.sqlite"),
+)
 _WL_HOST_DAYS = 2            # 回溯几天：面板只关心最近，整本旧账翻出来没意义
 _WL_HOST_LIMIT = 80          # 本机那格给页面的条数（一天四十轮会话很正常，别卡在 40）
 _WL_SESSION_TAIL = 64 * 1024 * 1024   # 单个会话文件的读取上限（实测 55MB 全解 0.2s）
@@ -2230,7 +2235,7 @@ def _new_req(ts: float, cwd: str) -> dict:
     """一轮请求的空白账页。字段名就是前端认的那几个，加一家客户端不用改前端。"""
     return {"t0": ts, "t1": ts, "ask": "", "model": "", "cwd": cwd, "files": [],
             "calls": 0, "steps": [], "steps_n": 0, "mcp": {},
-            "mode": "", "expert": "", "skills": [],
+            "mode": "", "expert": "", "skills": [], "note": "",
             "tin": 0, "tout": 0, "cached": 0}
 
 
@@ -2459,6 +2464,11 @@ def _req_item(b: dict, rid: str, client: str, tag: str,
     else:
         secs = _secs(start, end)
     bits = []
+    # 「这一轮干完是什么结果」排最前：Trae 的会话记忆自带 outcome 一句话，
+    # 比「几步、动了哪些文件」更像人话。没有这一项（别的客户端）就跳过。
+    note = " ".join(str(b.get("note") or "").split())
+    if note:
+        bits.append(_clip(note, 60))
     # 「用什么方式干的」排最前：同样是改一个文件，Agent 模式下一步步试错、
     # Plan 模式下先给方案、Ask 模式压根没动手 —— 事后看账，这比文件名更能
     # 解释「为什么花了 20 步」。专家同理：同一条任务换了人做，结论不同。
@@ -2696,11 +2706,17 @@ def _cherry_items(since_ms: float) -> list[dict]:
     话题先按「窗口内有消息」筛出来，再把整段消息读全 —— 否则一条
     聊了三天的长对话，任务名会变成中间某句话。
     """
-    if not _CHERRY_DB.exists():
+    dbs: list[Path] = []
+    for h in _home_dirs():
+        for rel in _CHERRY_REL:
+            p = h.joinpath(*rel)
+            if p.exists() and p not in dbs:
+                dbs.append(p)
+    if not dbs:
         return []
     con = None
     try:
-        con = sqlite3.connect(_CHERRY_DB.as_uri() + "?mode=ro", uri=True, timeout=1.5)
+        con = sqlite3.connect(dbs[0].as_uri() + "?mode=ro", uri=True, timeout=1.5)
         con.row_factory = sqlite3.Row
         rows = con.execute(
             "select topic_id, role, data, model_id, created_at, status from message "
@@ -2894,13 +2910,104 @@ def _claude_items(since_ms: float) -> list[dict]:
     return out
 
 
+# —— Trae：memory/projects 下的会话记忆 ————————————————————————
+# 这里原先写着「Trae 读不了」：对话在云端，database.db 是私有格式。
+# 那句话只说对了一半 —— 对话正文确实在加密库里，但 Trae 自己每轮会往
+#   <家目录>/.trae-cn/memory/projects/<项目>/<yyyymmdd>/session_memory_*.jsonl
+# 写一行明文记忆：intent / actions / outcome / message_summary_time。
+# 「这一轮想干什么、做了哪几步、结果如何」都在里面，比事后猜改了哪些文件准。
+#
+# 两个目录都看：.trae-cn 是国内版，.trae 是国际版。Windows 上还得扫
+# C:\Users\* —— 中台常以服务身份跑，Path.home() 会指到 systemprofile，
+# 那里当然没有任何人的 Trae 数据。
+_TRAE_DIRS = (".trae-cn", ".trae")
+
+
+def _home_dirs() -> list[Path]:
+    """这台机器的家目录候选。Windows 服务账号下 Path.home() 是错的，
+    得按 C:\\Users\\* 扫一遍 —— 和 agent_link 那份同源，别各写一套。"""
+    try:
+        from agent_link import homes
+        return list(homes())
+    except Exception:                    # noqa: BLE001
+        return [Path.home()]
+
+
+def _trae_roots() -> list[Path]:
+    out: list[Path] = []
+    for h in _home_dirs():
+        for d in _TRAE_DIRS:
+            p = h / d / "memory" / "projects"
+            if p.is_dir():
+                out.append(p)
+    return out
+
+
+def _trae_ts(v) -> float:
+    """'2026-11-23 02:12:06' → 毫秒。按本地时间算，和卡片上显示的口径一致。"""
+    try:
+        return datetime.strptime(str(v or "")[:19],
+                                 "%Y-%m-%d %H:%M:%S").timestamp() * 1000
+    except (ValueError, TypeError, OSError):
+        return 0.0
+
+
+def _trae_items(since_ms: float) -> list[dict]:
+    """Trae 这些天的会话记忆，一轮一条。只读，不动它的目录。
+
+    单个文件坏掉就跳过那一份：卡片不该因为一行半截的 json 整块空掉。
+    记忆行里没有文件级信息，所以 steps 用 actions 顶（点开一行看到的就是
+    「它当时自己记下的几步」），files 留空 —— 不编。
+    """
+    out: list[dict] = []
+    for root in _trae_roots():
+        try:
+            files = list(root.glob("*/*/session_memory_*.jsonl"))
+        except OSError:
+            continue
+        for p in files:
+            try:
+                if p.stat().st_mtime * 1000 < since_ms:
+                    continue
+                text = p.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for line in text.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    o = json.loads(line)
+                except (ValueError, TypeError):
+                    continue
+                if not isinstance(o, dict):
+                    continue
+                ts = _trae_ts(o.get("message_summary_time"))
+                if not ts or ts < since_ms:
+                    continue
+                intent = " ".join(str(o.get("intent") or "").split())
+                acts = [" ".join(str(a).split()) for a in (o.get("actions") or []) if a]
+                if not intent and not acts:
+                    continue
+                mid = str(o.get("message_id") or p.stem)
+                b = _new_req(ts, "")
+                b["t1"] = ts
+                b["ask"] = _clip(intent or acts[0], 320)
+                b["note"] = " ".join(str(o.get("outcome") or "").split())
+                b["calls"] = len(acts) or 1
+                b["steps"] = [(ts, a) for a in acts][:_WL_STEPS_MEM]
+                b["steps_n"] = len(acts)
+                b["sid"] = p.stem
+                it = _req_item(b, mid, "TRAE", "tr" + mid[:8])
+                if it:
+                    out.append(it)
+    return out
+
+
 # 客户端注册表：加一个新客户端＝加一行 + 一个取数函数。
 # 不在 _worklog 里写 if 分支 —— 那样「以后换成 Trae / Cursor」就得改核心逻辑。
 #
 # 没登记的客户端及原因（别为了凑数编数据）：
-#   Trae    —— 对话在云端，本地 globalStorage 里只有 chat-suggest 缓存，
-#              没有「哪一轮改了什么文件」的记录（ModularData/ai-agent/database.db
-#              是私有格式，不是 SQLite，读不了）。
 #   Codex / Cursor —— 本机还没装。Codex 的 rollout jsonl 塞在
 #              ~/.codex/sessions/年/月/日/ 下，结构不同，装上后照 _cli_reqs
 #              再写一个翻译层即可（_req_item 那一份不用动）。
@@ -2908,6 +3015,7 @@ _CLIENTS = (
     ("WorkBuddy", _wb_items),
     ("Cherry Studio", _cherry_items),
     ("Claude Code", _claude_items),
+    ("TRAE", _trae_items),
 )
 
 

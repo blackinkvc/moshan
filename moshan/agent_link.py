@@ -124,6 +124,11 @@ def _homes() -> list[Path]:
     return uniq
 
 
+# 公开别名：本机工作那边也要认这几个家目录（Windows 服务账号下 Path.home()
+# 指到 systemprofile，扫不到真人的数据）。同一份逻辑，别再抄第二遍。
+homes = _homes
+
+
 def _expand(spec) -> list[Path]:
     if isinstance(spec[0], (list, tuple)):
         spec = spec[0]
