@@ -38,13 +38,32 @@ MOSHAN_HOME=/tmp/moshan-dev MOSHAN_NO_BROWSER=1 .venv/bin/python moshan/launcher
 ## 提交前自检
 
 ```bash
-python -m compileall -q moshan
-cd moshan && MOSHAN_HOME=/tmp/moshan-ci PYTHONPATH=. python -c "
-import paths, server
-print(len(server.app.routes), '条路由')
-assert '/welcome' in {r.path for r in server.app.routes}
-"
+bash scripts/check.sh
 ```
+
+它和 CI 的检查项一致：语法、导入冒烟（含 `/welcome`、`/about` 路由）、
+更新资产名匹配（防止正则写错）、硬编码家目录扫描、密钥与运行时数据、版本号一致性。
+全绿再提交。
+
+## README 里的截图怎么更新
+
+截图放在 `docs/images/`，用真实界面截取，不要 P 图或手工改字：
+
+| 文件 | 内容 | 拍法 |
+|---|---|---|
+| `01-files.png` | 主界面（资料库根目录） | 1280×720 视口、`deviceScaleFactor: 2` |
+| `02-upload.png` | 「入库」标签页 | 同上，点底部「入库」 |
+| `03-about-update.png` | `/about` 关于页 | 同上，访问 `?k=<令牌>` |
+| `04-welcome.png` | `/welcome` 引导页 | 同上，免令牌 |
+| `05-mobile.png` | 手机窄屏 | 390×844、`deviceScaleFactor: 3`、`isMobile` |
+
+做法：用一个**临时**数据目录（`MOSHAN_HOME=/tmp/moshan-shot`）放几份示例文件，
+启动服务后用 Playwright 截图，再 `sips -Z 1600` 缩到目标宽度。
+**不要拿真实资料库截图**——路径、文件名会带出个人信息。
+
+`docs/images/logo.svg` 是手写的：一座黑色小山（主峰 + 一道压淡的远山），坐在纸色圆角底卡上。
+底卡不是装饰——纯黑剪影在 GitHub 深色模式下会整块消失，有底卡才留得住形状。
+换色只改两个 `fill`，别去掉底卡。
 
 ## 版本与发布
 

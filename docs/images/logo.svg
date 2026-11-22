@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" role="img" aria-label="Moshan">
+  <!-- 墨山：一座黑色小山，坐在纸色底卡上。
+       底卡是为了深色模式——纯黑剪影在深底上会看不见。 -->
+  <rect x="1" y="1" width="94" height="94" rx="21" fill="#f4f1ea" stroke="#23231f" stroke-opacity=".12" stroke-width="2"/>
+  <path d="M20 54 L40 31 L49 41 L56 33 L76 54 Z" fill="#23231f" opacity=".16"/>
+  <path d="M13 74 L40 38 L51 53 L60 42 L83 74 Z" fill="#23231f"/>
+</svg>

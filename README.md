@@ -1,15 +1,32 @@
-# 墨山中台 · Moshan
+<div align="center">
 
-[![Release](https://img.shields.io/github/v/release/blackinkvc/moshan?label=release)](https://github.com/blackinkvc/moshan/releases)
-[![Build](https://img.shields.io/github/actions/workflow/status/blackinkvc/moshan/build.yml?label=build)](https://github.com/blackinkvc/moshan/actions)
-[![License](https://img.shields.io/github/license/blackinkvc/moshan)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)
+<img src="docs/images/logo.svg" width="88" height="88" alt="Moshan">
 
-**把一台电脑变成你自己的中台。** 装完双击打开，浏览器里就是一个界面：手机往电脑传文件、
-电脑把文件分享给朋友、随手把网页存下来读、需要时让本地模型帮你看文件回答问题。
+<h1>墨山中台 · Moshan</h1>
 
-没有账号，没有云端，没有遥测。**程序、状态、资料库三层物理分离**，所以换版本、覆盖安装、
-重装都不会动你的设置和文件 —— 这不是靠代码小心，是目录结构决定的。
+<b>把一台电脑，变成你自己的中台</b>
+
+<sub>文件管理 · 手机传文件 · 分享给朋友 · 网页存档 · 本地模型对话<br>
+全部在这台电脑上跑，数据不出门</sub>
+
+<br>
+
+<a href="https://github.com/blackinkvc/moshan/releases/latest"><img src="https://img.shields.io/badge/下载-macOS%20%7C%20Windows-2b4b6f?style=for-the-badge" alt="下载"></a>
+<img src="https://img.shields.io/github/v/release/blackinkvc/moshan?style=flat-square&label=版本" alt="版本">
+<img src="https://img.shields.io/github/actions/workflow/status/blackinkvc/moshan/build.yml?style=flat-square&label=构建" alt="构建">
+<img src="https://img.shields.io/badge/许可-MIT-6b6a62?style=flat-square" alt="MIT">
+<img src="https://img.shields.io/badge/数据-不出本机-2f7d54?style=flat-square" alt="数据不出本机">
+
+</div>
+
+<img src="docs/images/01-files.png" width="100%" alt="文件管理主界面">
+
+> **不装 AI 也能用。** 文件、传输、分享、回收站、网页存档都不依赖模型；
+> 模型只负责「对话」和「读文件问问题」，没有它这部分降级，其余照常。
+
+**三层目录物理分离**是这项目最重要的设计：程序 / 状态 / 资料库各放一处，
+覆盖安装只替换「程序」，所以升级、重装都不会动你的设置和文件 ——
+不是靠代码小心，是目录结构决定的。
 
 > 中文名「墨山中台」，英文名 Moshan（拼音，无同名软件）。
 
@@ -110,6 +127,8 @@
 
 > 引导页本身免令牌，但仍受网络守卫保护：只对本机与 Tailscale 来源开放。
 
+<img src="docs/images/04-welcome.png" width="100%" alt="首次启动的三步引导">
+
 ---
 
 ## 界面怎么用
@@ -129,14 +148,31 @@
 - 令牌丢了：看状态目录里的 `config.json`（`token` 字段），或跑
   `python moshan/show_token.py`，它会把地址、令牌、证书、WebDAV 状态一起打出来。
 
-界面左侧是文件区，右侧可以开对话。上传、下载、分享、回收站都在顶栏；
-「分享」生成的链接自带有效期，过期自动失效。
+### 底部五个标签
+
+| 标签 | 干什么 |
+|---|---|
+| **文件** | 浏览、上传、下载、重命名、移动到、打包下载、生成带有效期的分享链接、回收站 |
+| **入库** | 粘一条链接抓成存档；或把手机上的文件直接发到这台电脑 |
+| **阅读** | 抓下来的网页正文，在这里读 |
+| **对话** | 接本机模型或任意 OpenAI 兼容端点，能带着收件箱里的文件问问题 |
+| **归整** | 去重清单：挑出重复的图与文件，留一份，其余移入回收站 |
+
+顶部是当前路径（面包屑）与磁盘可用空间，行尾「…」是这一行文件的操作菜单。
+
+<p align="center">
+  <img src="docs/images/05-mobile.png" width="300" alt="手机端界面">
+  <br>
+  <sub>手机打开同一个地址，界面自动收成单列</sub>
+</p>
+
+<img src="docs/images/02-upload.png" width="100%" alt="入库：粘链接存档，或把手机文件发到电脑">
 
 ---
 
 ## 数据放在哪（也是「更新不丢东西」的原因）
 
-| 层 | macOS | Windows | 装什么 | 更新时 |
+| 哪一层 | macOS | Windows | 里面装什么 | 更新时 |
 |---|---|---|---|---|
 | **程序** | `/Applications/Moshan.app` | `%LOCALAPPDATA%\Programs\Moshan` | 代码与运行时 | 整体替换 |
 | **状态** | `~/Library/Application Support/Moshan` | `%APPDATA%\Moshan` | 配置、令牌、证书、日志、下载缓存 | **不动** |
@@ -163,6 +199,8 @@
 3. **校验不一致立刻丢弃**，不会让你装上一个损坏或被替换的包
 4. 校验通过 → 点「打开安装包」，按系统流程覆盖安装
 5. 装完重开，配置与文件原样
+
+<img src="docs/images/03-about-update.png" width="100%" alt="关于页：版本、数据目录、检查更新">
 
 下载的包留在状态目录的 `updates/` 下（只保留最近两个），所以「今天下载、明天再装」
 也不会白下。命令行同样能查：
