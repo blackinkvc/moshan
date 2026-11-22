@@ -10,6 +10,40 @@
 - 应用内托盘图标与「退出」菜单
 - 真正的原子更新（versions/ + current 符号链接，替换正在运行的程序）
 
+## [0.2.1] - 2026-11-23
+
+**这个版本修的是 0.2.0 的一个致命问题：安装版里所有 https 请求都会失败。**
+装过 0.2.0 的人没法靠「检查更新」升上来（坏的正是这条链路本身），需要手动重新下载 0.2.1。
+
+### 新增
+- `netca.py`：启动最早期把 `SSL_CERT_FILE` 指向随包分发的 certifi，给整个进程
+  建立可信的 HTTPS 信任链。打包入口 `launcher.py` 与 `server.py` 都会调用，
+  两种启动方式行为一致
+- `scripts/check.sh` 增加「网络信任链」一节：断言 certifi 已安装、`netca.install()`
+  确实选中它、`ssl.create_default_context()` 里装进了根证书（离线可跑，不需要发请求）
+- 下载元数据增加 `verified` 字段。GitHub 没回 `digest` 时界面不再谎称「已校验通过」，
+  改为如实提示「未做完整性校验」
+
+### 修复
+- **安装版 https 全线失效**：PyInstaller 打出来的应用用自己的 OpenSSL，默认 CA 路径
+  （macOS 上是 Homebrew 那种 `/usr/local/etc/openssl@3/cert.pem`）在别人机器上不存在，
+  于是 `urllib.request.urlopen()` 一律抛
+  `CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate`。
+  影响的不只是「检查更新」——抓网页、存图、装插件（共 12 处 `urlopen`）全都用不了。
+  **源码态完全复现不出来**：本机有 `/etc/ssl/cert.pem`、site-packages 里也有 certifi，
+  所以本地自检、CI、手工验证全是绿的。0.2.0 就是这样发出去的
+- `requirements.txt` 显式加 `certifi`，`packages/moshan.spec` 显式收它的数据文件。
+  以前它是 httpx 的间接依赖，代码里没人 import 它，PyInstaller 就不会带进包
+- `version.version_tuple()` 会剥掉 `v` 前缀。Git tag 与 `release.json` 都带 `v`，
+  1.x 版本上会被解析错（`v1.2.3` → `0.2.3`），此前只是因为 0.x 才侥幸没出事
+- CI 生成的 `release.json` 里 `version` 改为不带 `v`；原先把 tag 名原样写进去，
+  谁拿它跟 `version.VERSION` 比较都会出岔子
+
+### 说明
+- Release 附件只有 dmg / exe / `release.json`，**不再单独发 `.sha256` 文件**。
+  校验值在 `release.json` 和 GitHub API 每个资产的 `digest` 字段里（两者同源同值，
+  0.2.0 的 dmg 实测三方一致），更新器读的是后者。单独一个 `.sha256` 附件只是噪音
+
 ## [0.2.0] - 2026-11-23
 
 ### 新增
