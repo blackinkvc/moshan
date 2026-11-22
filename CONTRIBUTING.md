@@ -1,11 +1,23 @@
 # 参与开发
 
+## 从开发目录同步
+
+日常开发在本机另一个目录里进行，改完用 `bash scripts/sync-from-dev.sh` 搬进来。
+它做了三方合并，不会覆盖交付版的跨平台移植补丁。完整说明见
+[`docs/SYNC.md`](docs/SYNC.md)。
+
+```bash
+bash scripts/sync-from-dev.sh --dry-run   # 预演
+bash scripts/sync-from-dev.sh             # 同步 + 语法检查
+```
+
 ## 目录约定
 
 ```
 moshan/            业务代码，平铺模块。新增模块直接在 moshan/ 下加 .py，
                  其它模块用 `import 模块名` 引用（不要写成包内相对导入）。
 packages/        打包相关，与运行时代码无关
+scripts/         同步、自检、升版本、ExFAT 修复等工具
 .github/         CI 与发布
 ```
 

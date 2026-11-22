@@ -22,6 +22,10 @@ certs/
 shares.json
 welcome.done
 
+# 同步机制的本地产物（scripts/sync-from-dev.sh）
+.sync-baseline/
+.sync-conflicts/
+
 # 系统垃圾
 .DS_Store
 ._*
