@@ -1,0 +1,12 @@
+# Moshan 运行时依赖（精确锁定，保证构建可复现）
+# 只保留代码真实 import 的包：日志用标准库 + JSONL，HTTP 客户端统一 httpx。
+fastapi==0.110.0
+uvicorn[standard]==0.29.0
+httpx==0.27.0
+pyyaml==6.0.1
+pypdf==4.2.0
+beautifulsoup4==4.12.3
+# 必需：server.py 有 4 处「上传文件」路由用 UploadFile/File，
+# FastAPI 解析 multipart 表单依赖它。缺这个包时导入 server 直接抛
+# RuntimeError: Form data requires "python-multipart" to be installed。
+python-multipart==0.0.32

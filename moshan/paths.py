@@ -1,0 +1,100 @@
+"""Moshan 的目录约定 —— 程序、状态、资料库三者物理分离。
+
+为什么要分三层：
+  * 程序目录（app_dir）随更新整体替换，用户不可写也不该写；
+  * 状态目录（state_dir）放配置、证书、日志、版本缓存，属于「软件自己」；
+  * 资料库目录（library_dir）放用户的文件、工作台页面、收件箱、回收站，属于「用户」。
+
+更新只替换程序目录，另两者永不触碰 —— 这是「更新后设置和文件不丢」的实现基础。
+"""
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+APP_NAME = "Moshan"
+APP_DISPLAY_NAME = "墨山中台"
+
+# 数据根可在启动前用环境变量覆盖，便于测试与多开
+ENV_HOME = "MOSHAN_HOME"
+
+
+def app_dir() -> Path:
+    """程序目录（只读）。PyInstaller 打包后指向解包资源目录；源码运行时是 moshan/。"""
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            return Path(meipass)
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def resource(*parts: str) -> Path:
+    """程序目录下的只读资源（ui.html、默认皮肤、安装器脚本等）。"""
+    return app_dir().joinpath(*parts)
+
+
+def state_dir() -> Path:
+    """状态目录：配置、证书、日志、版本缓存。"""
+    override = os.environ.get(ENV_HOME)
+    if override:
+        return Path(override).expanduser().resolve() / "state"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / APP_NAME
+    if os.name == "nt":
+        base = os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming")
+        return Path(base) / APP_NAME
+    return Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / APP_NAME.lower()
+
+
+def library_dir() -> Path:
+    """资料库目录：用户可见的文件区（工作台、收件箱、回收站都在这里）。"""
+    override = os.environ.get(ENV_HOME)
+    if override:
+        return Path(override).expanduser().resolve() / "library"
+    return Path.home() / "Documents" / APP_NAME
+
+
+def config_file() -> Path:
+    return state_dir() / "config.json"
+
+
+def log_dir() -> Path:
+    return state_dir() / "logs"
+
+
+def versions_dir() -> Path:
+    return state_dir() / "versions"
+
+
+def certs_dir() -> Path:
+    return state_dir() / "certs"
+
+
+def workbench_dir() -> Path:
+    """工作台：页面产物、外观设置、壁纸、第三方插件清单。位于资料库内，跟着用户数据走。"""
+    return library_dir() / "_工作台"
+
+
+def ensure_layout() -> None:
+    """首次启动时把需要的目录建出来（幂等）。"""
+    for d in (
+        state_dir(), log_dir(), versions_dir(), certs_dir(),
+        library_dir(), workbench_dir(),
+        workbench_dir() / "wallpapers",
+        library_dir() / "收件箱",
+        library_dir() / ".回收站",
+    ):
+        d.mkdir(parents=True, exist_ok=True)
+
+
+def describe() -> dict:
+    """给「关于」页与日志用的一览。"""
+    return {
+        "app_dir": str(app_dir()),
+        "state_dir": str(state_dir()),
+        "library_dir": str(library_dir()),
+        "config": str(config_file()),
+        "frozen": bool(getattr(sys, "frozen", False)),
+    }

@@ -1,0 +1,200 @@
+name: build
+
+# 产物只在打 tag 时发布；平时推代码只跑检查，不浪费构建时间。
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "手动构建的版本号（仅用于产物命名，不创建 Release）"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  # ------------------------------------------------------------ macOS
+  macos:
+    name: macOS (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 只构建 Apple Silicon。Intel runner（macos-13）已被 GitHub 列入退役计划，
+        # 放进矩阵会让整个发布流程因「runner 不存在」而失败。
+        # 需要 Intel 包时：本地在 Intel Mac 上跑 packages/macos/build.sh，
+        # 或把下面的注释项解开并确认该 runner 仍然可用。
+        include:
+          - runner: macos-14      # Apple Silicon
+            arch: arm64
+          # - runner: macos-13      # Intel（退役中，谨慎启用）
+          #   arch: x64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install -q --upgrade pip
+          python -m pip install -q -r requirements-dev.txt
+
+      - name: 语法检查
+        run: python -m compileall -q moshan
+
+      - name: PyInstaller 打包
+        run: |
+          pyinstaller --noconfirm --clean --distpath dist --workpath build packages/moshan.spec
+
+      - name: ad-hoc 签名
+        run: |
+          codesign --force --deep --sign - dist/Moshan.app || true
+          codesign --verify --deep --strict --verbose=2 dist/Moshan.app || true
+
+      - name: 读取版本
+        id: ver
+        run: |
+          V=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' moshan/version.py | head -1)
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: 制作 dmg
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          STAGE=$(mktemp -d)
+          cp -R dist/Moshan.app "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "Moshan ${V}" -srcfolder "$STAGE" -ov -format UDZO \
+            "dist/Moshan-${V}-macos-${{ matrix.arch }}.dmg"
+          rm -rf "$STAGE"
+          shasum -a 256 "dist/Moshan-${V}-macos-${{ matrix.arch }}.dmg" | awk '{print $1}' > "dist/dmg.sha256"
+          cat "dist/dmg.sha256"
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: moshan-macos-${{ matrix.arch }}
+          path: |
+            dist/Moshan-*-macos-${{ matrix.arch }}.dmg
+            dist/dmg.sha256
+          if-no-files-found: error
+
+  # ------------------------------------------------------------ Windows
+  windows:
+    name: Windows (x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装 Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: 构建（含安装程序）
+        shell: pwsh
+        run: |
+          $env:ISCC = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          ./packages/windows/build.ps1
+
+      - name: 输出校验值
+        shell: pwsh
+        run: |
+          $f = Get-ChildItem dist\*-windows-x64-Setup.exe | Select-Object -First 1
+          (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower() | Out-File -Encoding ascii dist\setup.sha256
+          Get-Content dist\setup.sha256
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: moshan-windows-x64
+          path: |
+            dist/*-windows-x64-Setup.exe
+            dist/setup.sha256
+          if-no-files-found: error
+
+  # ------------------------------------------------------------ Release
+  release:
+    name: 发布 Release
+    needs: [macos, windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 收集产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: 生成 release.json（更新器读它）
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          root = pathlib.Path("artifacts")
+          assets = {}
+          for f in sorted(root.iterdir()):
+              if not f.is_file():
+                  continue
+              low = f.name.lower()
+              if low.endswith(".dmg"):
+                  key = "macos-arm64" if "arm64" in low else "macos-x64"
+              elif low.endswith(".exe"):
+                  key = "windows-x64"
+              else:
+                  continue
+              assets[key] = {
+                  "name": f.name,
+                  "size": f.stat().st_size,
+                  "sha256": hashlib.sha256(f.read_bytes()).hexdigest(),
+              }
+          out = {
+              "version": os.environ["VERSION"],
+              "min_from": "0.1.0",
+              "assets": assets,
+              "notes": "见 Release 说明",
+          }
+          pathlib.Path("artifacts/release.json").write_text(
+              json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+          print(json.dumps(out, ensure_ascii=False, indent=2))
+          PY
+        env:
+          VERSION: ${{ github.ref_name }}
+
+      - name: 发布
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*.dmg
+            artifacts/*.exe
+            artifacts/release.json
+          draft: false
+          generate_release_notes: true
+          body: |
+            ## 安装
+
+            下载与你的系统对应的文件：
+
+            | 系统 | 文件 |
+            |---|---|
+            | macOS（Apple 芯片 M1/M2/M3/M4） | `Moshan-*-macos-arm64.dmg` |
+            | macOS（Intel） | `Moshan-*-macos-x64.dmg` |
+            | Windows 10/11 64 位 | `Moshan-*-windows-x64-Setup.exe` |
+
+            **macOS 首次打开**：安装包没有 Apple 开发者签名，双击若提示「无法验证开发者」，
+            请在「访达」里**右键点 Moshan → 打开**，或到「系统设置 → 隐私与安全性」点「仍要打开」。
+            这是未签名应用的系统行为，不是安装包损坏。
+
+            **更新不会丢数据**：程序装在应用目录，你的配置在
+            `~/Library/Application Support/Moshan`，文件在 `~/Documents/Moshan`。
+            覆盖安装只替换程序，另两个目录不动。
+
+            ### 校验
+            `release.json` 里有每个包的 sha256，可用 `shasum -a 256 <文件>` 核对。

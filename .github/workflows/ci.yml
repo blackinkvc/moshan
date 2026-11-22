@@ -1,0 +1,71 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install -q --upgrade pip
+          python -m pip install -q -r requirements.txt
+
+      - name: 语法检查
+        run: python -m compileall -q -x '(^|/)\._' moshan
+
+      - name: 导入冒烟测试（隔离数据目录）
+        env:
+          MOSHAN_HOME: ${{ runner.temp }}/moshan-ci
+          MOSHAN_NO_BROWSER: "1"
+        run: |
+          cd moshan
+          PYTHONPATH=. python - <<'PY'
+          import paths, version, updater, welcome, bootstrap, launcher
+          import server
+
+          # 目录三层必须分离
+          d = paths.describe()
+          assert d["state_dir"] != d["library_dir"], "状态目录与资料库不应是同一个"
+          assert d["app_dir"] != d["state_dir"], "程序目录与状态目录不应是同一个"
+
+          # 引导页路由必须注册上
+          routes = {r.path for r in server.app.routes if getattr(r, "path", "")}
+          for need in ("/welcome", "/welcome/status", "/welcome/pull", "/welcome/finish"):
+              assert need in routes, f"缺少路由 {need}"
+
+          # 版本比较的边界
+          assert version.is_newer("0.2.0", "0.1.0")
+          assert not version.is_newer("0.1.0", "0.1.0")
+          assert not version.is_newer("0.1.0-beta.1", "0.1.0"), "预发布不应比正式版新"
+
+          print("冒烟测试通过：", version.version_line())
+          print("目录：", d)
+          PY
+
+      - name: 仓库不得含密钥
+        run: |
+          test ! -f .env || (echo ".env 不应提交" && exit 1)
+          # 只匹配真正的 PEM 私钥头（带破折号），避免把本文件里的检测规则自身匹配进去
+          ! grep -RIl --exclude-dir=.git --exclude-dir=dist \
+            -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' . \
+            || (echo "疑似密钥入库" && exit 1)
+          ! grep -RIl --exclude-dir=.git --exclude-dir=dist \
+            -e '/Users/pamphile' moshan/ \
+            || (echo "代码里仍有写死的家目录路径" && exit 1)
+
+      - name: 版本号一致性
+        run: |
+          V1=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' moshan/version.py | head -1)
+          test -n "$V1" || (echo "version.py 里没有 VERSION" && exit 1)
+          echo "版本：$V1"

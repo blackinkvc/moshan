@@ -1,0 +1,29 @@
+# 构建与本地环境
+.venv/
+.venv-build/
+__pycache__/
+*.pyc
+*.pyo
+build/
+dist/
+*.egg-info/
+
+# 产物
+*.dmg
+*.exe
+*.msi
+*.zip
+
+# 运行时数据（绝不提交）
+config.json
+*.log
+*.jsonl
+certs/
+shares.json
+welcome.done
+
+# 系统垃圾
+.DS_Store
+._*
+Thumbs.db
+desktop.ini
