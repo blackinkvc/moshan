@@ -525,6 +525,22 @@ def _trae_memory_dirs(root: Path) -> list[Path]:
     return out
 
 
+def _mem_ts(d: dict, fallback: float) -> float:
+    """这一轮的真实时间（秒）。
+
+    行里带着 message_summary_time 就用它。以前整份 jsonl 的每一行都拿文件
+    mtime 当时间 —— 一个会话文件里写着几十轮历史，于是它们全撞在同一秒
+    （EVO 上 60 条记录只剩两个时间，卡片看着像假的）。读不到才退 mtime。
+    """
+    raw = str(d.get("message_summary_time") or "").strip()[:19]
+    if raw:
+        try:
+            return datetime.strptime(raw, "%Y-%m-%d %H:%M:%S").timestamp()
+        except (ValueError, OSError):
+            pass
+    return fallback
+
+
 def _import_trae(root: Path, days: int) -> dict:
     """memory/projects/<项目>/<yyyymmdd>/session_memory_*.jsonl → 中台事件。
 
@@ -588,6 +604,7 @@ def _import_trae(root: Path, days: int) -> dict:
                             mtime = f.stat().st_mtime
                         except OSError:
                             mtime = time.time()
+                        tsec = _mem_ts(d, mtime)
                         text = outcome
                         if learned:
                             text = (text + ("\n" if text else "") + "学到：" +
@@ -595,7 +612,7 @@ def _import_trae(root: Path, days: int) -> dict:
                         rec = {
                             "ns": "工作", "type": "task", "src": "agent_link",
                             "id": f"trae-mem-{key}",
-                            "ts": int(mtime * 1000),
+                            "ts": int(tsec * 1000),
                             "title": (intent or outcome or "（Trae 没写意图）")[:120],
                             "text": text,
                             "data": {"agent": "TRAE", "session": sid,
@@ -610,7 +627,7 @@ def _import_trae(root: Path, days: int) -> dict:
                         imported += int(r.get("written") or 0)
                         dup += int(r.get("dup") or 0)
                         projects.add(proj.name)
-                        at = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+                        at = datetime.fromtimestamp(tsec).strftime("%Y-%m-%d %H:%M:%S")
                         day_s = f"{day.name[:4]}-{day.name[4:6]}-{day.name[6:]}"
                         wl_recs.append({
                             "id": f"tr-{key}",

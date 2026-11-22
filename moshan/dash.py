@@ -2925,12 +2925,22 @@ _TRAE_DIRS = (".trae-cn", ".trae")
 
 def _home_dirs() -> list[Path]:
     """这台机器的家目录候选。Windows 服务账号下 Path.home() 是错的，
-    得按 C:\\Users\\* 扫一遍 —— 和 agent_link 那份同源，别各写一套。"""
+    得按 C:\\Users\\* 扫一遍 —— 和 agent_link 那份同源，别各写一套。
+
+    两个名字都认：`homes` 是新公开名，`_homes` 是老名字。机器上跑着的
+    agent_link 不一定是同一个版本（升级只换了 dash.py 的时候就会错位），
+    认死一个名字的结果是静默回落 Path.home()，在 Windows 上等于读不到数据。
+    """
     try:
-        from agent_link import homes
-        return list(homes())
+        import agent_link
+        fn = getattr(agent_link, "homes", None) or getattr(agent_link, "_homes", None)
+        if fn is not None:
+            dirs = [p for p in fn() if p]
+            if dirs:
+                return dirs
     except Exception:                    # noqa: BLE001
-        return [Path.home()]
+        pass
+    return [Path.home()]
 
 
 def _trae_roots() -> list[Path]:
@@ -3053,11 +3063,36 @@ def _hostwork_rounds(days: int) -> list[dict]:
     return []
 
 
+def _stamp_credible(items: list[dict]) -> bool:
+    """这批账的时间戳有区分度吗。
+
+    采集层（hostwork）读不到证据链时会拿「当前时刻」兜底，几十条于是挤在
+    同一秒里：卡片上看着有 60 条活，点开全是同一个时间 —— 比空着更误导
+    （EVO 上实测 40 条卡在 22:21:00、14 条卡在 22:22:17）。
+    真账里同一秒最多也就几轮同时起，绝不会占到两成。所以看「最大的那一秒
+    占了多少」：超过两成就是在兜底，这批不算数。混进几条真记录也蒙不过去。
+    """
+    if len(items) < 5:                 # 太少，少到没有统计意义
+        return True
+    tally: dict[str, int] = {}
+    for i in items:
+        s = str(i.get("start") or "")[:19]
+        if s:
+            tally[s] = tally.get(s, 0) + 1
+    if not tally:
+        return False
+    return max(tally.values()) * 5 <= len(items)
+
+
 def _agent_items(days: int = _WL_HOST_DAYS) -> list[dict]:
     """本机上所有 AI 客户端的活，合成一份。一个客户端读挂了不拖垮整张卡。"""
     remote = _hostwork_rounds(days)
-    if remote:
+    if remote and _stamp_credible(remote):
         return remote
+    if remote:
+        # 不静默吞掉：以后有人翻日志，得能看出「为什么卡片没用采集层那份」。
+        print(f"[worklog] hostwork 交来 {len(remote)} 条，时间戳重复过多"
+              "（判定为兜底值），改走本地读取", flush=True)
     since_ms = (time.time() - days * 86400) * 1000
     out: list[dict] = []
     for _name, fn in _CLIENTS:
