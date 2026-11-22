@@ -56,6 +56,16 @@ def library_dir() -> Path:
     return Path.home() / "Documents" / APP_NAME
 
 
+def data_root() -> Path:
+    """结构化数据的根：08-阅读、04-存图、10-系统记录、_工作台都挂在它下面。
+
+    开发版这里是 `~/Documents/AI项目`（作者自己的目录结构），分发版就是资料库
+    本身 —— 用户的东西全在一个目录里，备份、迁移、换机器只需拷这一处。
+    凡是「数据根」的默认值都该走这里，别再各写一份 `Path.home()/Documents/...`。
+    """
+    return library_dir()
+
+
 def config_file() -> Path:
     return state_dir() / "config.json"
 

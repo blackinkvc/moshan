@@ -31,7 +31,9 @@ import time
 import uuid
 from pathlib import Path
 
-PEND_PATH = Path.home() / "Documents" / "AI项目" / "04-存图" / "_待定.json"
+import paths  # 交付版：待定队列挂在资料库下，不写死开发机的目录
+
+PEND_PATH = paths.data_root() / "04-存图" / "_待定.json"
 MAX_AGE = 7 * 86400           # 挂了这么久还没答，就不再认了
 SHORT_AGE = 6 * 3600          # 只回「1 / 2」这种，只认这么久之内问过的
 KEEP_DONE = 40                # 已答的留几条，够回溯就行

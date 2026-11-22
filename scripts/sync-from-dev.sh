@@ -37,7 +37,15 @@ CONFLICT="${ROOT}/.sync-conflicts"
 
 # 交付版里带了手工移植补丁的文件。新增这类文件时必须加进这里，
 # 否则会被逐字覆盖，补丁丢失。
-PATCHED="server.py ocr_runner.py plan_mcp.py"
+PATCHED="server.py ocr_runner.py plan_mcp.py article.py linkbox.py articlebox.py
+         heartbeat.py metrics.py pending.py"
+
+# 不在开发目录、而在 cuntu/ 里的模块。pocket 靠 sys.path 注入去拿它们，
+# 开发机上有 cuntu 所以跑得起来；交付版没有这个目录，缺一个文件就是
+# 「新用户装完打不开」——而且本机永远复现不了。
+# 这类文件登记在这里，同步时从 cuntu/ 取，和 pocket 的文件一样逐字镜像。
+CUNTU_DIR="${MOSHAN_CUNTU:-$HOME/Documents/cuntu}"
+EXTERNAL="textfmt.py"
 
 MODE="sync"
 case "${1:-}" in
@@ -56,24 +64,48 @@ is_patched() {
   return 1
 }
 
+# 某个交付文件的来源：常规在开发目录，EXTERNAL 里的在 cuntu/。
+src_of() {
+  for e in ${EXTERNAL}; do
+    [ "$1" = "${e}" ] && { printf '%s/%s' "${CUNTU_DIR}" "$1"; return 0; }
+  done
+  printf '%s/%s' "${SRC}" "$1"
+}
+
 # ---- 收集分发资产：只有 .py 与 ui.html ----
 LIST=$(mktemp)
 find "${SRC}" -maxdepth 1 -type f \
   \( -name '*.py' -o -name 'ui.html' \) \
   ! -name '*.bak-*' ! -name '*.moved-*' ! -name '._*' \
   | sort > "${LIST}"
+
+# 外部来源的文件单独找一遍：缺了要吵，而不是静默少一个模块
+MISSING_EXT=""
+for e in ${EXTERNAL}; do
+  if [ -f "${CUNTU_DIR}/${e}" ]; then
+    printf '%s\n' "${CUNTU_DIR}/${e}" >> "${LIST}"
+  else
+    MISSING_EXT="${MISSING_EXT} ${e}"
+  fi
+done
+sort -u -o "${LIST}" "${LIST}"
 TOTAL=$(wc -l < "${LIST}" | tr -d ' ')
 
 echo "开发目录：${SRC}"
 echo "交付目录：${MIRROR}"
-echo "候选文件：${TOTAL} 个（其中带补丁 $(echo ${PATCHED} | wc -w | tr -d ' ') 个）"
+echo "候选文件：${TOTAL} 个（其中带补丁 $(echo ${PATCHED} | wc -w | tr -d ' ') 个，来自 cuntu/ 的 $(echo ${EXTERNAL} | wc -w | tr -d ' ') 个）"
+if [ -n "${MISSING_EXT}" ]; then
+  echo "  [警告] cuntu/ 里找不到这些文件，本次不会同步：${MISSING_EXT}"
+  echo "         路径是 ${CUNTU_DIR}，可用 MOSHAN_CUNTU 指定。交付版会沿用仓库里现有的副本。"
+fi
 
 # ---- 只重建补丁文件的基线 ----
 if [ "${MODE}" = "init" ]; then
   N=0
   for p in ${PATCHED}; do
-    [ -f "${SRC}/${p}" ] || { echo "  开发目录缺 ${p}，跳过"; continue; }
-    cp "${SRC}/${p}" "${BASE}/${p}"
+    psrc=$(src_of "${p}")
+    [ -f "${psrc}" ] || { echo "  找不到 ${p}，跳过"; continue; }
+    cp "${psrc}" "${BASE}/${p}"
     N=$((N + 1))
   done
   rm -f "${LIST}"
@@ -90,6 +122,7 @@ CHANGED=0; SAME=0; NEW=0; PATCHONLY=0; MERGEDF=0; NOBASE=0; CONF=0
 while IFS= read -r f; do
   name=$(basename "${f}")
   dst="${MIRROR}/${name}"
+  src=$(src_of "${name}")
 
   if is_patched "${name}"; then
     base="${BASE}/${name}"
@@ -98,13 +131,13 @@ while IFS= read -r f; do
       printf "  [缺基线] %-18s 这是补丁文件但没基线，需先 --init-baseline 或人工处理\n" "${name}"
       continue
     fi
-    if cmp -s "${f}" "${base}"; then
+    if cmp -s "${src}" "${base}"; then
       SAME=$((SAME + 1))   # 开发版自上次同步未变
       echo "${name}" >> "${OKPATCHED}"
       continue
     fi
     tmp=$(mktemp)
-    if git merge-file -p --quiet "${dst}" "${base}" "${f}" > "${tmp}" 2>/dev/null; then
+    if git merge-file -p --quiet "${dst}" "${base}" "${src}" > "${tmp}" 2>/dev/null; then
       if cmp -s "${tmp}" "${dst}"; then
         PATCHONLY=$((PATCHONLY + 1))
         printf "  [补丁不变] %-18s 开发版有改动，但落点与补丁无交集\n" "${name}"
@@ -128,13 +161,13 @@ while IFS= read -r f; do
   if [ ! -f "${dst}" ]; then
     NEW=$((NEW + 1))
     printf "  [新增] %-18s\n" "${name}"
-    [ "${MODE}" = "dry" ] || cp "${f}" "${dst}"
-  elif cmp -s "${f}" "${dst}"; then
+    [ "${MODE}" = "dry" ] || cp "${src}" "${dst}"
+  elif cmp -s "${src}" "${dst}"; then
     SAME=$((SAME + 1))
   else
     CHANGED=$((CHANGED + 1))
     printf "  [更新] %-18s\n" "${name}"
-    [ "${MODE}" = "dry" ] || cp "${f}" "${dst}"
+    [ "${MODE}" = "dry" ] || cp "${src}" "${dst}"
   fi
 done < "${LIST}"
 
@@ -152,8 +185,9 @@ fi
 # ---- 推进补丁基线：只对合并成功的推进，冲突的留到下次 ----
 BASED=0
 while IFS= read -r name; do
-  [ -f "${SRC}/${name}" ] || continue
-  cp "${SRC}/${name}" "${BASE}/${name}"
+  nsrc=$(src_of "${name}")
+  [ -f "${nsrc}" ] || continue
+  cp "${nsrc}" "${BASE}/${name}"
   BASED=$((BASED + 1))
 done < "${OKPATCHED}"
 rm -f "${OKPATCHED}"

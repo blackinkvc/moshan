@@ -40,6 +40,7 @@ from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
 HOME = Path.home()
+import paths  # noqa: E402  （交付版：数据根走 paths，不再写死 ~/Documents/AI项目）
 
 OPENCLAW = HOME / ".openclaw"
 LOCK_DIR = OPENCLAW / "tmp" / "openclaw-501"
@@ -62,7 +63,7 @@ SESSION_COMPACT_COOLDOWN = 600   # 两次截断至少隔 10 分钟
 LOG_DIR = HOME / "Library" / "Logs"          # 系统惯例：进程 stdout / gateway 日志留这儿
 # 结构化记录（state + 流水 + 磁盘采样）落数据根，跟个人数据一样能翻能备份（2026-11-18）。
 # 数据根不可写时回退 LOG_DIR —— 自愈是兜底功能，不能因为一个目录没了就停摆。
-SYS_DIR = HOME / "Documents" / "AI项目" / "10-系统记录"
+SYS_DIR = paths.data_root() / "10-系统记录"
 HB_DIR = SYS_DIR / "心跳"
 DISK_LOG = SYS_DIR / "磁盘" / "磁盘.jsonl"
 _LEGACY_STATE = LOG_DIR / "cuntu-heartbeat-state.json"
@@ -437,7 +438,7 @@ def wait_ready(port: int, seconds: int = 50) -> tuple[bool, float]:
 # 2026-11-20 之前确实没有任何人看它：凌晨关页后 lease 让它自己退了，launchd 里
 # 没有 plist、心跳也不看 8774，于是连着 18 小时没人巡检。
 INSPECT_PORT = 8774
-INSPECT_CMD = HOME / "Documents" / "AI项目" / "_巡检" / "_系统巡检.command"
+INSPECT_CMD = paths.data_root() / "_巡检" / "_系统巡检.command"
 
 
 def start_inspect() -> dict:
@@ -561,7 +562,7 @@ def _data_root(cfg: dict | None) -> Path:
     roots = (cfg or {}).get("allowed_roots") or []
     if roots:
         return Path(roots[0])
-    return Path.home() / "Documents" / "AI项目"
+    return paths.data_root()
 
 
 def check_transfer_push(cfg: dict | None) -> dict:

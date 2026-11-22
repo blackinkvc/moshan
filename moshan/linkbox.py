@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -22,11 +23,16 @@ import judge
 import pending
 import article as article_mod
 
-CUNTU_DIR = Path.home() / "Documents" / "cuntu"
-CUNTU_PY = CUNTU_DIR / ".venv" / "bin" / "python"
+# 交付版没有 cuntu 扩展；MOSHAN_CUNTU 可指向别处（与 article.py 同一约定）。
+CUNTU_DIR = Path(os.path.expandvars(os.path.expanduser(
+    os.environ.get("MOSHAN_CUNTU") or "~/Documents/cuntu")))
+CUNTU_PY = CUNTU_DIR / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 CUNTU_SCRIPT = CUNTU_DIR / "cuntu.py"
-ARCHIVE_ROOT = Path.home() / "Documents" / "AI项目" / "04-存图"
-READ_ROOT = Path.home() / "Documents" / "AI项目" / "08-阅读"
+# 存图与阅读的落点走资料库，不写死 ~/Documents/AI项目（见 article.py 的说明）
+import paths as _paths  # noqa: E402
+
+ARCHIVE_ROOT = _paths.data_root() / "04-存图"
+READ_ROOT = _paths.data_root() / "08-阅读"
 READ_UNCAT = READ_ROOT / "未分类"
 HERE = Path(__file__).resolve().parent
 ARTICLE_SCRIPT = HERE / "article.py"

@@ -23,7 +23,8 @@ CUNTU = Path(os.environ.get("MOSHAN_CUNTU", "") or (Path.home() / "Documents" / 
 DEFAULT_PY = str(CUNTU / ".venv/bin/python")
 DEFAULT_SCRIPT = str(CUNTU / "ocr.py")
 
-READ_ROOT = Path.home() / "Documents" / "AI项目" / "08-阅读"
+import paths  # 交付版：阅读目录走资料库，不写死开发机的 ~/Documents/AI项目
+READ_ROOT = paths.data_root() / "08-阅读"
 ARTICLE_PY = Path(__file__).with_name("article.py")
 SUMMARY_PY = CUNTU / "summary.py"
 UNCATEGORIZED = "未分类"

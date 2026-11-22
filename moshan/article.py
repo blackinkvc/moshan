@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import html as html_mod
 import json
+import os
 import re
 import shutil
 import sys
@@ -37,12 +38,20 @@ import urllib.parse
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-CUNTU_DIR = Path.home() / "Documents" / "cuntu"
-sys.path.insert(0, str(CUNTU_DIR))
 sys.path.insert(0, str(HERE))
 
-READ_ROOT = Path.home() / "Documents" / "AI项目" / "08-阅读"
-GALLERY_ROOT = Path.home() / "Documents" / "AI项目" / "04-存图"
+# 交付版没有 cuntu 扩展（那是作者的插件集）；开发机上是 ~/Documents/cuntu。
+# MOSHAN_CUNTU 可指向别处。目录不存在只是少几项能力，不该让整个服务起不来。
+CUNTU_DIR = Path(os.path.expandvars(os.path.expanduser(
+    os.environ.get("MOSHAN_CUNTU") or "~/Documents/cuntu")))
+sys.path.insert(0, str(CUNTU_DIR))
+
+import paths  # noqa: E402  （交付版：目录约定统一走 paths）
+
+# 数据落在资料库下。原来写死 ~/Documents/AI项目/…，那是开发机自己的目录结构，
+# 别人机器上既不该存在，也不该由程序 mkdir 出来（三处 mkdir 会污染 Documents）。
+READ_ROOT = paths.data_root() / "08-阅读"
+GALLERY_ROOT = paths.data_root() / "04-存图"
 UNCATEGORIZED = "未分类"
 TOPICS_FILE = "_主题.json"
 DEFAULT_TOPICS = []          # 从零开始：由 4B 按文章内容新建，不预置

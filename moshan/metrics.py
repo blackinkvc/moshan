@@ -30,12 +30,17 @@ from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
 HOME = Path.home()
+import paths  # noqa: E402  （交付版：配置与数据根都走 paths）
 
 
 def _root() -> Path:
-    """数据根：优先取 config.json 里 inbox_dir 的父目录，退化到惯例路径。"""
+    """数据根：优先取 config.json 里 inbox_dir 的父目录，退化到资料库。
+
+    配置在状态目录，不在程序目录 —— 以前读 BASE/config.json，打包后永远读不到，
+    于是每台机器都退化到写死的 ~/Documents/AI项目。
+    """
     try:
-        cfg = json.loads((BASE / "config.json").read_text(encoding="utf-8"))
+        cfg = json.loads(paths.config_file().read_text(encoding="utf-8"))
         inbox = cfg.get("inbox_dir")
         if inbox:
             p = Path(inbox).expanduser()
@@ -43,7 +48,7 @@ def _root() -> Path:
                 return p.parent
     except (OSError, ValueError):
         pass
-    return HOME / "Documents" / "AI项目"
+    return paths.data_root()
 
 
 SYS_DIR = _root() / "10-系统记录"

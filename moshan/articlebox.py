@@ -16,7 +16,8 @@ import linkbox          # 判重键与重复窗口跟存图共用一套，别各
 import pending
 
 HERE = Path(__file__).resolve().parent
-PY = Path.home() / "Documents" / "cuntu" / ".venv" / "bin" / "python"
+# 解释器路径跟 linkbox 走同一份约定（cuntu 位置可配 + Windows 的 Scripts/python.exe）
+PY = linkbox.CUNTU_PY
 SCRIPT = HERE / "article.py"
 
 TIMEOUT = 180
@@ -189,8 +190,7 @@ class ArticleBox:
             try:
                 self._set(jid, state="running")
                 if rel:
-                    from pathlib import Path as _P
-                    target = (_P.home() / "Documents" / "AI项目" / "08-阅读" / rel).expanduser()
+                    target = linkbox.READ_ROOT / rel
                     r = self._call(["classify", str(target)])
                     if r.get("ok"):
                         self._set(jid, state="done", title=r.get("title", ""),
