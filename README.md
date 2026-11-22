@@ -161,7 +161,7 @@
 顶部是当前路径（面包屑）与磁盘可用空间，行尾「…」是这一行文件的操作菜单。
 
 <p align="center">
-  <img src="docs/images/05-mobile.png" width="300" alt="手机端界面">
+  <img src="docs/images/05-mobile.png" width="280" alt="手机端界面">
   <br>
   <sub>手机打开同一个地址，界面自动收成单列</sub>
 </p>
