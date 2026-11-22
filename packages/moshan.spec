@@ -49,6 +49,16 @@ EXCLUDES = [
 ]
 
 datas = [(str(SRC / "ui.html"), ".")]
+# CA 证书必须打进包：打包版用自带 OpenSSL，默认证书路径在别人机器上不存在，
+# 缺了它安装版里所有 https（检查更新、抓网页、装插件）都验不过证书。
+# PyInstaller 通常有 certifi 的 hook 会自动带上，这里再显式收一次 —— 这个坑
+# 0.2.0 已经踩过一次，不值得赌 hook 的版本差异。
+try:
+    from PyInstaller.utils.hooks import collect_data_files
+
+    datas += collect_data_files("certifi")
+except Exception:                                       # noqa: BLE001
+    pass
 # 默认皮肤资源若存在则一并带上（缺失时运行期会退回纯渐变，不报错）
 for extra in ("appearance.css", "appearance.json"):
     p = SRC / extra

@@ -55,6 +55,46 @@ jobs:
           codesign --force --deep --sign - dist/Moshan.app || true
           codesign --verify --deep --strict --verbose=2 dist/Moshan.app || true
 
+      # 这一步是本仓库唯一能验证「装到别人机器上到底能不能用」的地方。
+      # 0.2.0 就是因为 CI 只构建、从不运行才发出去的：包里自带 OpenSSL 找不到
+      # 系统 CA，安装版所有 https（含「检查更新」）全废，而构建日志一切正常。
+      # 构建能过 ≠ 装完能跑，所以这里真的把 app 拉起来打一次接口。
+      - name: 冒烟（安装版能起来 / 证书打进去了）
+        run: |
+          TMPH=$(mktemp -d); TMPM=$(mktemp -d)
+          HOME="$TMPH" MOSHAN_HOME="$TMPM" MOSHAN_NO_BROWSER=1 \
+            ./dist/Moshan.app/Contents/MacOS/Moshan >/dev/null 2>&1 &
+          APP=$!
+          trap 'kill $APP 2>/dev/null || true' EXIT
+
+          for i in $(seq 1 40); do
+            [ -f "$TMPM/state/config.json" ] && break
+            sleep 1
+          done
+          LOG="$TMPM/state/logs/moshan.log"
+          echo "--- 启动日志 ---"; cat "$LOG" 2>/dev/null || true
+
+          if ! grep -q "CA 证书：/" "$LOG" 2>/dev/null; then
+            echo "::error::安装版没找到 CA 证书，所有 https 请求都会 CERTIFICATE_VERIFY_FAILED"
+            exit 1
+          fi
+
+          P=$(python3 -c "import json;print(json.load(open('$TMPM/state/config.json'))['local_port'])")
+          K=$(python3 -c "import json;print(json.load(open('$TMPM/state/config.json'))['token'])")
+          CODE=000
+          for i in $(seq 1 20); do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 3 -H "X-Token: $K" \
+                     "http://127.0.0.1:$P/api/about" || true)
+            [ "$CODE" = "200" ] && break
+            sleep 1
+          done
+          echo "GET /api/about -> $CODE"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::安装版启动后接口不可用（进程起来不等于服务能响应）"
+            exit 1
+          fi
+          echo "安装版冒烟通过：证书在位、服务可响应"
+
       - name: 读取版本
         id: ver
         run: |
@@ -102,6 +142,48 @@ jobs:
           $env:ISCC = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           ./packages/windows/build.ps1
 
+      # 与 macOS 那边同一件事：把刚打出来的 exe 真跑一次。
+      # Windows 上同样是自带 OpenSSL 找不到系统根证书，只构建不运行就发现不了。
+      - name: 冒烟（安装版能起来 / 证书打进去了）
+        shell: pwsh
+        run: |
+          $home2 = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP "mhome")
+          $state = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP "mstate")
+          $exe = Get-ChildItem dist -Recurse -Filter Moshan.exe | Select-Object -First 1
+          if (-not $exe) { Write-Error "找不到 Moshan.exe"; exit 1 }
+          Write-Host "启动 $($exe.FullName)"
+          $env:HOME = $home2.FullName
+          $env:MOSHAN_HOME = $state.FullName
+          $env:MOSHAN_NO_BROWSER = "1"
+          $p = Start-Process -FilePath $exe.FullName -PassThru -WindowStyle Hidden
+
+          $cfg = Join-Path $state.FullName "state\config.json"
+          for ($i = 0; $i -lt 40 -and -not (Test-Path $cfg); $i++) { Start-Sleep 1 }
+          $log = Join-Path $state.FullName "state\logs\moshan.log"
+          if (Test-Path $log) { Get-Content $log }
+
+          if (-not (Test-Path $log) -or -not (Select-String -Path $log -Pattern "CA 证书：." -Quiet)) {
+            if (Test-Path $log) { Get-Content $log }
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            Write-Error "安装版没找到 CA 证书，https 会 CERTIFICATE_VERIFY_FAILED"
+            exit 1
+          }
+
+          $j = Get-Content $cfg -Raw | ConvertFrom-Json
+          $url = "http://127.0.0.1:$($j.local_port)/api/about"
+          $code = "000"
+          for ($i = 0; $i -lt 20; $i++) {
+            try {
+              $r = Invoke-WebRequest -Uri $url -Headers @{ "X-Token" = $j.token } -TimeoutSec 3 -UseBasicParsing
+              $code = "$($r.StatusCode)"; if ($code -eq "200") { break }
+            } catch { $code = "err" }
+            Start-Sleep 1
+          }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          Write-Host "GET /api/about -> $code"
+          if ($code -ne "200") { Write-Error "安装版启动后接口不可用"; exit 1 }
+          Write-Host "安装版冒烟通过"
+
       - name: 输出校验值
         shell: pwsh
         run: |
@@ -133,7 +215,11 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: 生成 release.json（更新器读它）
+      - name: 生成 release.json（供人工核对校验值）
+        # 更新器不读这个文件 —— 它读 GitHub Releases API，校验值取每个资产的
+        # digest 字段（与这里的 sha256 同源同值）。release.json 的作用是给
+        # 「手动下载后想核对」的人一个稳定位置，不依赖 API 的字段变化。
+        # 单独再发一个 dmg.sha256 附件没有意义，只会让 Release 目录更乱。
         run: |
           V="${GITHUB_REF_NAME#v}"
           python3 - <<'PY'
@@ -156,7 +242,8 @@ jobs:
                   "sha256": hashlib.sha256(f.read_bytes()).hexdigest(),
               }
           out = {
-              "version": os.environ["VERSION"],
+              # 存不带 v 的版本号：写 v0.2.0 的话，谁拿它跟 version.VERSION 比都会出岔子
+              "version": os.environ["VERSION"].strip().lstrip("vV"),
               "min_from": "0.1.0",
               "assets": assets,
               "notes": "见 Release 说明",

@@ -76,7 +76,32 @@ assert not win.search("Moshan-0.1.0-windows-x64-Setup.exe.sha256")
 PY
 ); then ok "更新资产匹配规则正常"; else bad "updater 资产正则失效（检查 (?i) 的写法）"; fi
 
-say "== 3. 硬编码路径 =="
+say "== 3. 网络信任链（安装版能不能联网的前提）=="
+# 这条是本机唯一能提前发现「打包后 https 全废」的地方：
+# 打包版用自己的 OpenSSL，默认证书路径在别人机器上不存在，源码态因为系统有
+# /etc/ssl/cert.pem 而完全看不出问题。所以断言两件事——
+#   1) certifi 真的装上了（它会被打进包）；
+#   2) netca.install() 选中它，且默认上下文里真的装进了根证书。
+if ( cd moshan && PYTHONPATH=. python3 - <<'PY' >/dev/null 2>&1
+import pathlib
+import certifi
+
+p = pathlib.Path(certifi.where())
+assert p.is_file(), f"certifi 证书文件不存在：{p}"
+assert p.stat().st_size > 50_000, "certifi 证书文件过小，可能是残缺的"
+
+import netca
+
+s = netca.stats()
+assert s["cafile"], "netca 找不到任何 CA 证书（打包版将无法访问 https）"
+assert pathlib.Path(s["cafile"]).resolve() == p.resolve(), \
+    f"CA 没指向 certifi：{s['cafile']}（应走随包分发的证书）"
+assert s["x509"] > 50, f"默认上下文只装进 {s['x509']} 张根证书"
+PY
+); then ok "CA 走 certifi，默认上下文已装载根证书"
+else bad "https 信任链有问题（装版会 CERTIFICATE_VERIFY_FAILED，先 pip install certifi）"; fi
+
+say "== 4. 硬编码路径 =="
 if grep -rIl "/Users/" moshan/*.py 2>/dev/null | grep -v "ocr_runner.py" | grep -q .; then
   bad "代码里仍有写死的家目录："
   grep -rIn "/Users/" moshan/*.py 2>/dev/null | grep -v "ocr_runner.py" | head -5
@@ -84,7 +109,7 @@ else
   ok "没有写死的家目录"
 fi
 
-say "== 4. 密钥与运行时数据 =="
+say "== 5. 密钥与运行时数据 =="
 if [ -f moshan/config.json ] || [ -f config.json ]; then
   bad "仓库里出现了 config.json（应在状态目录）"
 else
@@ -97,7 +122,7 @@ else
   ok "没有私钥文件"
 fi
 
-say "== 5. 版本号一致性 =="
+say "== 6. 版本号一致性 =="
 V1=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' moshan/version.py | head -1)
 V2=$(head -1 VERSION 2>/dev/null | tr -d '[:space:]')
 if [ -n "$V1" ] && [ "$V1" = "$V2" ]; then

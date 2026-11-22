@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 BUILD = ""          # 构建时由 CI 注入短 SHA，源码运行时为空
 CHANNEL = "stable"  # stable | beta
 
@@ -14,7 +14,8 @@ DEFAULT_REPO = "blackinkvc/moshan"
 
 
 def version_tuple(v: str = VERSION) -> tuple:
-    """把 '0.1.0' / '0.1.0-beta.2' 转成可比较的元组，预发布排在正式版之前。"""
+    """把 '0.1.0' / 'v0.1.0' / '0.1.0-beta.2' 转成可比较的元组，预发布排在正式版之前。"""
+    v = v.strip().lstrip("vV")          # Git tag 与 release.json 都带 v 前缀，先剥掉
     core = v.split("-", 1)[0]
     parts = []
     for seg in core.split("."):

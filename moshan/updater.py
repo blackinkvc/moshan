@@ -183,6 +183,7 @@ def download(asset: dict, *, on_progress: Optional[Callable[[int, int], None]] =
         raise UpdateError(f"下载中断：{exc}") from exc
 
     got = hasher.hexdigest()
+    verified = bool(expected)
     if expected and got != expected:
         partial.unlink(missing_ok=True)
         raise UpdateError(f"校验失败（期望 {expected[:12]}… 实际 {got[:12]}…），已丢弃")
@@ -192,6 +193,7 @@ def download(asset: dict, *, on_progress: Optional[Callable[[int, int], None]] =
     partial.replace(target)
     target.with_suffix(target.suffix + ".meta").write_text(
         json.dumps({"name": name, "size": size, "sha256": got,
+                    "verified": verified,
                     "seconds": round(elapsed, 1),
                     "rate_mb_s": round(size / elapsed / 1048576, 2)},
                    ensure_ascii=False, indent=2),

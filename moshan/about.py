@@ -18,6 +18,7 @@
 """
 from __future__ import annotations
 
+import json
 import threading
 import time
 from pathlib import Path
@@ -294,7 +295,7 @@ function render(st){
   }else if (st.phase === 'done'){
     $('bar').style.display = 'block';
     $('fill').style.width = '100%';
-    tag($('state'), '已下载并校验通过', 'ok');
+    tag($('state'), st.msg || '已下载并校验通过', st.msg ? 'warn' : 'ok');
     $('btn-apply').style.display = '';
   }else if (st.phase === 'error'){
     $('bar').style.display = 'none';
@@ -434,8 +435,18 @@ def register(app: FastAPI, cfg: dict, token: str) -> None:
                     STATE.update(phase="downloading", done=0, total=int(asset.get("size") or 0),
                                  msg="", path="")
                 p = updater.download(asset, on_progress=progress)
+                # GitHub 有时不回 digest 字段（老资产或 API 变更），此时下载仍然完成
+                # 但没做完整性校验 —— 别在界面上写「已校验通过」，那是假话。
+                note = ""
+                try:
+                    meta = json.loads(p.with_suffix(p.suffix + ".meta").read_text(encoding="utf-8"))
+                    if not meta.get("verified"):
+                        note = "已下载，但 GitHub 未提供校验值，未做完整性校验"
+                except (OSError, ValueError):
+                    pass
                 with _LOCK:
-                    STATE.update(phase="done", path=str(p), done=STATE["total"] or STATE["done"])
+                    STATE.update(phase="done", path=str(p), msg=note,
+                                 done=STATE["total"] or STATE["done"])
                 try:
                     updater.cleanup(keep=2)
                 except Exception:                       # noqa: BLE001  清旧包失败不影响本次

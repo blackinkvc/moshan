@@ -22,6 +22,7 @@ import webbrowser
 from pathlib import Path
 
 import bootstrap
+import netca
 import paths
 import version
 
@@ -107,8 +108,15 @@ def _redirect_stdio() -> None:
 
 
 def main() -> int:
+    # 必须排在最前面：定好 CA 证书，否则打包版里所有 https（检查更新、抓网页、
+    # 装插件）都会 CERTIFICATE_VERIFY_FAILED —— 而源码态完全复现不出来。
+    cafile = netca.install()
+
     paths.ensure_layout()
     _redirect_stdio()
+    # 重定向之后再打印：这行必须落到日志文件里，否则装到别人机器上出问题时
+    # 「到底用的哪张证书」就没法查了。
+    print(f"[网络] CA 证书：{cafile or '未找到（https 将失败）'}")
 
     import server  # 延迟导入：server 模块导入时会读配置、建 app，必须在目录就绪之后
 

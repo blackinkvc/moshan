@@ -10,3 +10,7 @@ beautifulsoup4==4.12.3
 # FastAPI 解析 multipart 表单依赖它。缺这个包时导入 server 直接抛
 # RuntimeError: Form data requires "python-multipart" to be installed。
 python-multipart==0.0.32
+# 必需：https 的 CA 证书。打包版用的是自己的 OpenSSL，默认证书路径在别人机器上
+# 不存在，不显式带上 certifi 的话安装版里所有 https 请求都 CERTIFICATE_VERIFY_FAILED
+# （0.2.0 的「检查更新」就是这么对所有人失效的）。netca.py 负责把它指给 ssl。
+certifi==2026.11.20

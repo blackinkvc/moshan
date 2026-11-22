@@ -37,6 +37,9 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE))  # 保证 launchd 用任意 cwd 启动时也能 import agent
 import paths  # 目录约定：程序目录 / 状态目录 / 资料库分开，更新不碰用户数据
+import netca  # 交付版：把 CA 证书指到 certifi，否则打包后所有 https 都失败
+
+netca.install()
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
