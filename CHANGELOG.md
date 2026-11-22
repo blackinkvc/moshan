@@ -35,6 +35,9 @@
 - 服务方阵按平台过滤：`gallery / reader / media / inspect / llmcost / follow /
   review / gateway / qdrant` 只在 POSIX 上显示，Windows 上不再一开就是一排红点
 - 工作流水里导入/补记的账最多占 24 格，不会被近期会话挤出列表
+- Agent 接入在 Windows 上会扫描 `C:\Users\*` 找真正的家目录（以服务身份运行时
+  `Path.home()` 会指到 `systemprofile`，那里面没有任何 Agent 数据），并给扫描结果
+  加 20 秒缓存，避免反复开关面板把几百 MB 目录走一遍
 
 ### 已知限制
 - macOS 安装包未做 Apple 公证，首次打开需右键「打开」

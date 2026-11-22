@@ -97,31 +97,79 @@ def _root_of(kind: str) -> Path | None:
     return None
 
 
-def _expand(*spec) -> Path | None:
+def _homes() -> list[Path]:
+    """这台机器的「家目录」候选。
+
+    Windows 上中台常常是以服务身份跑的（计划任务 default 用户 / SYSTEM），那时
+    Path.home() 会指到 C:\\WINDOWS\\system32\\config\\systemprofile —— 那里面
+    当然没有 Trae 的数据，真正的在 C:\\Users\\<你>\\.trae-cn 里。所以家目录要
+    按目录扫一遍，谁有 .trae-cn / .cursor 就在谁那儿干活。
+    """
+    out = [Path.home()]
+    if os.name == "nt":
+        skip = {"public", "default", "default user", "all users", "defaultapppool"}
+        try:
+            users = Path(os.environ.get("SystemDrive", "C:") + "/Users")
+            for d in users.iterdir():
+                if d.is_dir() and d.name.lower() not in skip:
+                    out.append(d)
+        except OSError:
+            pass
+    seen, uniq = set(), []
+    for p in out:
+        k = str(p).lower()
+        if k not in seen:
+            seen.add(k)
+            uniq.append(p)
+    return uniq
+
+
+def _expand(spec) -> list[Path]:
     if isinstance(spec[0], (list, tuple)):
         spec = spec[0]
-    base = _root_of(spec[0])
-    if base is None:
-        return None
-    return base / spec[1] if len(spec) > 1 else base
+    kind = spec[0]
+    if kind in ("home", "appdata", "localappdata"):
+        # APPDATA 环境变量在服务账号下同样指错人（systemprofile），一样按家目录推
+        sub = {"home": "", "appdata": "AppData/Roaming",
+               "localappdata": "AppData/Local"}[kind]
+        out = []
+        for h in _homes():
+            base = (h / sub) if sub else h
+            out.append((base / spec[1]) if len(spec) > 1 else base)
+        return out
+    base = _root_of(kind)
+    return [base / spec[1] if len(spec) > 1 else base] if base else []
 
 
 def _roots_of(a: dict) -> list[Path]:
     table = a.get("roots") or {}
     spec = table.get(_plat()) or table.get("any") or []
-    out = []
+    out: list[Path] = []
     for s in spec:
-        p = _expand(s)
-        if p is not None:
-            out.append(p)
+        out.extend(_expand(s))
     return out
 
 
 def _skill_path(a: dict) -> Path | None:
-    return _expand(a["skill"])
+    """技能该写到哪个家目录下：挑那个根目录（.trae-cn / .cursor / .claude）真存在的。
+    一个都不存在时退回第一个 —— 装说明本来就是为了让它存在。"""
+    cands = _expand(a["skill"])
+    for p in cands:
+        for h in _homes():
+            try:
+                rel = p.relative_to(h)
+            except ValueError:
+                continue
+            if (h / rel.parts[0]).exists():
+                return p
+    return cands[0] if cands else None
 
 
-def _walk_stats(p: Path, cap: int = 20000) -> dict:
+_SCAN_CACHE: dict = {"at": 0.0, "root": "", "val": None}
+SCAN_TTL = 20          # 秒。面板反复开关不该每次都把几百 MB 走一遍
+
+
+def _walk_stats(p: Path, cap: int = 5000) -> dict:
     """目录有多少文件、多大、最后改到什么时候。走不完就按走到的算，不报错。"""
     n, size, newest, stopped = 0, 0, 0.0, False
     if not p.exists():
@@ -228,9 +276,16 @@ def _save_links(root: Path, d: dict) -> None:
         pass
 
 
-def scan(root) -> dict:
-    """这台机器上装了哪些 agent、数据在哪、说明书装没装、上次回报和导入是什么时候。"""
+def scan(root, force: bool = False) -> dict:
+    """这台机器上装了哪些 agent、数据在哪、说明书装没装、上次回报和导入是什么时候。
+
+    走目录是这里最慢的一步（Trae 的数据动辄几百 MB），所以结果缓存 20 秒：
+    用户关掉面板再点开，不该再等一遍。
+    """
     root = Path(root)
+    key = f"{root}|{time.time() // SCAN_TTL}"
+    if not force and _SCAN_CACHE["val"] is not None and _SCAN_CACHE["key"] == key:
+        return _SCAN_CACHE["val"]
     links = _load_links(root)
     items = []
     for a in AGENTS:
@@ -257,14 +312,17 @@ def scan(root) -> dict:
             "found": any(x["exists"] for x in roots),
             "roots": roots, "skill": skill,
             "evidence": [{"key": e["key"], "label": e["label"], "path": e["path"],
-                          "what": e.get("what", ""), "locked": bool(e.get("locked"))}
+                          "what": e.get("what", ""), "locked": bool(e.get("locked")),
+                          "n": e.get("n"), "at": e.get("at", "")}
                          for e in ev],
             "report": rec.get("report") or {},
             "import": rec.get("import") or {},
         })
-    return {"ok": True, "v": V, "platform": _plat(),
-            "now": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "agents": items}
+    out = {"ok": True, "v": V, "platform": _plat(),
+           "now": datetime.now().strftime("%Y-%m-%d %H:%M"),
+           "agents": items}
+    _SCAN_CACHE.update({"key": key, "val": out})
+    return out
 
 
 # ---------------------------------------------------------------- 说明书（技能 / 规则）
