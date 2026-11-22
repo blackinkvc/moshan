@@ -96,9 +96,28 @@ def _disk() -> dict:
             "total_gb": round(total / gb, 1)}
 
 
+def _sysinfo_sample() -> dict | None:
+    """跨平台的那份采集（Windows 走 ctypes，Linux 读 /proc/meminfo）。
+
+    macOS 上这几个指标有更细的口径（vm_stat 的 active+wired+compressor），
+    但换到 Windows，vm_stat / sysctl / ps 全不存在 —— 硬跑的结果是
+    「内存 0% · 开机 0 小时 · 进程 0 个」，页面上看着像坏了。
+    """
+    try:
+        import sysinfo
+        return sysinfo.sample()
+    except Exception:                                  # noqa: BLE001
+        return None
+
+
 def _mem() -> dict:
     """口径与 syscheck.machine 一致：active + wired + compressor。"""
     out = _run(["/usr/bin/vm_stat"], 4)
+    if "Pages" not in out:                  # 没有 vm_stat：Windows / Linux
+        s = (_sysinfo_sample() or {}).get("mem") or {}
+        return {"mem_pct": round(float(s.get("pct") or 0.0), 1),
+                "mem_gb": round(float(s.get("used_gb") or 0.0), 1),
+                "mem_total_gb": round(float(s.get("total_gb") or 0.0), 1)}
     m = re.search(r"page size of (\d+) bytes", out)
     page = int(m.group(1)) if m else 4096
     pages: dict[str, int] = {}
@@ -119,8 +138,11 @@ def _mem() -> dict:
 def _uptime_h() -> float:
     bt = _run(["/usr/sbin/sysctl", "-n", "kern.boottime"], 4)
     mb = re.search(r"sec = (\d+)", bt)
-    if not mb:
-        return 0.0
+    if not mb:                             # 没有 sysctl：问 sysinfo
+        try:
+            return round(float((_sysinfo_sample() or {}).get("uptime_h") or 0.0), 1)
+        except (TypeError, ValueError):
+            return 0.0
     return round(max(0, time.time() - int(mb.group(1))) / 3600, 1)
 
 
@@ -159,6 +181,12 @@ def sample(full: bool = False) -> dict:
     rec.update(_mem())
     rec.update({"load1": load[0], "load5": load[1], "load15": load[2],
                 "cpus": os.cpu_count() or 1, "uptime_h": _uptime_h()})
+    try:                       # CPU 占用：资源卡的走势图吃这个字段
+        _c = (_sysinfo_sample() or {}).get("cpu") or {}
+        if _c.get("pct") is not None:
+            rec["cpu_pct"] = round(float(_c["pct"]), 1)
+    except (TypeError, ValueError):
+        pass
     if full:
         p = _procs()
         if p:

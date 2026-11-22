@@ -1938,15 +1938,100 @@ def sources_proxy(force: int = 0) -> dict:
 
 # —— 本机工作的机器指标（原 8775 的 /api/overview）——
 #   资源卡、谁在干活、Token 折算都吃这一份；一起给，省得页面来回问三趟。
+
+# —— 没有 hostwork 时的降级账 ————————————————————————————————
+# hostwork 是本机 cuntu 的深度采集层，交付包里不带（见上面 CUNTU_DIR 那段：
+# 分发版默认没有 cuntu）。可这几个接口以前硬依赖它 —— 别人装完 Moshan，
+# 资源卡永远只有一句「本机工作模块没装上」，谁在干活、节奏账同样空着。
+# 这里把能算的算出来：磁盘/内存/CPU/开机时长来自 metrics + sysinfo，
+# 客户端与 token 给结构完整的空表。前端读的是 `m.disk || {}`、
+# `pick(se.load)` 这类写法，空表不会崩，只是那几格显示「—」。
+# 把 cuntu 挂回来（MOSHAN_CUNTU）之后 hostwork 能导，自动走原路，这份只当兜底。
+_RANGE_LABEL = {"today": "今天", "7d": "7 天", "30d": "30 天", "all": "全部"}
+_RANGE_DAYS = {"today": 1, "7d": 7, "30d": 30, "all": 365}
+
+
+def _ov_fallback(key: str, reason: str) -> dict:
+    machine: dict = {
+        "disk": {"disk_pct": 0.0, "free_gb": 0.0, "total_gb": 0.0, "used_gb": 0.0},
+        "extra_disks": [],
+        "mem": {"mem_pct": None, "mem_gb": None, "mem_total_gb": None},
+        "load": [], "cpus": os.cpu_count() or 1,
+        "uptime_h": None, "cpu_pct": None, "cpu_ready": True,
+        "cpu_proc_pct": None, "rss_total_gb": None,
+        "net": {"in_bps": 0.0, "out_bps": 0.0, "in_total": 0.0, "out_total": 0.0},
+        "gpu": {},
+    }
+    try:
+        machine["disk"] = metrics._disk()
+    except Exception:                                  # noqa: BLE001
+        pass
+    try:
+        s = sysinfo.sample()
+        mem = s.get("mem") or {}
+        cpu = s.get("cpu") or {}
+        machine["mem"] = {"mem_pct": mem.get("pct"), "mem_gb": mem.get("used_gb"),
+                          "mem_total_gb": mem.get("total_gb")}
+        machine["cpus"] = cpu.get("cores") or machine["cpus"]
+        machine["cpu_pct"] = cpu.get("pct")
+        machine["uptime_h"] = s.get("uptime_h")
+        machine["rss_total_gb"] = s.get("rss_gb")
+    except Exception:                                  # noqa: BLE001
+        pass
+    series = {"disk": [], "mem": [], "load": [], "cpus": machine["cpus"]}
+    try:                                  # 有历史快照就画折线，没有就留空（前端不画）
+        snaps = metrics.load_snapshot()[-60:]
+        series["disk"] = [[x.get("at"), x.get("disk_pct")] for x in snaps]
+        series["mem"] = [[x.get("at"), x.get("mem_pct")] for x in snaps]
+        series["load"] = [[x.get("at"), x.get("load1")] for x in snaps]
+    except Exception:                                  # noqa: BLE001
+        pass
+    return {
+        "ok": True, "degraded": reason,
+        "now": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "range": {"key": key, "label": _RANGE_LABEL.get(key, key),
+                  "days": _RANGE_DAYS.get(key, 7)},
+        "machine": machine, "series": series, "app_series": {"at": [], "step": 30,
+                                                             "keys": [], "cpu": [], "apps": []},
+        "spec": {}, "installed": {"apps": [], "formula": [], "leaves": [],
+                                  "cask": [], "brew": ""},
+        "units": {"user": [], "global": [], "daemon": [], "brew_services": []},
+        "apps": [], "netproc": {"ok": False, "every": 60, "err": "降级模式不采网络明细"},
+        "clients": [],
+        "tokens": {"by_day": [], "by_model": [],
+                   "totals": {"in": 0, "out": 0, "cached": 0, "calls": 0, "total": 0},
+                   "hourly": [], "hour_days": [], "hour_day": "", "cache_hit": 0},
+        "quota": {"days": 90, "events": [], "credit_n": 0, "quota_n": 0, "free_n": 0,
+                  "other_n": 0, "retries": 0, "last": 0, "last_s": "", "last_kind": "",
+                  "last_ok": 0, "last_ok_s": "", "blocked_until": 0, "blocked_until_s": "",
+                  "switches": [], "switch_n": 0, "kinds": {}},
+        "cherry": {"found": False, "calls": 0, "days": _RANGE_DAYS.get(key, 7)},
+        "billing": {"ok": False, "accounts": [], "n": 0, "total_balance": 0,
+                    "total_month": 0, "at": ""},
+        "money": {"currency": "¥", "rows": [], "points": 0, "cost": 0,
+                  "any_points": False, "any_cost": False, "priced_ratio": 0,
+                  "unpriced": [], "formula": "", "points_formula": "", "config": ""},
+        "pocket": {"scripts": [], "recent": [], "tokens": 0},
+        "daily": [], "scan": {"done": 0, "total": 0, "running": False,
+                              "started": "", "err": "", "bytes": 0, "cached_bytes": 0},
+        "procs_path": "",
+    }
+
+
 @app.get("/api/overview", dependencies=[Depends(auth)])
 def overview_api(range: str = "7d", fresh: int = 0) -> dict:
-    if hwmod is None:
-        return {"ok": False, "error": f"本机工作模块没装上（{_HW_IMPORT_ERR}）"}
     key = range if range in ("today", "7d", "30d", "all") else "7d"
-    try:
-        return hwmod.overview(key, fresh=bool(fresh))
-    except Exception as e:                             # noqa: BLE001
-        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    if hwmod is not None:
+        try:
+            d = hwmod.overview(key, fresh=bool(fresh))
+            if d.get("ok", True):
+                return d
+            # 采集层自己报了错（EVO 上就是 os.statvfs 在 Windows 不存在）：
+            # 把它的错因带上，但照样给一份能看的机器指标，别整块空掉。
+            return _ov_fallback(key, str(d.get("error") or "采集层返回失败"))
+        except Exception as e:                         # noqa: BLE001
+            return _ov_fallback(key, f"{type(e).__name__}: {e}")
+    return _ov_fallback(key, f"本机工作模块没装上（{_HW_IMPORT_ERR}）")
 
 
 @app.get("/api/hourly", dependencies=[Depends(auth)])
@@ -1965,13 +2050,30 @@ def hourly_api(d: str = "", fresh: int = 0) -> dict:
 
 @app.get("/api/rounds", dependencies=[Depends(auth)])
 def rounds_api(range: str = "7d") -> dict:
-    if hwmod is None:
-        return {"ok": False, "error": f"本机工作模块没装上（{_HW_IMPORT_ERR}）", "items": []}
     key = range if range in ("today", "7d", "30d", "all") else "7d"
+    if hwmod is not None:
+        try:
+            d = hwmod.rounds_items(key)
+            if d.get("ok"):
+                return d
+            reason = str(d.get("error") or "采集层返回失败")
+        except Exception as e:                         # noqa: BLE001
+            reason = f"{type(e).__name__}: {e}"
+    else:
+        reason = f"本机工作模块没装上（{_HW_IMPORT_ERR}）"
+    # 降级：直接用工作台自己的读取器（TRAE / WorkBuddy / Cherry / Claude 都在
+    # _CLIENTS 里）。它的条目结构与 hostwork 那份同源，前端不用改一行。
     try:
-        return hwmod.rounds_items(key)
+        items = dashmod._agent_items(_RANGE_DAYS.get(key, 7))
+        # 排序与截断跟工作台那张卡同一套：进行中的顶头，其余按结束/开始倒序。
+        # 不截断的话 7 天能出来四百多条，每行还带 steps，payload 直接翻几倍。
+        items.sort(key=lambda x: (x.get("status") == "run",
+                                  x.get("end") or x.get("start") or ""), reverse=True)
+        limit = int(getattr(dashmod, "_WL_HOST_LIMIT", 80) or 80)
+        return {"ok": True, "degraded": reason, "items": items[:limit],
+                "at": datetime.now().strftime("%H:%M:%S")}
     except Exception as e:                             # noqa: BLE001
-        return {"ok": False, "error": f"{type(e).__name__}: {e}", "items": []}
+        return {"ok": False, "error": f"{reason} / 降级也失败：{e}", "items": []}
 
 
 @app.get("/api/pulse", dependencies=[Depends(auth)])
