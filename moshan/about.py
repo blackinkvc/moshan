@@ -477,13 +477,13 @@ def register(app: FastAPI, cfg: dict, token: str) -> None:
 
 _BADGE = """
 <style>
-  #mosh-about{position:fixed;right:14px;bottom:14px;z-index:9998;
+  /* 底部有标签栏，入口必须抬到它上面，否则会压住「归整」那一格（宽屏同样会压）。 */
+  #mosh-about{position:fixed;right:14px;bottom:72px;z-index:9998;
     font:12.5px/1 -apple-system,'PingFang SC',system-ui,sans-serif}
   #mosh-about a{display:inline-flex;align-items:center;gap:6px;
     padding:8px 12px;border-radius:99px;text-decoration:none;color:#f4f1ea;
     background:rgba(35,35,31,.72);backdrop-filter:blur(6px);
     box-shadow:0 2px 10px rgba(0,0,0,.18)}
-  /* 窄屏（手机）底部有标签栏，入口抬上去，别压住最后一个 tab */
   @media (max-width:600px){ #mosh-about{bottom:76px;right:10px} }
 </style>
 <div id="mosh-about">
