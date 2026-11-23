@@ -579,6 +579,14 @@ def units(fresh: bool = False) -> dict:
     now = time.time()
     if not fresh and _UNITS["data"] and now - _UNITS["at"] < _UNITS_TTL:
         return _UNITS["data"]
+    if os.name == "nt":
+        # launchd / brew services 是 macOS 的机制，Windows 上不存在对应概念
+        # （常驻服务由计划任务管，归巡检那边看）。这里给空表 —— 不为一张卡
+        # 把整份 overview 拖进降级；os.getuid() 在 Windows 上也没有，硬算会抛。
+        data = {"at": round(now, 1), "user": [], "global": [], "daemon": [],
+                "brew_services": []}
+        _UNITS.update(at=now, data=data)
+        return data
     gui = _launch_pids("gui/%d" % os.getuid())
     brew_svc = {}
     brew = _brew_bin()
