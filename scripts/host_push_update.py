@@ -134,26 +134,54 @@ def _fleet(args):
     return post, wait, files
 
 
-DRIVER = r'''
-import base64, glob, json, urllib.request
-parts = sorted(glob.glob(r"{pdir}\part-*.bin"))
-raw = b"".join(open(p, "rb").read() for p in parts)
-body = json.dumps({{"version": "{ver}", "sha256": "{sha}", "name": "{name}",
-                    "b64": base64.b64encode(raw).decode(), "restart": {restart}}}).encode()
-res = {{"parts": len(parts), "bytes": len(raw)}}
-try:
-    req = urllib.request.Request("http://127.0.0.1:{port}/api/update/push", data=body,
-                                 headers={{"Content-Type": "application/json"}}, method="POST")
-    with urllib.request.urlopen(req, timeout=900) as r:
-        res["status"] = r.status
-        res["body"] = json.loads(r.read().decode())
-except Exception as exc:
-    res["error"] = repr(exc)
-    try:
-        res["body"] = exc.read().decode()
-    except Exception:
-        pass
-open(r"{pdir}\result.json", "w", encoding="utf-8").write(json.dumps(res, ensure_ascii=False))
+# 驱动脚本用 PowerShell，不用 Python：目标机是 SYSTEM 身份跑的，PATH 里
+# **没有 python**（EVO 实测 where python 空、py 启动器也找不到已装版本）。
+# 第一版用 .py 驱动，proc_start 起来什么都没发生，result.json 永远不出现 ——
+# 而 PowerShell 在 Windows 上一定在。
+DRIVER_PS = r'''
+$ErrorActionPreference = "Continue"
+$pdir = "__PDIR__"
+$res = @{ parts = 0; bytes = 0 }
+$parts = @(Get-ChildItem (Join-Path $pdir "part-*.bin") -ErrorAction SilentlyContinue | Sort-Object Name)
+$res.parts = $parts.Count
+$ms = New-Object System.IO.MemoryStream
+foreach ($p in $parts) {
+    $b = [System.IO.File]::ReadAllBytes($p.FullName)
+    $ms.Write($b, 0, $b.Length)
+}
+$raw = $ms.ToArray()
+$res.bytes = $raw.Length
+$b64 = [Convert]::ToBase64String($raw)
+$body = @{ version = "__VER__"; sha256 = "__SHA__"; name = "__NAME__"; b64 = $b64; restart = __RESTART__ } | ConvertTo-Json -Compress
+try {
+    $r = Invoke-RestMethod -Uri "http://127.0.0.1:__PORT__/api/update/push" -Method Post -Body $body -ContentType "application/json" -TimeoutSec 600
+    $res.ok = $true
+    $res.body = $r
+} catch {
+    $res.ok = $false
+    $res.error = $_.Exception.Message
+}
+# 先落盘再等服务回来：更新会把自己重启掉，POST 很可能拿不到响应，
+# 那不是失败 —— 真正的判据是「重启后 /api/about 报的版本」。
+($res | ConvertTo-Json -Compress -Depth 6) | Out-File (Join-Path $pdir "result.json") -Encoding utf8
+
+for ($i = 0; $i -lt 30; $i++) {
+    Start-Sleep -Seconds 2
+    try {
+        $a = Invoke-RestMethod -Uri "http://127.0.0.1:__PORT__/api/about" -TimeoutSec 4
+        $res.after_version = $a.version
+        $res.after_app_dir = $a.app_dir
+        ($res | ConvertTo-Json -Compress -Depth 6) | Out-File (Join-Path $pdir "result.json") -Encoding utf8
+        break
+    } catch { }
+}
+'''
+
+# 驱动脚本带中文注释，必须写 BOM：PS 5.1 把无 BOM 的 UTF-8 当 GBK 读，
+# 末尾汉字会吞掉换行（check.sh 第 8 节说的就是这条）。日志重定向到 driver.log，
+# 出问题时能取回来看，不用猜。
+DRIVER_CMD = '''@echo off
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "__PS1__" >> "__LOG__" 2>&1
 '''
 
 
@@ -173,17 +201,26 @@ def push_fleet(zip_path: Path, sha: str, ver: str, args, restart: bool) -> dict:
         if not tid:
             return {"ok": False, "error": f"put 失败：{r}"}
 
-    driver = pdir + "\\apply_push.py"
-    drv = DRIVER.format(pdir=pdir.replace("\\", "\\\\"), ver=ver, sha=sha,
-                        name=zip_path.name, restart="True" if restart else "False", port=args.port)
+    ps1_path = pdir + "\\apply_push.ps1"
+    cmd_path = pdir + "\\apply_push.cmd"
+    drv = (DRIVER_PS.replace("__PDIR__", pdir).replace("__VER__", ver).replace("__SHA__", sha)
+           .replace("__NAME__", zip_path.name).replace("__PORT__", str(args.port))
+           .replace("__RESTART__", "$true" if restart else "$false"))
     r = post("/api/fleet/task", {"device_id": args.device, "kind": "put",
-                                 "args": {"path": driver,
-                                          "b64": base64.b64encode(drv.encode()).decode()}})
+                                 "args": {"path": ps1_path,
+                                          "b64": base64.b64encode(drv.encode("utf-8-sig")).decode()}})
     tid = r.get("id")
-    print("  put driver:", wait(tid) if tid else r)
+    print("  put driver.ps1:", wait(tid) if tid else r)
+
+    cmd = DRIVER_CMD.replace("__PS1__", ps1_path).replace("__LOG__", pdir + "\\driver.log")
+    r = post("/api/fleet/task", {"device_id": args.device, "kind": "put",
+                                 "args": {"path": cmd_path,
+                                          "b64": base64.b64encode(cmd.encode("utf-8")).decode()}})
+    tid = r.get("id")
+    print("  put driver.cmd:", wait(tid) if tid else r)
 
     r = post("/api/fleet/task", {"device_id": args.device, "kind": "proc_start",
-                                 "args": {"path": driver}})
+                                 "args": {"path": cmd_path}})
     tid = r.get("id")
     print("  run driver:", wait(tid) if tid else r)
 
@@ -200,7 +237,9 @@ def push_fleet(zip_path: Path, sha: str, ver: str, args, restart: bool) -> dict:
         p = os.path.join(files, tid + ".bin")
         if os.path.exists(p):
             try:
-                result = json.loads(Path(p).read_text(encoding="utf-8", errors="replace"))
+                # PowerShell 的 Out-File -Encoding utf8 会带 BOM，
+                # 用 utf-8 读会让 json.loads 报 Unexpected UTF-8 BOM
+                result = json.loads(Path(p).read_text(encoding="utf-8-sig", errors="replace"))
                 break
             except ValueError:
                 pass

@@ -145,8 +145,21 @@ def _restart_script(new_dir: Path, version: str) -> dict:
 
     if os.name == "nt":
         ps1 = d / "restart.ps1"
+        # 环境必须**显式带上**：EVO 的服务不是随手 `python server.py` 起的，
+        # 而是 run-evo.cmd 先把 USERPROFILE/APPDATA 指到 pamphile——
+        # 少了这几行，新进程会以 SYSTEM 的家目录起，跑进 systemprofile 里的
+        # 另一套状态目录：配置、令牌、数据全都「变空」，页面变成首次引导页。
+        # 踩过一次，这里不再靠「子进程应该会继承」这种假设。
+        env_keys = ("USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA",
+                    "LOCALAPPDATA", "TEMP", "TMP", "HOME", "PATH")
+        env_lines = ""
+        for k in env_keys:
+            v = os.environ.get(k)
+            if v:
+                env_lines += "$env:%s='%s'\r\n" % (k, v.replace("'", "''"))
         ps1.write_text(
             "$ErrorActionPreference='Continue'\r\n"
+            + env_lines +
             "Start-Sleep -Seconds 3\r\n"
             f"Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue\r\n"
             "Start-Sleep -Seconds 2\r\n"
@@ -154,12 +167,25 @@ def _restart_script(new_dir: Path, version: str) -> dict:
             f"-WorkingDirectory '{new_dir}' -WindowStyle Hidden\r\n",
             encoding="utf-8",
         )
-        subprocess.Popen(
-            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps1)],
-            creationflags=0x00000008 | 0x00000200,      # DETACHED_PROCESS | NEW_PROCESS_GROUP
-            close_fds=True,
+        # 直接 Popen("powershell.exe ...") 在 SYSTEM 会话里实测**没跑起来**：
+        # 文件写了、进程没拉起、旧进程还活着（pid 一直是同一个）。改成落一个
+        # cmd 包装再执行它 —— 这条路在同一台机器上用 proc_start 跑过，是验证过的。
+        cmd = d / "restart.cmd"
+        cmd.write_text(
+            "@echo off\r\n"
+            f'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{ps1}" '
+            f'>> "{d / "restart.log"}" 2>&1\r\n',
+            encoding="ascii",
         )
-        return {"ok": True, "how": "powershell", "script": str(ps1), "pid": pid}
+        try:
+            subprocess.Popen([str(cmd)], cwd=str(d),
+                             creationflags=0x00000008 | 0x00000200,   # DETACHED | NEW_GROUP
+                             close_fds=True)
+            how = "cmd"
+        except Exception as exc:                       # noqa: BLE001
+            return {"ok": False, "error": f"重启脚本没拉起来：{exc}", "script": str(cmd)}
+        return {"ok": True, "how": how, "script": str(ps1), "wrapper": str(cmd),
+                "log": str(d / "restart.log"), "pid": pid}
 
     if os.name == "posix":
         sh = d / "restart.sh"
