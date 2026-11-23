@@ -218,7 +218,7 @@ _工作台/       工作台页面
 > `sha256`，与 GitHub API 资产 `digest` 同值。所以附件里不会再单独放一个 `.sha256`。
 >
 > ```bash
-> shasum -a 256 Moshan-0.2.1-macos-arm64.dmg    # 与 release.json 里的值对比
+> shasum -a 256 Moshan-0.2.2-macos-arm64.dmg    # 与 release.json 里的值对比
 > ```
 
 <img src="docs/images/03-about-update.png" width="100%" alt="关于页：版本、数据目录、检查更新">
@@ -428,9 +428,9 @@ macOS 用系统自带 `sips` 缩图；Windows 没有这个命令，列表退回�
 - **暂无 Linux 包**，但代码本身没有 macOS 专属依赖（除缩略图一条），理论上可直接跑源码。
 - **更新不是原子替换**，需要走一次系统安装流程；正在运行的程序不会被热替换。
 - **无托盘图标**：关闭浏览器标签不会退出服务，要退出请从启动器窗口 `Ctrl+C`，或结束进程。
-- **0.2.0 的用户请手动重下 0.2.1**：0.2.0 的安装版缺 CA 证书，任何 https 请求
-  （包括「检查更新」本身）都会失败，没法自动升上来。这是 0.2.1 修掉的问题，
-  详见 [CHANGELOG](CHANGELOG.md)。
+- **0.2.0 的用户请手动重下 0.2.2**：0.2.0 的安装版缺 CA 证书，任何 https 请求
+  （包括「检查更新」本身）都会失败，没法自动升上来；Windows 包还叠加了首次启动崩溃。
+  这两处都是 0.2.2 修掉的，详见 [CHANGELOG](CHANGELOG.md)。
 
 ---
 
