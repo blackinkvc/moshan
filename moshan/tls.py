@@ -199,13 +199,24 @@ def _generate(cert_dir: Path, hosts: list[str]) -> tuple[Path, Path] | None:
         return None
     crt, key = cert_dir / "server.crt", cert_dir / "server.key"
     conf = _TEMPLATE.format(cn=hosts[0] if hosts else "localhost", san=_san(hosts))
-    tmp = Path(tempfile.mkstemp(suffix=".cnf")[1])
+
+    # mkstemp 返回的是「已经打开的 fd」+ 路径。这个 fd 必须立刻关掉：
+    # POSIX 允许删除仍被打开的文件，所以 macOS 上一直没暴露；Windows 上
+    # 最后 unlink 会直接 PermissionError: [WinError 32]，异常从 finally 冒出去，
+    # 整个启动流程跟着挂掉（0.2.0/0.2.1 的 Windows 版首次启动就是这么崩的）。
+    fd, tmp_name = tempfile.mkstemp(suffix=".cnf")
+    os.close(fd)
+    tmp = Path(tmp_name)
     try:
         tmp.write_text(conf, encoding="utf-8")
-        r = subprocess.run([op, "req", "-x509", "-newkey", "rsa:2048", "-sha256",
-                            "-days", "825", "-nodes", "-keyout", str(key),
-                            "-out", str(crt), "-config", str(tmp)],
-                           capture_output=True, text=True, timeout=60)
+        try:
+            r = subprocess.run([op, "req", "-x509", "-newkey", "rsa:2048", "-sha256",
+                                "-days", "825", "-nodes", "-keyout", str(key),
+                                "-out", str(crt), "-config", str(tmp)],
+                               capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.SubprocessError) as exc:   # 含超时、找不到 openssl
+            print(f"[tls] 调用 openssl 失败：{exc}")
+            return None
         if r.returncode != 0:
             print(f"[tls] 生成证书失败：{r.stderr.strip()[:300]}")
             return None
@@ -215,11 +226,28 @@ def _generate(cert_dir: Path, hosts: list[str]) -> tuple[Path, Path] | None:
             json.dumps(hosts, ensure_ascii=False), encoding="utf-8")
         return crt, key
     finally:
-        tmp.unlink(missing_ok=True)
+        try:
+            tmp.unlink()
+        except OSError:
+            # 清理失败不值得我们崩一次启动；临时目录里的残留由系统回收
+            pass
 
 
 def ensure(cert_dir: str | Path) -> tuple[Path, Path] | None:
-    """确保有可用证书，返回 (cert, key)。Tailscale 真证书优先。"""
+    """确保有可用证书，返回 (cert, key)。Tailscale 真证书优先。
+
+    这里是一道硬保险：证书只是「手机能不能用 https」的事，生不出来就退化成
+    明文 HTTP，绝不能把整个启动流程带崩 —— 0.2.1 之前 Windows 首次启动就是
+    被一个 PermissionError 从 finally 里冒出去干掉的。
+    """
+    try:
+        return _ensure(cert_dir)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[tls] 证书准备异常，退化为明文 HTTP：{exc}")
+        return None
+
+
+def _ensure(cert_dir: str | Path) -> tuple[Path, Path] | None:
     d = Path(cert_dir)
     d.mkdir(parents=True, exist_ok=True)
 
