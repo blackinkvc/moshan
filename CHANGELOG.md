@@ -33,6 +33,12 @@
   报告写到 `10-系统记录/巡检/报告`（和 syscheck 同目录，读法不变），历史进 `历史.jsonl`。
 - `docs/WINDOWS-PARITY.md`：mac / Windows 能力对照，哪些用系统自带、哪些要额外装、
   PowerToys 怎么定位（用户侧便利，不是程序依赖）。
+- `heartbeat._run_once_win()`：心跳在 Windows 上改跑上面那套基线检查。原来那套
+  （gateway / launchd / 锁 / node+brew / 微信会话 / App 监工）是 mac 的常驻结构，
+  Windows 一项都不存在，照跑每轮都是「有检查项没过」—— 那是**配置不存在**，不是毛病。
+  端口也改成探中台自己的（`CFG["port"]`），不是 gateway 的 18789。
+- 工作台的「系统巡检」卡只留最近一条：`_collapse` 按状态分组，否则「各项正常」
+  和上次的「有检查项没过」会并排出现，看的人以为现在还没好。
 
 ### 说明
 - **`/api/overview` 在 Windows 上整份降级**：`hostwork._disk()` 调 `os.statvfs`，
