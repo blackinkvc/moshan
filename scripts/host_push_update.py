@@ -113,9 +113,12 @@ $ErrorActionPreference = "Continue"
 $res = @{ mode = "__MODE__" }
 $body = @{ mode = "__MODE__" } | ConvertTo-Json -Compress
 try {
-    $r = Invoke-RestMethod -Uri ("http://127.0.0.1:__PORT__/api/update/mode?k=__TOKEN__") -Method Post -Body $body -ContentType "application/json" -TimeoutSec 20
+    # 不能用 Invoke-RestMethod：PS 5.1 对 application/json 默认按 ISO-8859-1 解码，
+    # 响应里的中文会变成一串乱码（实测 note 字段）。自己按 UTF-8 解字节。
+    $r = Invoke-WebRequest -Uri ("http://127.0.0.1:__PORT__/api/update/mode?k=__TOKEN__") -Method Post -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) -ContentType "application/json; charset=utf-8" -TimeoutSec 20 -UseBasicParsing
+    $txt = [System.Text.Encoding]::UTF8.GetString($r.RawContentStream.ToArray())
     $res.ok = $true
-    $res.body = $r
+    $res.body = $txt | ConvertFrom-Json
 } catch {
     $res.ok = $false
     $res.error = $_.Exception.Message
