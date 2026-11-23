@@ -5,6 +5,13 @@
 
 ## [未发布]
 
+### 计划
+- Windows 上补缩略图（用 PowerShell + System.Drawing 替代 macOS 的 sips）
+- 应用内托盘图标与「退出」菜单
+- 真正的原子更新（versions/ + current 符号链接，替换正在运行的程序）
+
+## [0.3.0] - 2026-11-23
+
 ### 新增
 - **插件包 `.moshanplug`**（`moshan/pluginpack.py`）：一个 zip + 一份 `plugin.json`
   就是能装的插件。中台里三条路，都不用开终端 ——
@@ -32,11 +39,6 @@
 - zip 里前两个 `</body>` 出现在内联 JS 的字符串里（启动占位页那两处），
   所以注入必须用**最后一个** `</body>` —— 用 `replace(…, 1)` 会把整段 UI 塞进 JS 字符串，
   浏览器报 `Invalid or unexpected token`，页面少一截还看着像「什么都没做」。
-
-### 计划
-- Windows 上补缩略图（用 PowerShell + System.Drawing 替代 macOS 的 sips）
-- 应用内托盘图标与「退出」菜单
-- 真正的原子更新（versions/ + current 符号链接，替换正在运行的程序）
 
 ## [0.2.7] - 2026-11-23
 
