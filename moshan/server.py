@@ -2251,13 +2251,23 @@ def docs_page(name: str) -> HTMLResponse:
 @app.get("/hostwork", response_class=HTMLResponse)
 def hostwork_page() -> HTMLResponse:
     """本机工作的「详情页」。以前是独立服务（8775），现在跟着口袋一起走：
-    数据源还是同一份，页面只是把卡片摊开、加筛选和图表的完整版。"""
-    p = (CUNTU_DIR / "hostwork_ui.html") if CUNTU_DIR.is_dir() else None
-    if hwmod is None or p is None or not p.exists():
+    数据源还是同一份，页面只是把卡片摊开、加筛选和图表的完整版。
+
+    0.2.4 起 hostwork / trae_work 也打进交付包了，页面同理：先看 cuntu
+    （开发机行为不变），没有再退到包内自带的那份 —— 否则使用者装完包
+    点进去只会看到 404，而作者本机永远复现不了。
+    """
+    p = None
+    for cand in (CUNTU_DIR / "hostwork_ui.html", BASE / "hostwork_ui.html"):
+        if cand.exists():
+            p = cand
+            break
+    if hwmod is None or p is None:
         return HTMLResponse(
             "<meta charset='utf-8'><body style='font:15px -apple-system;padding:40px'>"
             "<h3>本机工作页面不在这台机器上</h3>"
-            f"<p style='color:#666'>应当位于：{p}</p></body>", status_code=404)
+            f"<p style='color:#666'>找不到 hostwork_ui.html（cuntu 与包内均无）</p>"
+            "</body>", status_code=404)
     html = p.read_text(encoding="utf-8")
     html = html.replace("</head>", _HOSTWORK_SHIM + "</head>") if "</head>" in html \
         else _HOSTWORK_SHIM + html

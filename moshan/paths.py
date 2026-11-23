@@ -70,6 +70,24 @@ def config_file() -> Path:
     return state_dir() / "config.json"
 
 
+# hostwork.py 的 _root_source() 用它判断「数据根是不是配置文件指定的」。
+# 开发机那边对应物是 ~/.cuntu/config.json，交付版没有 cuntu，等价物就是
+# Moshan 自己的 config.json。放在模块尾部求值，保证 state_dir() 已经定义了。
+CONF_FILE = config_file()
+
+
+def ensure(path) -> Path:
+    """建好目录并原样返回 —— 开发版 cuntu 的 paths 一直有这个便利函数。
+
+    0.2.4 把 hostwork / billing 收进包之后，它们在**模块级**就会调用
+    `paths.ensure(data_root() / "_本机工作")`；本模块原来没这个函数，
+    导入当场 AttributeError。补在这里，别让使用方各写一遍 mkdir。
+    """
+    p = Path(path)
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
 def log_dir() -> Path:
     return state_dir() / "logs"
 

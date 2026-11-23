@@ -10,6 +10,35 @@
 - 应用内托盘图标与「退出」菜单
 - 真正的原子更新（versions/ + current 符号链接，替换正在运行的程序）
 
+## [0.2.4] - 2026-11-23
+
+**把「本机工作」的采集层收进交付包：别人机器上的 Moshan 不再是空壳。**
+
+以前 `hostwork` / `trae_work` 只躺在作者本机的 `cuntu/` 里，交付版没带，于是每台
+新装的机器都显示「本机工作模块没装上」，只能退到 `_CLIENTS` 那份降级账 ——
+而且作者本机永远复现不了这个问题。
+
+### 新增
+- `hostwork.py`（172 KB）、`trae_work.py`、`cherry_usage.py`、`billing.py` 随包分发。
+  `hostwork` 负责本机工作采集（会话记忆 / 进程 / 用量 / 计费对账），`trae_work` 是
+  它的 TRAE 取数层，另外两个分别是 Cherry Studio 用量账本与供应商账单
+- `hostwork_ui.html` 内置：`/hostwork` 详情页不再依赖外挂目录
+- `/hostwork` 的查找顺序改成「先 cuntu、再包内」：开发机行为不变，打包版不再 404
+
+### 修复
+- `moshan/paths.py` 补 `ensure()` 与 `CONF_FILE`。`hostwork` / `billing` 在**模块级**
+  就调用 `paths.ensure(data_root() / "_本机工作")`，缺这个函数是导入当场 AttributeError，
+  不是运行期降级 —— 整个模块直接不可用
+- `packages/moshan.spec` 的 `datas` 增加 `hostwork_ui.html`；`scripts/sync-from-dev.sh`
+  的 `EXTERNAL` 增加这五个文件，以后同步不会再漏
+
+### 说明
+- `cherry_usage` 的账本路径仍是 macOS 的 `~/Library/Application Support/CherryStudio`，
+  Windows 上取不到就采空（不报错）；要支持 Windows 得另接 `%APPDATA%`，这一版没做
+- `trae_work` 里的窗口标题采样走 CoreGraphics，非 macOS 会在 `try` 里失败并跳过，
+  不影响其余采集
+- 采集线程在 `server` 里启动，异常只写日志（`hostwork_thread_error`），不会拖死中台
+
 ## [0.2.3] - 2026-11-23
 
 **让 Trae 自己把「干了什么 + 花了多少」报进中台，装完新版本不用手点。**

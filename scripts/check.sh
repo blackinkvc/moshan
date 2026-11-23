@@ -102,9 +102,13 @@ PY
 else bad "https 信任链有问题（装版会 CERTIFICATE_VERIFY_FAILED，先 pip install certifi）"; fi
 
 say "== 4. 硬编码路径 =="
-if grep -rIl "/Users/" moshan/*.py 2>/dev/null | grep -v "ocr_runner.py" | grep -q .; then
+# 两个例外，都是「处理输入里的路径」而不是「把家目录写死」：
+#   ocr_runner.py —— 调 sips 时的 macOS 路径
+#   hostwork.py   —— 把采集到的 /Users/xxx/proj 裁成 proj（Windows 上还有 /home/）
+ALLOW_HOME_FILES="-e ocr_runner.py -e hostwork.py"
+if grep -rIl "/Users/" moshan/*.py 2>/dev/null | grep -v ${ALLOW_HOME_FILES} | grep -q .; then
   bad "代码里仍有写死的家目录："
-  grep -rIn "/Users/" moshan/*.py 2>/dev/null | grep -v "ocr_runner.py" | head -5
+  grep -rIn "/Users/" moshan/*.py 2>/dev/null | grep -v ${ALLOW_HOME_FILES} | head -5
 else
   ok "没有写死的家目录"
 fi

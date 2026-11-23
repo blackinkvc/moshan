@@ -1,0 +1,2275 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>本机工作</title>
+<!-- 由 cuntu/hostwork.py（:8775）现读；改完刷新即生效，不用重启服务 -->
+<script>
+(function(){
+  var t='auto';
+  try{
+    var m = document.cookie.match(/(?:^|; )cuntu_theme=([^;]*)/);
+    t = m ? decodeURIComponent(m[1])
+          : (localStorage.getItem('cuntu_theme') || localStorage.getItem('hw_theme') || 'auto');
+  }catch(e){}
+  var dark = t === 'dark' || (t !== 'light' && window.matchMedia('(prefers-color-scheme:dark)').matches);
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+})();
+</script>
+<style>
+/* ============================================================
+   本机工作 · 主色 indigo（跟工作台同一个），语义色只用于状态
+   ============================================================ */
+:root{
+  color-scheme:light;
+  --bg:#f3f4f8; --card:#fff; --card2:#f8f9fc;
+  --line:#e4e7f0; --line2:#eef0f7;
+  --tx:#141824; --tx2:#546078; --tx3:#7c8798;
+  --pri:#4f46e5; --pri-hi:#635bf0; --pri-solid:#4f46e5;
+  --pri-soft:#eef0fe; --pri-line:#dcdcfb;
+  --ok:#0d9f6e; --ok-soft:#e6f7f1;
+  --warn:#b5760a; --warn-soft:#fdf3e2;
+  --bad:#d24b3e; --bad-soft:#fdeceb;
+  --bar-soft:#eef0fe; --chart-mem:#0d9f6e;
+  --r:12px; --r2:16px;
+  --sh:0 1px 2px rgba(20,24,36,.04), 0 8px 24px -18px rgba(20,24,36,.3);
+  --ease:cubic-bezier(.2,.7,.3,1);
+  --font:-apple-system,"SF Pro Text","PingFang SC","Hiragino Sans GB",sans-serif;
+  --mono:"SF Mono",ui-monospace,Menlo,monospace;
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0b0d12; --card:#12151c; --card2:#161a23;
+  --line:#232833; --line2:#1b202a;
+  --tx:#eef1f7; --tx2:#a4adbd; --tx3:#76808f;
+  --pri:#8b86ff; --pri-hi:#a09bff; --pri-solid:#4f46e5;
+  --pri-soft:#1d1c33; --pri-line:#2c2b4d;
+  --ok:#54c79a; --ok-soft:#12261f;
+  --warn:#e0ad55; --warn-soft:#2a2113;
+  --bad:#ec7f72; --bad-soft:#2c1815;
+  --bar-soft:#241f45; --chart-mem:#54c79a;
+  --sh:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -22px #000;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--tx); font-family:var(--font);
+  font-size:14px; line-height:1.55; -webkit-font-smoothing:antialiased;
+  font-variant-numeric:tabular-nums;
+}
+button{font-family:inherit;font-size:inherit;color:inherit;background:none;border:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--pri);outline-offset:2px;border-radius:6px}
+.wrap{max-width:1240px;margin:0 auto;padding:0 22px 60px}
+
+/* ---------- 顶栏 ---------- */
+.top{position:sticky;top:0;z-index:30;backdrop-filter:blur(16px) saturate(140%);
+  background:color-mix(in srgb,var(--bg) 82%, transparent);
+  border-bottom:1px solid var(--line)}
+.top .in{max-width:1280px;margin:0 auto;padding:0 20px;height:52px;display:flex;align-items:center;gap:14px}
+.brand{display:flex;align-items:center;gap:9px;font-size:15.5px;font-weight:680;letter-spacing:-.005em;flex:0 0 auto}
+.brand i{width:9px;height:9px;border-radius:3px;background:var(--pri);box-shadow:0 0 0 3px var(--pri-soft)}
+/* 摘要句：把整页最该知道的三件事先说一句，比「364 个进程在册」有用 */
+.sum{font-size:12.5px;color:var(--tx2);display:flex;align-items:center;gap:7px;min-width:0;
+  overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.sum b{font-weight:620;color:var(--tx)}
+.sum .dot{width:3px;height:3px;border-radius:50%;background:var(--tx3);opacity:.55;flex:0 0 auto}
+.sum .up{color:var(--ok)}
+.grow{flex:1}
+.icobtn{width:32px;height:32px;border-radius:9px;border:1px solid var(--line);background:var(--card);
+  display:grid;place-items:center;color:var(--tx2);transition:.15s var(--ease);flex:0 0 auto}
+.icobtn:hover{color:var(--pri);border-color:var(--pri-line);background:var(--pri-soft)}
+.icobtn[aria-pressed="true"]{color:var(--pri);border-color:var(--pri-line);background:var(--pri-soft)}
+.icobtn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.9;
+  stroke-linecap:round;stroke-linejoin:round}
+
+/* ---------- 筛选条 ---------- */
+.bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 0 2px}
+.grp{display:flex;align-items:center;gap:8px;min-width:0}
+.search{display:flex;align-items:center;gap:7px;height:30px;padding:0 10px;border-radius:9px;
+  background:var(--card);border:1px solid var(--line);width:200px;transition:.16s var(--ease);flex:0 0 auto}
+.search:focus-within{border-color:var(--pri-line);width:250px;box-shadow:0 0 0 3px var(--pri-soft)}
+.search input{flex:1;min-width:0;border:0;background:none;outline:none;color:var(--tx);font-size:12.5px}
+.search input::placeholder{color:var(--tx3)}
+.search .x{color:var(--tx3);font-size:13px;line-height:1;padding:2px}
+.search .x:hover{color:var(--tx)}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{height:28px;padding:0 11px;border-radius:999px;border:1px solid var(--line);
+  background:var(--card);color:var(--tx2);font-size:12.5px;display:inline-flex;align-items:center;gap:6px;
+  transition:.14s var(--ease)}
+.chip:hover{border-color:var(--pri-line);color:var(--pri)}
+.chip[aria-pressed="true"]{background:var(--pri-soft);border-color:var(--pri-line);color:var(--pri);font-weight:600}
+.chip em{font-style:normal;font-size:11px;opacity:.62}
+.sep{width:1px;height:18px;background:var(--line);margin:0 4px}
+.lbl{font-size:11.5px;color:var(--tx3);letter-spacing:.04em;white-space:nowrap}
+
+/* ---------- 卡片 ---------- */
+.grid{display:grid;gap:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r2);box-shadow:var(--sh);
+  padding:16px 18px;min-width:0}
+
+/* ===== 布局编辑：卡片可拖动位置、可拖右下角改大小（对齐工作台那套）=====
+   两列 .hwrow 是默认骨架；进入编辑态后卡片按 data-w 切半列/整列，
+   位置顺序和尺寸都存 localStorage（hw_layout），刷新后照记忆落位。 */
+:root{--cell:88px}
+/* 卡片头：编辑态时右侧挂 ↑ ↓ × 三个工具钮 */
+.card>h3 .card-tools{display:none;margin-left:auto;align-items:center;gap:2px;flex:0 0 auto}
+.card-tools button{
+  width:20px;height:20px;padding:0;display:grid;place-items:center;
+  border:1px solid var(--line);background:var(--card);border-radius:6px;
+  font-size:10px;line-height:1;color:var(--tx2);
+}
+.card-tools button:hover{border-color:var(--pri-line);background:var(--pri-soft);color:var(--pri)}
+/* h3 里本来有个 .n 计数是 margin-left:auto；编辑态让它退位，工具钮排最后 */
+body.editing .card>h3 .n{margin-left:0}
+body.editing .card>h3 .card-tools{display:flex}
+
+/* 编辑态卡片：虚线描边、可抓、禁用内部交互，避免一按就点进筛选/表格 */
+body.editing .hwrow [data-card]{
+  position:relative;cursor:grab;
+  outline:1.5px dashed color-mix(in srgb,var(--pri) 42%,transparent);outline-offset:3px;
+}
+body.editing .hwrow [data-card]:hover{outline-color:var(--pri)}
+body.editing .hwrow [data-card].dragging{opacity:.4;outline-style:solid}
+body.editing .hwrow [data-card] :is(a,input,textarea,select,button){pointer-events:none}
+body.editing .hwrow [data-card] .card-tools button{pointer-events:auto}
+body.editing .hwrow [data-card] :is(input,textarea){opacity:.62}
+
+/* 半列卡：某行出现 data-w=1 时该行的 .hwrow 切成两列 */
+.hwrow.split{grid-template-columns:repeat(2,minmax(0,1fr))}
+.hwrow.split>[data-card]{min-width:0}
+.hwrow>[data-card][data-w="1"]{grid-column:span 1}
+.hwrow.split>[data-card]:not([data-w="1"]){grid-column:1/-1}
+/* 高度档：只是 min-height，内容比格子高就自己往下长 */
+.hwrow>[data-card][data-h="1"]{min-height:var(--cell)}
+.hwrow>[data-card][data-h="2"]{min-height:calc(var(--cell) * 2)}
+.hwrow>[data-card][data-h="3"]{min-height:calc(var(--cell) * 3)}
+.hwrow>[data-card][data-h="4"]{min-height:calc(var(--cell) * 4)}
+.hwrow>[data-card][data-h="5"]{min-height:calc(var(--cell) * 5)}
+.hwrow>[data-card][data-h="6"]{min-height:calc(var(--cell) * 6)}
+
+/* 右下角缩放手柄：编辑态才出现，按住往右下拖就长、往左上拖就缩 */
+.rsz{
+  display:none;position:absolute;right:0;bottom:0;width:20px;height:20px;padding:0 3px 3px 0;
+  box-sizing:border-box;align-items:flex-end;justify-content:flex-end;
+  border-radius:9px 0 0 0;background:var(--pri-soft);color:var(--pri);
+  cursor:nwse-resize;z-index:6;touch-action:none;
+}
+body.editing .rsz{display:flex}
+.rsz svg{width:12px;height:12px;pointer-events:none}
+body.editing .rsz:hover,body.rszing .rsz{background:var(--pri);color:#fff}
+body.editing [data-card].rszing{outline:2px solid var(--pri);outline-offset:-2px}
+body.rszing,body.rszing *{cursor:nwse-resize!important;user-select:none!important}
+.rztip{
+  position:fixed;z-index:95;pointer-events:none;
+  background:var(--tx);color:var(--card);font-size:11px;font-weight:600;
+  padding:4px 8px;border-radius:7px;white-space:nowrap;box-shadow:var(--sh);
+  font-variant-numeric:tabular-nums;
+}
+.rztip[hidden]{display:none}
+/* 拖拽落点占位 */
+.drop-ph{height:60px;border-radius:var(--r);border:1.5px dashed var(--pri);
+  background:var(--pri-soft);opacity:.55;min-width:0}
+
+/* 布局编辑条 */
+.editbar{
+  position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom));z-index:46;
+  transform:translateX(-50%);max-width:calc(100vw - 24px);
+  display:flex;align-items:center;gap:6px;padding:7px 8px 7px 14px;
+  background:color-mix(in srgb,var(--card) 92%,transparent);
+  border:1px solid var(--line);border-radius:14px;box-shadow:var(--sh);
+  backdrop-filter:blur(18px) saturate(1.6);-webkit-backdrop-filter:blur(18px) saturate(1.6);
+}
+.editbar[hidden]{display:none}
+.eb-t{font-size:12px;color:var(--tx2);white-space:nowrap}
+.eb-sep{width:1px;height:18px;background:var(--line);margin:0 2px;flex:0 0 auto}
+.eb-b{height:28px;padding:0 10px;border:1px solid transparent;background:transparent;border-radius:8px;
+  font-size:12px;font-weight:520;color:var(--tx2);white-space:nowrap}
+.eb-b:hover{background:var(--bar-soft);color:var(--tx)}
+.eb-b.pri{background:var(--pri-solid);color:#fff}
+.eb-b.pri:hover{background:var(--pri-solid);color:#fff;filter:brightness(1.06)}
+.eb-b b{font-variant-numeric:tabular-nums}
+.hiddenpool{
+  position:fixed;left:50%;transform:translateX(-50%);z-index:46;
+  bottom:calc(72px + env(safe-area-inset-bottom));
+  display:flex;flex-wrap:wrap;gap:6px;justify-content:center;
+  padding:10px;max-width:min(720px,calc(100vw - 24px));
+  background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--sh);
+}
+.hiddenpool[hidden]{display:none}
+.hiddenpool button{height:30px;padding:0 11px;border:1px dashed var(--line);background:transparent;
+  border-radius:9px;font-size:12px;color:var(--tx2)}
+.hiddenpool button:hover{border-style:solid;border-color:var(--pri-line);background:var(--pri-soft);color:var(--pri)}
+.hp-empty{font-size:12px;color:var(--tx3);padding:2px 4px}
+body.editing .wrap{padding-bottom:90px}
+.card h3{margin:0 0 2px;font-size:13.5px;font-weight:650;letter-spacing:.2px;display:flex;align-items:center;gap:8px}
+.card h3 .n{margin-left:auto;font-size:11.5px;color:var(--tx3);font-weight:500}
+.card .hint{font-size:11.5px;color:var(--tx3);margin:0 0 12px}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+@media(max-width:860px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:var(--r2);padding:13px 16px 27px;
+  box-shadow:var(--sh);display:flex;flex-direction:column;gap:3px;position:relative;overflow:hidden;
+  transition:border-color .16s var(--ease)}
+.kpi:hover{border-color:var(--pri-line)}
+.kpi .k{font-size:11.5px;color:var(--tx3);letter-spacing:.04em;display:flex;align-items:center;gap:6px;
+  position:relative;z-index:1}
+.kpi .v{font-size:25px;font-weight:680;letter-spacing:-.02em;line-height:1.15;position:relative;z-index:1}
+.kpi .v small{font-size:12px;font-weight:500;color:var(--tx3);margin-left:2px;letter-spacing:0}
+.kpi .meta{font-size:11.5px;color:var(--tx3);position:relative;z-index:1}
+/* 细进度条：光看「83.7%」不知道算不算高，给个横向占位 */
+.kpi .meter{height:3px;border-radius:2px;background:var(--line);overflow:hidden;
+  margin:8px 0 0;position:relative;z-index:1}
+.kpi .meter i{display:block;height:100%;border-radius:2px;background:var(--pri);
+  transition:width .45s var(--ease)}
+/* 走势铺成卡底的淡带，不跟数字抢位置 */
+.kpi .spk{position:absolute;left:0;right:0;bottom:0;height:26px;opacity:.34;pointer-events:none}
+.kpi .spk svg{width:100%;height:26px;display:block}
+.kpi.warn .v{color:var(--warn)}
+.kpi.warn .meter i{background:var(--warn)}
+.kpi.bad .v{color:var(--bad)}
+.kpi.bad .meter i{background:var(--bad)}
+
+/* ---------- 进程榜 ---------- */
+.plist{display:flex;flex-direction:column;gap:2px}
+/* 每行一个 --c：同一个软件在进程榜、CPU 走势、左边客户端头上都是同一个颜色。
+   没有图标的（系统守护 / 解释器）用齿轮、</> 或首字母兜底，颜色照样区分。 */
+.plogo{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;flex:0 0 auto;
+  background:color-mix(in srgb, var(--c) 13%, transparent);color:var(--c);overflow:hidden;
+  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--c) 20%, transparent)}
+.plogo img{width:100%;height:100%;object-fit:contain;display:block}
+.plogo.img{background:none;box-shadow:none}
+.plogo svg{width:13px;height:13px}
+.plogo b{font-size:11px;font-weight:700;line-height:1;letter-spacing:-.01em}
+.plogo.sm{width:15px;height:15px;border-radius:4px}
+.plogo.sm svg{width:9px;height:9px}
+.plogo.sm b{font-size:8.5px}
+.prow{display:grid;grid-template-columns:minmax(0,1fr) 74px 64px;gap:10px;align-items:center;
+  padding:6px 4px 6px 11px;border-radius:8px;position:relative}
+.prow:hover{background:var(--card2)}
+.prow .nm{position:relative;min-width:0;display:flex;align-items:center;gap:7px;z-index:1}
+.prow .nm b{font-weight:560;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prow .nm .own{font-size:10px;color:var(--c);opacity:.9;flex:0 0 auto;letter-spacing:.02em}
+.prow .barwrap{position:absolute;inset:0;border-radius:8px;overflow:hidden;pointer-events:none}
+.prow .barwrap i{position:absolute;left:0;top:3px;bottom:3px;border-radius:6px;
+  background:color-mix(in srgb, var(--c, var(--pri)) 26%, transparent)}
+:root[data-theme="dark"] .prow .barwrap i{background:color-mix(in srgb, var(--c, var(--pri)) 34%, transparent)}
+/* 行首一条 3px 实色：底色浅的时候靠它认是谁，比整条加深更不碍读 */
+.prow::after{content:'';position:absolute;left:0;top:5px;bottom:5px;width:3px;border-radius:2px;
+  background:var(--c, var(--pri));opacity:.85;pointer-events:none}
+.prow .cpu{font-size:12px;color:var(--tx2);text-align:right;font-variant-numeric:tabular-nums}
+.prow .mem{font-size:12px;color:var(--tx3);text-align:right;font-variant-numeric:tabular-nums}
+.prow.warm .cpu{color:var(--warn);font-weight:600}
+
+/* ---------- 表格 ---------- */
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{text-align:right;font-weight:600;font-size:11px;color:var(--tx3);letter-spacing:.04em;
+  padding:5px 8px;border-bottom:1px solid var(--line2);white-space:nowrap}
+th:first-child{text-align:left}
+td{padding:7px 8px;border-bottom:1px solid var(--line2);text-align:right;color:var(--tx2);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+td:first-child{text-align:left;color:var(--tx);font-weight:520}
+tr:last-child td{border-bottom:0}
+tbody tr:hover td{background:var(--card2)}
+td.dash{color:var(--tx3)}
+.mono{font-family:var(--mono);font-size:11.5px}
+/* 详细档的宽表在半宽卡里会撑破，给一条横向滑轨而不是硬挤 */
+.tscroll{overflow-x:auto;max-width:100%}
+/* 折算表挤在窄列里时，把单元格内边距收一收，尽量不触发横向滚动 */
+#tokenTable td,#tokenTable th{padding:7px 5px}
+#tokenTable td:first-child,#tokenTable th:first-child{padding-left:0}
+#tokenTable td:last-child,#tokenTable th:last-child{padding-right:0}
+
+/* ---------- 客户端树 ---------- */
+.cl{border:1px solid var(--line);border-radius:var(--r);margin-bottom:8px;overflow:hidden;background:var(--card)}
+.cl:last-child{margin-bottom:0}
+.clh{display:grid;grid-template-columns:22px minmax(0,1fr) auto auto 16px;gap:10px;align-items:center;
+  padding:10px 12px;cursor:pointer;background:var(--card2)}
+.clh:hover{background:var(--pri-soft)}
+.clh .g{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;font-size:11px;
+  background:color-mix(in srgb, var(--c, var(--pri)) 14%, transparent);color:var(--c, var(--pri));
+  border:1px solid color-mix(in srgb, var(--c, var(--pri)) 26%, transparent)}
+/* 客户端头那颗标要贴真 app 图标（跟右下「进程消耗」同一份 /api/icon）。
+   .app 的图标自己就是圆角方块，底下不能再垫色块/描边，否则四角露色尖。 */
+.clh .g.img{background:none;border-color:transparent}
+.clh .g.img img{width:100%;height:100%;object-fit:contain;display:block}
+.clh .g.mark svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round}
+/* 左边这棵树的客户端也吃同一个颜色：一眼看出进程榜里哪几行是它在跑 */
+.clh{box-shadow:inset 3px 0 0 var(--c, transparent)}
+.clh .nm{font-weight:620;font-size:13px}
+.clh .nm small{font-weight:400;color:var(--tx3);font-size:11.5px;margin-left:7px}
+.clh .v{font-size:12px;color:var(--tx2)}
+.clh .v b{font-weight:620;color:var(--tx)}
+.clh .arw{color:var(--tx3);font-size:10px;transition:transform .16s var(--ease)}
+.cl.open .clh .arw{transform:rotate(90deg)}
+.clb{display:none;padding:4px 12px 10px}
+.cl.open .clb{display:block}
+.krow{position:relative;display:grid;grid-template-columns:76px minmax(0,1fr) 66px 132px;gap:10px;align-items:center;
+  padding:5px 0;border-bottom:1px dashed var(--line2)}
+.krow:last-child{border-bottom:0}
+/* 占比条铺在整行背后（不占列宽），跟进程榜一个读法：一眼看谁占大头 */
+.krow .kbg{position:absolute;left:0;top:3px;bottom:3px;border-radius:6px;background:var(--bar-soft);
+  opacity:.85;pointer-events:none}
+.krow > *{position:relative;z-index:1}
+.kk{font-size:10.5px;color:var(--tx3);border:1px solid var(--line);border-radius:5px;padding:1px 5px;
+  justify-self:start;white-space:nowrap}
+.kk.model{color:#7c3aed;border-color:#e6dcfb;background:#f7f3ff}
+.kk.mode{color:#4f46e5;border-color:#dcdcfb;background:#eef0fe}
+.kk.expert{color:#0e7490;border-color:#cbe7ef;background:#eef8fb}
+.kk.mcp{color:#0f766e;border-color:#cdeae5;background:#eefaf7}
+.kk.skill{color:#b45309;border-color:#f6e3bd;background:#fdf6e7}
+.kk.agent{color:#be185d;border-color:#f8d4e3;background:#fdf1f6}
+.kk.tool{color:var(--tx2)}
+.kk.script{color:#1d4ed8;border-color:#d7e3fb;background:#f1f6ff}
+:root[data-theme="dark"] .kk.model{color:#c4b5fd;background:#221b36;border-color:#37305a}
+:root[data-theme="dark"] .kk.mode{color:#b4aefb;background:#1c1b31;border-color:#2d2b4c}
+:root[data-theme="dark"] .kk.expert{color:#83cde0;background:#132329;border-color:#1e3841}
+:root[data-theme="dark"] .kk.mcp{color:#7fd6c9;background:#122723;border-color:#1e3a35}
+:root[data-theme="dark"] .kk.skill{color:#e9c07a;background:#2a2113;border-color:#3d321d}
+:root[data-theme="dark"] .kk.agent{color:#f6a8c8;background:#2b1622;border-color:#40202f}
+:root[data-theme="dark"] .kk.script{color:#a9c6ff;background:#151d33;border-color:#233050}
+.krow .kn{font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.krow .kn span{color:var(--tx3);font-size:11px;margin-left:6px}
+.krow .kc{font-size:12px;color:var(--tx2);text-align:right}
+.krow .kshare{height:5px;border-radius:3px;background:var(--line2);overflow:hidden}
+.krow .kshare i{display:block;height:100%;background:var(--pri);opacity:.55;border-radius:3px}
+/* 分组：类别只写一次，组内不再重复挂小标签，三列（名字 / 次数 / token）对齐。
+   点组头可收起，收起状态只记在内存里，刷新回到默认展开。 */
+.kg{margin-bottom:7px;border:1px solid var(--line2);border-radius:9px;overflow:hidden;background:var(--card)}
+.kgh{display:flex;align-items:center;gap:8px;padding:6px 9px;cursor:pointer;user-select:none}
+.kgh:hover{background:var(--card2)}
+.kgh b{font-size:11.5px;font-weight:620;color:var(--tx2);font-variant-numeric:tabular-nums}
+.kgh .kgline{flex:1;height:1px;background:var(--line2)}
+.kgh em{font-style:normal;font-size:10px;color:var(--tx3);transition:transform .16s var(--ease)}
+.kg.open .kgh em{transform:rotate(180deg)}
+.kgb{display:none;padding:1px 9px 6px}
+.kg.open .kgb{display:block}
+.kgb .krow{grid-template-columns:minmax(0,1fr) 66px 132px;gap:8px;padding:4px 0}
+.kgb .krow .kbg{left:-5px;right:-5px}
+.kgb .empty{padding:6px 0 2px}
+.empty{padding:14px 4px;color:var(--tx3);font-size:12px}
+
+/* ---------- 图 ---------- */
+.chart{width:100%;height:auto;display:block;overflow:visible}
+.legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--tx3);margin-top:8px}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.legend i{width:8px;height:8px;border-radius:2px;display:block}
+.pcell{display:inline-flex;align-items:center;gap:7px;min-width:0}
+.big{font-size:21px;font-weight:680;letter-spacing:-.01em}
+.foot{margin-top:18px;font-size:11.5px;color:var(--tx3);display:flex;gap:14px;flex-wrap:wrap}
+.foot code{font-family:var(--mono);font-size:11px;background:var(--card2);padding:1px 5px;border-radius:5px;
+  border:1px solid var(--line)}
+.flag{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:2px 7px;border-radius:999px;
+  background:var(--warn-soft);color:var(--warn);font-weight:560}
+.flag.ok{background:var(--ok-soft);color:var(--ok)}
+.stack{display:grid;gap:14px;min-width:0}
+.two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:14px;align-items:start}
+/* 左宽右窄：给「谁在干活」这种要展开的树多一点位置 */
+.two.a{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr)}
+@media(max-width:980px){.two,.two.a{grid-template-columns:minmax(0,1fr)}}
+/* 折算卡的两个大数：有点数并排，没点数就让金额占主位 */
+.hero{display:flex;gap:34px;align-items:flex-end;flex-wrap:wrap;margin:2px 0 4px}
+.hero .h .lbl{font-size:11.5px;color:var(--tx3);letter-spacing:.04em}
+.hero .h .big.pri{color:var(--pri)}
+.hero .why{font-size:11.5px;color:var(--tx3);max-width:230px;line-height:1.45;padding-bottom:4px}
+/* 客户端那棵树顶上的一行汇总 */
+.clsum{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--tx3);
+  padding:0 0 10px;margin-bottom:2px;border-bottom:1px solid var(--line2)}
+.clsum b{font-weight:620;color:var(--tx);font-size:12.5px}
+.mt{margin-top:14px}
+/* 逐轮工作记录：工作台卡片上那一列「谁在什么时候干了什么」，这里原样看一遍。
+   一轮一行，点开看这轮具体走了哪几步 —— 跟卡片用的是同一份数据。 */
+.rwtabs{display:flex;gap:6px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+.rwtabs .sp{flex:1}
+.rwlist{border:1px solid var(--line2);border-radius:10px;overflow:hidden}
+/* 逐轮表格：时间 / 任务 / 执行者 / 项目·token / 箭头 —— 五列跟主页「本机工作」
+   表头一一对齐（主页窄屏会把后两列折进副标，这里全宽所以都单列摆开）。
+   这一页是数据源，字段只许比主页多、不许比主页少。 */
+.rwrow{display:grid;grid-template-columns:66px minmax(0,1fr) 92px 106px 14px;gap:10px;
+  align-items:start;padding:9px 11px;border-bottom:1px solid var(--line2);cursor:pointer}
+.rwrow:last-of-type{border-bottom:0}
+.rwrow:hover,.rwrow.open{background:var(--card2)}
+.rwt{font-size:11px;color:var(--tx3);line-height:1.5;white-space:nowrap}
+.rwt b{display:block;color:var(--tx2);font-weight:550}
+.rwt em{display:block;font-style:normal;font-size:10px;color:var(--tx3);font-variant-numeric:tabular-nums}
+.rwmain{min-width:0}
+.rwline{display:flex;align-items:baseline;gap:6px;min-width:0}
+.rwtask{font-size:12.5px;font-weight:580;line-height:1.45;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.rwrow.open .rwtask{white-space:normal}
+.rwst{font-size:10px;padding:1px 6px;border-radius:20px;white-space:nowrap;flex:0 0 auto;
+  display:inline-flex;align-items:center;gap:4px;background:var(--chip);color:var(--tx3)}
+.rwst i{width:5px;height:5px;border-radius:50%;background:currentColor}
+.rwst.fail{background:var(--bad-soft);color:var(--bad)}
+.rwst.run{background:var(--pri-soft);color:var(--pri)}
+.rwst.skip{background:var(--chip);color:var(--tx3)}
+.rwcnt{font-size:10.5px;color:var(--tx3);white-space:nowrap;flex:0 0 auto}
+.rwdet{font-size:11px;color:var(--tx3);margin-top:2px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.rwwho{font-size:11px;line-height:1.45;text-align:right;min-width:0}
+.rwwho b{display:block;font-weight:550;color:var(--pri);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.rwwho span{color:var(--tx3);display:block;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.rwwho span.mdl{color:var(--mc,var(--pri));font-weight:560}
+html[data-theme="dark"] .rwwho span.mdl{color:var(--mcd,var(--pri))}
+/* 项目 token 独立成列，跟主页 c4 同款：项目在上、token 在下，title 带 in/out 明细 */
+.rwproj{font-size:11px;line-height:1.45;text-align:right;min-width:0}
+.rwproj b{display:block;font-weight:560;color:var(--tx2);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.rwproj span{display:block;color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rwproj span.zero{color:var(--tx3);opacity:.65}
+.rwar{color:var(--tx3);font-size:10px;line-height:1.7;transition:transform .15s var(--ease)}
+.rwrow.open .rwar{transform:rotate(90deg)}
+.rwxp{padding:3px 11px 12px 76px;border-bottom:1px solid var(--line2);background:var(--card2)}
+.rwfc{display:inline-block;font-size:10.5px;padding:1px 7px;margin:0 5px 6px 0;
+  border-radius:20px;border:1px solid var(--pri-line);background:var(--pri-soft);color:var(--pri)}
+.rwsteps{display:grid;gap:2px}
+.rwstep{display:grid;grid-template-columns:64px minmax(0,1fr);gap:10px;
+  font-size:11px;color:var(--tx2);line-height:1.5}
+.rwstep i{font-style:normal;color:var(--tx3)}
+.rwmore{font-size:11px;color:var(--tx3);margin-top:5px;padding-left:74px}
+.rwempty{padding:18px;text-align:center;color:var(--tx3);font-size:12px}
+/* 读不到时那颗「重试」：跟页面其它小按钮一个样子，别做成蓝色链接 */
+.rwretry{margin-left:8px;padding:2px 9px;border:1px solid var(--line);border-radius:7px;
+  background:var(--card);color:var(--tx2);font:inherit;font-size:12px;cursor:pointer}
+.rwretry:hover{border-color:var(--accent);color:var(--accent)}
+.rwlist.flow .rwtask{white-space:normal;overflow:visible}
+.rwlist.flow .rwrow{padding-bottom:11px}
+/* 任务清单：按 agent 分页 + 按日期归档；点任务展开这段任务里的具体对话 */
+.tkday{padding:5px 12px;font-size:10.5px;font-weight:700;color:var(--tx3);
+  background:var(--card2);border-top:1px solid var(--line2)}
+/* 五列：箭头 / 名字 / 跨天 / 轮数 / 来源（少一列那个来源会换到下一行） */
+.tkrow{display:grid;grid-template-columns:12px minmax(0,1fr) auto auto auto;gap:7px;align-items:center;
+  padding:6px 12px 6px 8px;border-top:1px solid var(--line2);font-size:12px;cursor:pointer;
+  user-select:none}
+.tkrow:hover{background:var(--card2)}
+.tkrow.on{background:var(--card2)}
+.tkcv{font-size:9px;color:var(--tx3);transition:transform .14s;text-align:center;line-height:1}
+.tkrow.on .tkcv{transform:rotate(90deg);color:var(--pri)}
+.tkcv.off{opacity:.25}
+.tkname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--tx)}
+.tkrow.on .tkname{font-weight:600}
+.tkn{font-size:10px;color:var(--tx3);font-variant-numeric:tabular-nums;white-space:nowrap}
+.tksrc{flex:0 0 auto;font-size:10px;color:var(--tx3);border:1px solid var(--line);
+  border-radius:8px;padding:1px 6px;white-space:nowrap}
+.tksrc.ocr{color:var(--pri);border-color:var(--pri-line);background:var(--pri-soft)}
+.tkkids{padding:2px 12px 8px 27px;background:var(--card2);border-top:1px solid var(--line2)}
+.tkkid{display:grid;grid-template-columns:66px minmax(0,1fr);gap:8px;padding:3px 0;font-size:11.5px;
+  line-height:1.45;color:var(--tx2);border-bottom:1px dashed var(--line2)}
+.tkkid:last-child{border-bottom:0}
+.tkkid .t{color:var(--tx3);font-variant-numeric:tabular-nums;font-size:10.5px;padding-top:1px;white-space:nowrap}
+.tkmore{font-size:10.5px;color:var(--tx3);padding:4px 0 0}
+.tabs{display:flex;gap:6px;margin-bottom:10px}
+.hide-simple{display:none}
+[data-density="simple"] .hide-simple{display:none}
+[data-density="simple"] .only-simple{display:block}
+[data-density="detail"] .only-detail{display:block}
+.only-detail{display:none}
+.center{padding:60px 0;text-align:center;color:var(--tx3)}
+@media(max-width:600px){
+  .krow{grid-template-columns:62px minmax(0,1fr) 50px 88px;gap:8px}
+  .clh{grid-template-columns:22px minmax(0,1fr) auto 14px;gap:8px}
+  .clh .v:nth-child(4){display:none}
+  .kpi .v{font-size:22px}
+  .hero{gap:16px}
+  .wrap{padding:0 14px 50px}
+  .rwrow{grid-template-columns:52px minmax(0,1fr) 14px;gap:2px 8px;padding:8px 10px}
+  .rwwho,.rwproj{grid-column:2;text-align:left}
+  .rwwho{grid-row:2;display:flex;gap:8px;align-items:baseline}
+  .rwwho b{font-size:10.5px}
+  .rwproj{grid-row:3;display:flex;gap:8px;align-items:baseline}
+  .rwproj b,.rwproj span{font-size:10px}
+  .rwar{grid-column:3;grid-row:1}
+  .rwxp{padding-left:60px}
+  .rwstep{grid-template-columns:52px minmax(0,1fr);gap:8px}
+  .rwmore{padding-left:0}
+}
+/* ---- 任务清单：跨天 / 甘特 ----
+   一条任务干了三天，就该在三天里都出现；「干了几天」靠 3/5 天的小标和
+   甘特那张图看，不用自己数。 */
+.tkbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.tkbar .rwtabs{flex:1 1 auto;min-width:0}
+.tkseg{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;flex:0 0 auto}
+.tkseg button{border:0;background:transparent;color:var(--tx3);font:inherit;font-size:11px;
+  padding:2px 8px;cursor:pointer}
+.tkseg button.on{background:var(--pri-soft);color:var(--pri)}
+.tkspan{font-size:10px;padding:1px 5px;border-radius:999px;white-space:nowrap;
+  color:var(--pri);background:var(--pri-soft);border:1px solid var(--pri-line);
+  font-variant-numeric:tabular-nums}
+.tkspan.q{color:var(--tx3);background:transparent;border-color:var(--line)}
+/* 甘特：一根条 = 一条任务从第一个活跃日到最后，中间停的日子留空 */
+.gtbar{display:flex;justify-content:flex-end;gap:4px;padding:2px 0 6px}
+.gtbar button{border:1px solid var(--line);background:transparent;color:var(--tx3);
+  border-radius:999px;font:inherit;font-size:10.5px;padding:1px 7px;cursor:pointer}
+.gtbar button.on{color:var(--pri);border-color:var(--pri-line);background:var(--pri-soft)}
+.gtaxis,.gtrow{display:grid;grid-template-columns:120px minmax(0,1fr);align-items:center}
+.gtaxis .lab{font-size:10px;color:var(--tx3);font-variant-numeric:tabular-nums}
+.gtticks{position:relative;height:14px;font-size:9px;color:var(--tx3)}
+.gtticks span{position:absolute;top:0;white-space:nowrap;line-height:14px}
+.gtname{font-size:11.5px;padding:3px 8px 3px 0;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;color:var(--tx2);cursor:pointer}
+.gtrow:hover .gtname{color:var(--tx)}
+.gttrack{display:grid;gap:0;padding:3px 0}
+.gtc{height:13px;background:transparent}
+.gtc.d{background:var(--pri);opacity:.34}
+.gtc.d.a1{opacity:.55}
+.gtc.d.a2{opacity:.75}
+.gtc.d.a3{opacity:.95}
+.gtc.f{background:repeating-linear-gradient(45deg,var(--pri) 0 2px,transparent 2px 5px);opacity:.3}
+.gtc.bs{border-radius:3px 0 0 3px}
+.gtc.be{border-radius:0 3px 3px 0}
+.gtc.bs.be{border-radius:3px}
+.gtc.now{box-shadow:inset 0 0 0 1.5px var(--pri)}
+
+</style>
+</head>
+<body data-density="normal">
+
+<div class="top"><div class="in">
+  <div class="brand"><i></i>本机工作</div>
+  <div class="sum" id="sub">读取中…</div>
+  <div class="grow"></div>
+  <button class="icobtn" id="btnLayout" title="调整卡片位置和大小" aria-label="布局" aria-pressed="false">
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.4"/><rect x="14" y="3" width="7" height="7" rx="1.4"/><rect x="3" y="14" width="7" height="7" rx="1.4"/><rect x="14" y="14" width="7" height="7" rx="1.4"/></svg>
+  </button>
+  <button class="icobtn" id="btnTheme" title="切换深浅色" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4"/></svg>
+  </button>
+  <button class="icobtn" id="btnRefresh" title="立刻刷新" aria-label="刷新">
+    <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4.5V10h-5.5"/></svg>
+  </button>
+</div></div>
+
+<div class="wrap">
+  <div class="bar">
+    <div class="grp"><span class="lbl">时间</span><div class="chips" id="fRange"></div></div>
+    <div class="grp"><span class="lbl">看谁</span><div class="chips" id="fClient"></div></div>
+    <div class="grp"><span class="lbl">显示</span><div class="chips" id="fDensity"></div></div>
+    <div class="grow"></div>
+    <label class="search">
+      <span style="color:var(--tx3);font-size:12px">⌕</span>
+      <input id="fq" placeholder="只找某个进程 / 技能 / 专家" aria-label="搜索">
+      <button class="x" id="fqClear" title="清空" hidden>×</button>
+    </label>
+  </div>
+
+  <div class="kpis mt" id="kpis"></div>
+
+  <!-- 第一行：左树右账 —— 左栏那棵树很高，右栏拿「钱 + 进程」两张矮卡去配平，
+       不然会剩一大片空白（实测 921 vs 453，差近 500px） -->
+  <div class="two a hwrow mt" data-row="top">
+    <div class="card" data-card="clients" data-title="谁在干活">
+      <h3>谁在干活 <span class="n" id="clientN"></span></h3>
+      <p class="hint">上层是客户端，下面按类别分组 —— 点组头可收起，点小标签可只留你关心的几类</p>
+      <div class="chips" id="fKind" style="margin-bottom:10px"></div>
+      <div class="clsum" id="clsum"></div>
+      <div id="clients"></div>
+    </div>
+    <div class="stack hwrow" data-row="topright">
+      <div class="card" data-card="money" data-title="Token 与折算">
+        <h3>Token 与折算 <span class="n" id="moneyN"></span></h3>
+        <p class="hint" id="moneyHint"></p>
+        <div class="hero" id="moneyHero"></div>
+        <div id="tokenTable" class="mt tscroll"></div>
+        <div class="foot" id="formula"></div>
+      </div>
+      <div class="card" data-card="proc" data-title="进程消耗">
+        <h3>进程消耗 <span class="n" id="procN"></span></h3>
+        <p class="hint">按进程名合并（Electron 一个应用会开一堆 helper）；百分比＝占满一个核为 100%</p>
+        <div class="plist" id="procs"></div>
+        <div class="only-detail mt tscroll"><table id="procTable"></table></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 第二行：两条时间线 —— 哪天烧了多少 token / 两小时内 CPU 怎么走的 -->
+  <div class="two hwrow mt" data-row="charts">
+    <div class="card" data-card="daytok" data-title="每天烧了多少 token">
+      <h3>每天烧了多少 token <span class="n" id="tokenN"></span></h3>
+      <p class="hint">按天堆叠：深色＝输出，浅色＝输入（含缓存命中）</p>
+      <div id="tokenChart"></div>
+      <div class="legend" id="tokenLegend"></div>
+      <div class="only-detail mt tscroll"><table id="dayTable"></table></div>
+    </div>
+    <div class="card" data-card="appchart" data-title="近两小时 CPU 走势">
+      <h3>近两小时 CPU 走势 <span class="n" id="appChartN"></span></h3>
+      <p class="hint">每 10 秒采一次，取这段时间累计最吃 CPU 的几项</p>
+      <div id="appChart"></div>
+      <div class="legend" id="appLegend"></div>
+    </div>
+  </div>
+
+  <div class="hwrow mt" data-row="mach">
+  <div class="card" data-card="mach" data-title="机器走势">
+    <h3>机器走势 <span class="n" id="machN"></span></h3>
+    <p class="hint">磁盘与内存的占用率，按所选时间范围降采样（最多 160 个点）</p>
+    <div id="machChart"></div>
+    <div class="legend" id="machLegend"></div>
+  </div>
+  </div>
+
+  <!-- 逐轮记录：跟工作台那张卡同源（直接读它算好的 worklog.host），
+       卡片上能看到的任务、模型、模式/专家、步骤，这一页也要能看到。 -->
+  <div class="hwrow mt" data-row="rounds">
+  <div class="card" data-card="rounds" data-title="逐轮工作记录" id="roundCard">
+    <h3>逐轮工作记录 <span class="n" id="roundN"></span></h3>
+    <p class="hint">从会话流水里逐轮解析出来的原始记录 —— 工作台「本机工作」卡片调用的就是这份数据。点开一行看这轮做了什么。</p>
+    <div class="rwtabs">
+      <button class="chip" data-rwv="table" aria-pressed="true">表格</button>
+      <button class="chip" data-rwv="flow" aria-pressed="false">流水</button>
+      <span class="sp"></span>
+      <span id="roundAt" style="font-size:11px;color:var(--tx3)"></span>
+    </div>
+    <div id="rounds" class="rwlist"></div>
+  </div>
+  </div>
+
+  <div class="hwrow mt" data-row="agenttasks">
+  <div class="card" data-card="agenttasks" data-title="任务清单" id="taskCard">
+    <h3>任务清单 <span class="n" id="taskN"></span></h3>
+    <p class="hint">各 agent 名下有哪些任务/项目 —— 跟逐轮记录分开。TRAE 侧栏截图 OCR 出来的是历史项目名，不是当天执行。</p>
+    <div class="tkbar">
+      <div class="rwtabs" id="taskTabs"></div>
+      <span class="tkseg" id="taskSeg">
+        <button type="button" data-tv="list" class="on">列表</button>
+        <button type="button" data-tv="gantt">甘特</button></span>
+    </div>
+    <div id="taskList" class="tscroll"></div>
+    <div id="taskGantt" class="tscroll" hidden></div>
+  </div>
+  </div>
+
+  <div class="hwrow mt" data-row="pocket">
+  <div class="card only-detail" data-card="pocket" data-title="口袋在做的事" id="pocketCard">
+    <h3>口袋在做的事 <span class="n" id="pocketN"></span></h3>
+    <p class="hint">pocket.jsonl 里的事件按脚本归类；「—」是没记耗时</p>
+    <div id="pocketBody" class="tscroll"></div>
+  </div>
+  </div>
+
+  <div class="foot" id="foot"></div>
+</div>
+
+<!-- ===== 布局编辑条 ===== -->
+<div class="editbar" id="editbar" hidden>
+  <span class="eb-t" id="ebT">拖动卡片排序 · 右下角拖着改大小</span>
+  <span class="eb-sep"></span>
+  <button class="eb-b" id="ebHidden">收起的卡 <b id="ebHiddenN">0</b></button>
+  <button class="eb-b" id="ebReset">恢复默认</button>
+  <button class="eb-b pri" id="ebDone">完成</button>
+</div>
+<div class="hiddenpool" id="hiddenPool" hidden></div>
+
+<script>
+/* ============================================================
+   本机工作前端：一份 overview JSON 画满整页。
+   所有筛选都是**本地过滤**，切筛选不重新请求（只有换时间范围才请求）。
+   ============================================================ */
+var S = {
+  data: null, range: '7d', density: 'normal', q: '', client: 'all',
+  kinds: { model: 1, mode: 1, expert: 1, tool: 1, mcp: 1, skill: 1, agent: 1, script: 1 },
+  open: new Set(['workbuddy']), closedGroups: new Set(), loading: false, err: '',
+  rounds: null, roundView: 'table', roundOpen: new Set(), roundErr: '',
+  tasks: null, taskAgent: '', taskErr: '', taskView: 'list', taskWin: 30
+};
+/* 分组顺序：跟工作台那张卡一致 —— 先看「谁、用什么方式」，最后才是工具流水 */
+var GROUPS = [['model','模型'],['mode','模式'],['expert','专家'],['mcp','连接器'],
+              ['skill','技能'],['agent','子代理'],['tool','工具'],['script','脚本']];
+/* 「专家」和「子代理」是两样东西，别混：
+   专家 = 会话里选的 Expert（ex_xxx），子代理 = Agent/Task 工具派出去的那个。
+   MCP 在界面上叫「连接器」，跟工作台那张卡的说法对齐（同一个东西两个名字最费神）。 */
+var KIND_LABEL = { model: '模型', mode: '模式', expert: '专家', tool: '工具',
+                   mcp: '连接器', skill: '技能', agent: '子代理', script: '脚本' };
+var $ = function (s) { return document.querySelector(s); };
+var esc = function (s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+};
+function fmtN(n) {
+  if (n == null) return '—';
+  if (n >= 1e8) return (n / 1e8).toFixed(2) + ' 亿';
+  if (n >= 1e4) return (n / 1e4).toFixed(n >= 1e6 ? 0 : 1) + ' 万';
+  return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+/* 模型全名留给 title，列表里写短名：deepseek-v4.1-flash → DS-V4.1。
+   跟工作台卡片同一套缩写规则，两边看着不会一个是长串一个是代号。 */
+function shortModel(v) {
+  var n = String(v || '').trim(), low = n.toLowerCase(), m;
+  if (!n) return '';
+  if (low.indexOf('deepseek') >= 0) { m = n.match(/v?(\d+(?:\.\d+)?)/); return 'DS' + (m ? '-' + m[1] : ''); }
+  if (low.indexOf('hunyuan') >= 0 || /^hy[\d-]/i.test(n)) return 'HY' + ((n.match(/\d+/) || [''])[0])
+    + (/free/i.test(n) ? ' Free' : /flash/i.test(n) ? ' Flash' : '');
+  if (/^glm/i.test(n)) { m = n.match(/(\d+(?:\.\d+)?)/); return 'GLM' + (m ? ' ' + m[1] : '')
+    + (/flash/i.test(n) ? ' Flash' : ''); }
+  if (/^claude/i.test(n)) { m = n.match(/([\d.]+)/); return 'Claude' + (m ? ' ' + m[1] : ''); }
+  return n.length > 12 ? n.slice(0, 11) + '…' : n;
+}
+/* 跟工作台同一套模型配色：按完整模型名做稳定散列，红橙留给告警 */
+var MODEL_HUES = [212, 268, 158, 300, 96, 188, 332, 42, 240, 130];
+function modelStyle(name) {
+  var s = String(name || '').toLowerCase(), h = 0;
+  for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  var hue = MODEL_HUES[h % MODEL_HUES.length];
+  return ' style="--mc:hsl(' + hue + ' 68% 46%);--mcd:hsl(' + hue + ' 78% 72%)"';
+}
+function fmtTok(n) {
+  n = Number(n || 0);
+  if (!n) return '—';
+  if (n >= 1e8) return (n / 1e8).toFixed(1) + '亿';
+  if (n >= 1e4) return (n / 1e4).toFixed(n >= 1e6 ? 0 : 1) + '万';
+  return String(n);
+}
+function fmtMs(ms) {
+  if (!ms) return '—';
+  if (ms < 1000) return ms + ' ms';
+  if (ms < 60000) return (ms / 1000).toFixed(1) + ' s';
+  var m = ms / 60000;
+  return m < 60 ? m.toFixed(1) + ' 分' : (m / 60).toFixed(1) + ' 时';
+}
+/* 逐轮耗时：跟主页 wlDur 同一套写法，两边看着一样（38s / 9m12s / 1h2m） */
+function rwDur(secs) {
+  if (secs == null || secs <= 0) return '';
+  if (secs < 60) return secs + 's';
+  var m = Math.floor(secs / 60), s = secs % 60;
+  if (m < 60) return m + 'm' + (s ? ' ' + s + 's' : '');
+  var h = Math.floor(m / 60), mm = m % 60;
+  return h + 'h' + (mm ? ' ' + mm + 'm' : '');
+}
+var RW_ST = { ok: '成功', fail: '失败', skip: '跳过', run: '进行中' };
+function fmtAge(sec) {
+  if (sec == null) return '—';
+  if (sec < 60) return sec + ' 秒';
+  if (sec < 3600) return Math.round(sec / 60) + ' 分';
+  if (sec < 86400) return (sec / 3600).toFixed(1) + ' 时';
+  return (sec / 86400).toFixed(1) + ' 天';
+}
+function ls(k, d) { try { var v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } }
+function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } }
+
+/* ---------------- 取数：一律带超时 ----------------
+   这一页以前是裸 fetch，没有超时也没有看门狗。标签放一晚上再回来，
+   Safari 会把后台标签里的请求挂起（不返回也不报错），S.loading 就永远停在
+   true —— 之后每 30 秒的定时器进来第一句就被 return 掉，整页冻在离开时那一刻：
+   图表停在旧数据、逐轮卡停在当时那句「Load failed」，刷新页面才好。
+   所以：① 每个请求 20 秒没回应自己 abort；② 单飞锁带 25 秒看门狗；
+        ③ 页面重新可见时补一次强制刷新。 */
+function hwFetch(url, ms) {
+  ms = ms || 20000;
+  var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  var timer = setTimeout(function () { if (ctl) ctl.abort(); }, ms);
+  var opt = ctl ? { signal: ctl.signal, cache: 'no-store' } : { cache: 'no-store' };
+  return fetch(url, opt).then(function (r) {
+    clearTimeout(timer);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }, function (e) {
+    clearTimeout(timer);
+    throw new Error(e && e.name === 'AbortError'
+      ? '超时（' + Math.round(ms / 1000) + ' 秒没回应）'
+      : (e && e.message) || '取数失败');
+  });
+}
+
+/* ---------------- 小图：折线 ---------------- */
+/* 图的宽取容器实际宽度：固定 viewBox 在半宽/整行两种卡里会被拉变形 */
+function chartW(el, fallback) {
+  var w = Math.round(el.getBoundingClientRect().width || 0);
+  return w > 240 ? w : fallback;
+}
+function spark(vals, color, w, h) {
+  w = w || 112; h = h || 40;
+  var pts = vals.filter(function (v) { return v != null; }).map(Number);
+  if (pts.length < 2) return '';
+  var min = Math.min.apply(null, pts), max = Math.max.apply(null, pts);
+  if (max === min) { max = min + 1; }
+  var step = w / (vals.length - 1);
+  var d = '', area = '';
+  vals.forEach(function (v, i) {
+    if (v == null) return;
+    var x = (i * step).toFixed(1);
+    var y = (h - 3 - (Number(v) - min) / (max - min) * (h - 8)).toFixed(1);
+    d += (d ? ' L' : 'M') + x + ' ' + y;
+  });
+  area = d + ' L' + w + ' ' + h + ' L0 ' + h + ' Z';
+  var gid = 'g' + Math.random().toString(36).slice(2, 7);
+  return '<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none" aria-hidden="true">'
+    + '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="0" y2="1">'
+    + '<stop offset="0" stop-color="' + color + '" stop-opacity=".28"/>'
+    + '<stop offset="1" stop-color="' + color + '" stop-opacity="0"/></linearGradient></defs>'
+    + '<path d="' + area + '" fill="url(#' + gid + ')"/>'
+    + '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.6" '
+    + 'stroke-linejoin="round" stroke-linecap="round"/></svg>';
+}
+
+/* 多折线：用于近两小时 CPU 走势 */
+function multiLine(el, chart, opts) {
+  var W = chartW(el, 620), H = 190, padL = 30, padR = 8, padT = 10, padB = 22;
+  var at = chart.at || [], apps = chart.apps || [];
+  if (!at.length || !apps.length) { el.innerHTML = '<div class="empty">还没采到足够的数据（服务刚起，等一两分钟）</div>'; return; }
+  if (at.length < 5) {
+    el.innerHTML = '<div class="empty">正在攒数据：已采 ' + at.length + ' 笔（每 10 秒一笔），满 5 笔开始画</div>';
+    $('#appLegend').innerHTML = '';
+    return;
+  }
+  /* 一条线的点从哪来：服务端现在给的是六维（cpu/mem/dw/dr/net/pwr）并排的
+     `v`，老接口给的是单维 `points`。以前这里只认 points，服务端改成多维之后
+     每条线都变成 undefined，整张卡连带页头报「出错了」。这里取要画的那一维，
+     取不到就退回第一维（cpu），两种形状都能画。 */
+  var keys = (chart.keys && chart.keys.length) ? chart.keys : ['cpu'];
+  var dim = Math.max(0, keys.indexOf((opts && opts.dim) || 'cpu'));
+  var line = function (a) {
+    if (a.points) return a.points;
+    var v = a.v || [];
+    return v[dim] || v[0] || [];
+  };
+  var all = [];
+  apps.forEach(function (a) { line(a).forEach(function (v) { all.push(v); }); });
+  var max = Math.max.apply(null, all.concat([10]));
+  max = Math.ceil(max / 10) * 10;
+  /* 同一张图里两条线撞成一个颜色就白画了：撞了就把后一条的色相挪开 26°。
+     只在这一张图内挪，榜上那个颜色不动 —— 图里宁可略偏，也不能两条一样 */
+  var seen = {};
+  var colors = apps.map(function (a) {
+    var c = procColor(a.name), d = 0;
+    while (seen[c] && d < 300) { d += 26; c = procColorAt(a.name, d); }
+    seen[c] = 1;
+    return c;
+  });
+  var x = function (i) { return padL + i * (W - padL - padR) / Math.max(1, at.length - 1); };
+  var y = function (v) { return padT + (H - padT - padB) * (1 - v / max); };
+  var g = '';
+  for (var k = 0; k <= 4; k++) {
+    var vy = padT + (H - padT - padB) * k / 4;
+    g += '<line x1="' + padL + '" y1="' + vy + '" x2="' + (W - padR) + '" y2="' + vy
+      + '" stroke="currentColor" stroke-opacity=".1"/>'
+      + '<text x="' + (padL - 6) + '" y="' + (vy + 3.5) + '" text-anchor="end" font-size="9" fill="currentColor" fill-opacity=".45">'
+      + Math.round(max * (1 - k / 4)) + '%</text>';
+  }
+  var paths = '';
+  apps.forEach(function (a, idx) {
+    var d = '';
+    line(a).forEach(function (v, i) {
+      if (v == null) return;
+      d += (d ? ' L' : 'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1);
+    });
+    paths += '<path d="' + d + '" fill="none" stroke="' + colors[idx % colors.length]
+      + '" stroke-width="1.7" stroke-linejoin="round" opacity=".92"/>';
+  });
+  var xl = '';
+  [0, Math.floor(at.length / 2), at.length - 1].forEach(function (i) {
+    if (at[i] == null) return;
+    xl += '<text x="' + x(i).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="9" '
+      + 'fill="currentColor" fill-opacity=".45">' + esc(at[i]) + '</text>';
+  });
+  el.innerHTML = '<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" role="img">'
+    + '<g color="var(--tx3)">' + g + xl + '</g>' + paths + '</svg>';
+  var lg = $('#appLegend');
+  /* 色点 + 小图标：色点对线条，图标认人。文字不染色 —— 橄榄绿、土黄这类色相
+     在白底上做正文对比度不够，读起来累 */
+  lg.innerHTML = apps.map(function (a) {
+    return '<span><i style="background:' + procColor(a.name) + '"></i>'
+      + procLogo(procInfo(a.name), 'sm') + esc(a.name) + '</span>';
+  }).join('');
+}
+
+/* 机器走势：磁盘 / 内存两条线，满量程 0–100% */
+function machineChart(el, series) {
+  var disk = (series.disk || []).filter(function (x) { return x[1] != null; });
+  var mem = (series.mem || []).filter(function (x) { return x[1] != null; });
+  if (!disk.length && !mem.length) {
+    el.innerHTML = '<div class="empty">还没有机器快照（metrics.py 每 2 分钟记一笔）</div>';
+    $('#machLegend').innerHTML = '';
+    return;
+  }
+  var W = chartW(el, 1040), H = 200, padL = 34, padR = 10, padT = 10, padB = 22;
+  var n = Math.max(disk.length, mem.length);
+  var x = function (i) { return padL + i * (W - padL - padR) / Math.max(1, n - 1); };
+  var y = function (v) { return padT + (H - padT - padB) * (1 - Math.max(0, Math.min(100, v)) / 100); };
+  var grid = '';
+  [0, 25, 50, 75, 100].forEach(function (v) {
+    grid += '<line x1="' + padL + '" y1="' + y(v) + '" x2="' + (W - padR) + '" y2="' + y(v)
+      + '" stroke="currentColor" stroke-opacity=".1"/>'
+      + '<text x="' + (padL - 6) + '" y="' + (y(v) + 3.5) + '" text-anchor="end" font-size="10" '
+      + 'fill="currentColor" fill-opacity=".45">' + v + '%</text>';
+  });
+  function pathOf(arr, color) {
+    if (!arr.length) return '';
+    var d = '';
+    arr.forEach(function (p, i) {
+      d += (d ? ' L' : 'M') + x(i).toFixed(1) + ' ' + y(p[1]).toFixed(1);
+    });
+    return '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.8" '
+      + 'stroke-linejoin="round" stroke-linecap="round" opacity=".9"/>';
+  }
+  var base = disk.length ? disk : mem;
+  var labels = '';
+  // 手机宽度塞五个「11-18 18:22」会挤成一条线，窄了只留起、中、止三个
+  var idxs = W < 560
+    ? [0, Math.floor(base.length / 2), base.length - 1]
+    : [0, Math.floor(base.length / 4), Math.floor(base.length / 2),
+       Math.floor(base.length * 3 / 4), base.length - 1];
+  idxs.forEach(function (i, k) {
+    if (!base[i]) return;
+    // 首尾用 start/end 对齐，窄屏时不会被卡片边裁掉半个日期
+    var an = k === 0 ? 'start' : (k === idxs.length - 1 ? 'end' : 'middle');
+    labels += '<text x="' + x(i).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="' + an + '" font-size="10" '
+      + 'fill="currentColor" fill-opacity=".45">' + esc(String(base[i][0])) + '</text>';
+  });
+  el.innerHTML = '<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" role="img">'
+    + '<g color="var(--tx3)">' + grid + labels + '</g>'
+    + pathOf(mem, 'var(--chart-mem)') + pathOf(disk, 'var(--pri)') + '</svg>';
+  $('#machLegend').innerHTML = '<span><i style="background:var(--pri)"></i>磁盘</span>'
+    + '<span><i style="background:var(--chart-mem)"></i>内存</span>';
+}
+
+/* 柱状：每天 token（整行铺开，横向 1040 不拉伸比例） */
+function dayBars(el, rows) {
+  if (!rows || !rows.length) { el.innerHTML = '<div class="empty">这段时间没有 token 记录</div>'; $('#tokenLegend').innerHTML = ''; return; }
+  var W = chartW(el, 1040), H = 200, padL = 44, padB = 22, padT = 10, padR = 10;
+  var max = Math.max.apply(null, rows.map(function (r) { return r.in + r.out; }).concat([1]));
+  var bw = Math.min(64, (W - padL - padR) / Math.max(1, rows.length) * 0.58);   // 天数少时别画成宽墩子
+  var step = (W - padL - padR) / Math.max(1, rows.length);
+  var y = function (v) { return padT + (H - padT - padB) * (1 - v / max); };
+  var grid = '';
+  [0, 0.5, 1].forEach(function (f) {
+    var vy = padT + (H - padT - padB) * (1 - f);
+    grid += '<line x1="' + padL + '" y1="' + vy + '" x2="' + (W - padR) + '" y2="' + vy
+      + '" stroke="currentColor" stroke-opacity=".1"/>'
+      + '<text x="' + (padL - 8) + '" y="' + (vy + 3.5) + '" text-anchor="end" font-size="10" '
+      + 'fill="currentColor" fill-opacity=".45">' + fmtN(max * f) + '</text>';
+  });
+  var bars = '';
+  rows.forEach(function (r, i) {
+    var x = padL + step * i + (step - bw) / 2;
+    var hIn = (H - padT - padB) * (r.in / max);
+    var hOut = (H - padT - padB) * (r.out / max);
+    bars += '<rect x="' + x.toFixed(1) + '" y="' + (y(r.in) - hOut).toFixed(1) + '" width="' + bw.toFixed(1)
+      + '" height="' + Math.max(0, hOut).toFixed(1) + '" rx="2" fill="var(--pri)"/>';
+    bars += '<rect x="' + x.toFixed(1) + '" y="' + y(r.in).toFixed(1) + '" width="' + bw.toFixed(1)
+      + '" height="' + Math.max(0, hIn).toFixed(1) + '" rx="2" fill="var(--pri)" fill-opacity=".34"/>';
+    if (rows.length <= 16 || i % Math.ceil(rows.length / 12) === 0) {
+      bars += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="10" '
+        + 'fill="currentColor" fill-opacity=".45">' + esc(String(r.d).slice(5)) + '</text>';
+    }
+    /* 天不多的时候把总量标在柱顶，不用拿尺子量高矮 */
+    if (rows.length <= 10) {
+      bars += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (y(r.in + r.out) - 5).toFixed(1)
+        + '" text-anchor="middle" font-size="10" fill="currentColor" fill-opacity=".6">'
+        + fmtN(r.in + r.out) + '</text>';
+    }
+  });
+  el.innerHTML = '<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" role="img">'
+    + '<g color="var(--tx3)">' + bars + '</g></svg>';
+  $('#tokenLegend').innerHTML = '<span><i style="background:var(--pri)"></i>输出</span>'
+    + '<span><i style="background:var(--pri);opacity:.34"></i>输入</span>';
+}
+
+/* ---------------- 进程配色与图标 ----------------
+   同一个名字在页面任何位置都是同一个颜色：进程榜、近两小时 CPU 走势、
+   左边的客户端头。WorkBuddy / 口袋用固定色（跟主色、成功色一致），
+   其余按名字哈希到 24 个色相 —— 不是随机的彩虹墙，刷新也不会变色。 */
+var PROC_FIXED = { workbuddy: 'var(--pri)', pocket: 'var(--ok)' };
+/* 颜色怎么发牌：
+   试过两种都不行 —— 按名字哈希，常把几个名字挤进同一段绿；按黄金角连续发，
+   榜上相邻两行确实分开了，但换一组人（比如走势图里挑 6 条线）又会撞回同一片紫。
+   最后用**一张排好序的色板**，按名单顺序轮着发：榜是 CPU 序、图是同一批高频进程，
+   所以「同时出现在屏幕上的那几个」一定落在色板的不同位置。
+   色相顺序本身也按大间隔排（200→40→280→100…），相邻两个至少差 40°。 */
+var PALETTE = [200, 40, 280, 100, 330, 160, 20, 240, 70, 310, 130, 190];
+var _colorMap = {};
+var _colorN = 0;
+function assignColor(name) {
+  var k = String(name || '').toLowerCase();
+  if (_colorMap[k]) return _colorMap[k];
+  var i = _colorN++;
+  // 红＝告警（超 80% 转黄、90% 转红），330 那一档压到 320 避开正红
+  var h = PALETTE[i % PALETTE.length] === 330 ? 322 : PALETTE[i % PALETTE.length];
+  var v = { h: h, s: 50 + (i % 3) * 8 };
+  _colorMap[k] = v;
+  return v;
+}
+function buildColorMap() {
+  /* 顺序就是这个顺序：接口按 CPU 排好的，所以先发牌的是榜上最靠前的。
+     WorkBuddy / 口袋是固定色，别占色板名额。 */
+  ((S.data && S.data.apps) || []).forEach(function (a) {
+    var k = String(a.name || '').toLowerCase();
+    if (PROC_FIXED[k] || PROC_FIXED[procOwner(a.name)]) return;
+    assignColor(a.name);
+  });
+}
+function procOwner(name) {
+  var list = (S.data && S.data.clients) || [];
+  var k = String(name || '').toLowerCase();
+  for (var i = 0; i < list.length; i++) {
+    var pr = list[i].proc;
+    if (pr && String(pr.name).toLowerCase() === k) return list[i].id;
+  }
+  return '';
+}
+function procColorAt(name, delta) {
+  var own = procOwner(name);
+  if (own && PROC_FIXED[own]) return PROC_FIXED[own];
+  var k = String(name || '').toLowerCase();
+  if (PROC_FIXED[k]) return PROC_FIXED[k];
+  var dark = document.documentElement.dataset.theme === 'dark';
+  var v = _colorMap[k] || assignColor(name);
+  var h = (v.h + (delta || 0)) % 360;
+  return 'hsl(' + h + ' ' + v.s + '% ' + (dark ? '66%' : '44%') + ')';
+}
+function procColor(name) { return procColorAt(name, 0); }
+/* 系统软件、解释器没有 .app 可摘，按类别给一个意思对得上的图形 */
+var KIND_ICON = {
+  sys: '<circle cx="12" cy="12" r="3.1"/><path d="M19.3 14.9a1.6 1.6 0 0 0 .3 1.8l.1.1a1.9 1.9 0 1 1-2.7 2.7l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5v.2a1.9 1.9 0 1 1-3.8 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a1.9 1.9 0 1 1-2.7-2.7l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1h-.2a1.9 1.9 0 1 1 0-3.8h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a1.9 1.9 0 1 1 2.7-2.7l.1.1a1.6 1.6 0 0 0 1.8.3h.1a1.6 1.6 0 0 0 1-1.5v-.2a1.9 1.9 0 1 1 3.8 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a1.9 1.9 0 1 1 2.7 2.7l-.1.1a1.6 1.6 0 0 0-.3 1.8v.1a1.6 1.6 0 0 0 1.5 1h.2a1.9 1.9 0 1 1 0 3.8h-.1a1.6 1.6 0 0 0-1.5 1Z"/>',
+  kernel: '<rect x="7.6" y="7.6" width="8.8" height="8.8" rx="2"/><path d="M10 3v3M14 3v3M10 18v3M14 18v3'
+    + 'M3 10h3M3 14h3M18 10h3M18 14h3"/>',
+  script: '<path d="M8.4 8.6 5 12l3.4 3.4"/><path d="M15.6 8.6 19 12l-3.4 3.4"/><path d="M13.4 5.4l-2.8 13.2"/>',
+  bin: '<rect x="4.2" y="5.2" width="15.6" height="13.6" rx="2.6"/><path d="M4.2 9.6h15.6"/>'
+};
+function procLogo(a, cls) {
+  var name = (a && a.name) || '';
+  var c = procColor(name);
+  var kind = (a && a.kind) || '';
+  var head = '<span class="plogo ' + (cls || '') + '" style="--c:' + c + '" title="';
+  if (a && a.icon) {
+    return head + esc(name) + '"><img src="/api/icon?f=' + encodeURIComponent(a.icon)
+      + '" alt="" loading="lazy"></span>';
+  }
+  var g = KIND_ICON[kind];
+  var tip = kind === 'sys' ? name + '（系统后台进程）'
+    : (kind === 'kernel' ? name + '（内核）'
+    : (kind === 'script' ? name + '（脚本 / 解释器）' : name));
+  var inner = g
+    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" '
+      + 'stroke-linecap="round" stroke-linejoin="round">' + g + '</svg>'
+    : '<b>' + esc((String(name).trim().charAt(0) || '?').toUpperCase()) + '</b>';
+  return head + esc(tip) + '">' + inner + '</span>';
+}
+function procInfo(name) {
+  var list = (S.data && S.data.apps) || [];
+  for (var i = 0; i < list.length; i++) if (list[i].name === name) return list[i];
+  return { name: name };
+}
+var OWNER_LABEL = { workbuddy: 'WorkBuddy', pocket: '口袋' };
+
+/* ---------------- 渲染 ---------------- */
+/* 顶栏那句摘要：整页最该先知道的三件事 —— 谁在干活、折了多少钱、机器紧不紧。
+   技术细节（进程数、核数、刷新时刻）放 title，不占版面。 */
+function renderTop() {
+  var d = S.data, m = d.machine, mo = d.money || {};
+  var cl = d.clients || [];
+  var wb = cl.find(function (c) { return /workbuddy/i.test(c.id || ''); });
+  var pk = cl.find(function (c) { return /pocket|口袋/i.test(c.id || ''); });
+  var bits = [];
+  if (wb) bits.push(esc(wb.name) + ' <b>' + fmtN(wb.calls) + '</b> 次');
+  if (pk) bits.push(esc(pk.name) + ' <b>' + fmtN(pk.calls) + '</b> 次');
+  if (mo.cost != null) bits.push('折算 <b>' + (mo.currency || '¥') + mo.cost.toFixed(2) + '</b>');
+  else if (mo.points != null) bits.push('折算 <b>' + fmtN(mo.points) + '</b> 点');
+  bits.push('内存 <b>' + m.mem.mem_pct + '%</b>');
+  bits.push('磁盘 <b>' + m.disk.disk_pct + '%</b>');
+  (m.extra_disks || []).slice(0, 1).forEach(function (x) {
+    bits.push('外置盘 <b>' + esc(x.name) + ' ' + x.disk_pct + '%</b>');
+  });
+  // 主页资源卡把这三项默认藏了；工具页是「看全部」的地方，一直摆出来
+  var rate = function (v) {
+    v = Number(v || 0);
+    return v >= 1048576 ? (v / 1048576).toFixed(1) + 'M/s'
+      : v >= 1024 ? (v / 1024).toFixed(1) + 'K/s' : Math.round(v) + 'B/s';
+  };
+  var net = m.net || {};
+  bits.push('网络 <b>↓' + rate(net.in_bps) + ' ↑' + rate(net.out_bps) + '</b>');
+  var pw = m.power || {};
+  if (pw.watts != null) bits.push('功耗 <b>' + Number(pw.watts).toFixed(1) + 'W</b>'
+    + (pw.has_battery ? '（电池 ' + pw.battery_pct + '%' + (pw.charging ? ' 充电' : '') + '）' : ''));
+  var gp = m.gpu || {};
+  if (gp.used_gb != null) bits.push('显存 <b>' + gp.used_gb + 'G</b>'
+    + (gp.util_pct != null ? ' · GPU ' + gp.util_pct + '%' : ''));
+  var sep = '<span class="dot"></span>';
+  $('#sub').innerHTML = '<span>' + esc((d.range && d.range.label) || '这段时间') + '</span>'
+    + sep + bits.join(sep);
+  $('#sub').title = (d.apps || []).length + ' 个进程在册 · ' + m.cpus + ' 核 · 刷新于 ' + d.now;
+  var scan = d.scan || {};
+  var tip = $('#scanTip');
+  if (tip) {
+    tip.textContent = scan.running
+      ? '正在扫会话 ' + scan.done + '/' + scan.total + '…'
+      : (scan.err ? '会话扫描出错：' + scan.err : '会话已读完 ' + (scan.total || 0) + ' 个');
+  }
+}
+
+function renderKPI() {
+  var d = S.data, m = d.machine, se = d.series || {};
+  var memVals = (se.mem || []).map(function (x) { return x[1]; });
+  var diskVals = (se.disk || []).map(function (x) { return x[1]; });
+  var loadVals = (se.load || []).map(function (x) { return x[1]; });
+  var cpuVals = ((d.app_series || {}).cpu || []);
+  var diskCls = m.disk.disk_pct >= 90 ? 'bad' : (m.disk.disk_pct >= 80 ? 'warn' : '');
+  var memCls = m.mem.mem_pct >= 90 ? 'bad' : (m.mem.mem_pct >= 75 ? 'warn' : '');
+  var cpuReady = m.cpu_ready !== false;
+  var cards = [
+    { k: '磁盘', v: m.disk.disk_pct, unit: '%', pct: m.disk.disk_pct,
+      meta: '剩 ' + m.disk.free_gb + ' / ' + m.disk.total_gb + ' GB',
+      spark: diskVals, color: 'var(--pri)', cls: diskCls },
+    { k: '内存', v: m.mem.mem_pct, unit: '%', pct: m.mem.mem_pct,
+      meta: m.mem.mem_gb + ' / ' + m.mem.mem_total_gb + ' GB · 进程占 ' + m.rss_total_gb + ' GB',
+      spark: memVals, color: 'var(--chart-mem)', cls: memCls },
+    { k: 'CPU', v: cpuReady ? m.cpu_pct : null, unit: '%', pct: cpuReady ? m.cpu_pct : 0,
+      meta: m.cpus + ' 核 · 负载 ' + m.load[0]
+        + (cpuReady ? ' · 可见进程 ' + (m.cpu_proc_pct || 0) + '%' : ' · 刚启动，正在采第二个样本'),
+      spark: cpuVals.length > 1 ? cpuVals : loadVals, color: 'var(--warn)',
+      cls: m.cpu_pct >= 85 ? 'warn' : '' },
+    { k: '已经开了', v: m.uptime_h, unit: '小时', pct: null,
+      meta: m.load.map(function (x) { return x.toFixed(2); }).join(' / ') + '（1/5/15 分负载）',
+      spark: loadVals, color: 'var(--pri)', cls: '' }
+  ];
+  $('#kpis').innerHTML = cards.map(function (c) {
+    var val = c.v === null ? '—' : Math.round(c.v * 10) / 10;
+    return '<div class="kpi ' + c.cls + '">'
+      + '<div class="k">' + c.k + '</div>'
+      + '<div class="v">' + val + '<small>' + c.unit + '</small></div>'
+      + '<div class="meta">' + esc(c.meta) + '</div>'
+      + (c.pct == null ? ''
+          : '<div class="meter"><i style="width:' + Math.min(100, Math.max(0, c.pct)).toFixed(1) + '%"></i></div>')
+      + (c.spark && c.spark.length > 1 ? '<div class="spk">' + spark(c.spark, c.color) + '</div>' : '')
+      + '</div>';
+  }).join('');
+}
+
+function renderProcs() {
+  var q = S.q.toLowerCase();
+  var pool = (S.data.apps || []).filter(function (a) {
+    return !q || a.name.toLowerCase().indexOf(q) >= 0 || (a.path || '').toLowerCase().indexOf(q) >= 0;
+  });
+  var limit = S.density === 'simple' ? 6 : (S.density === 'detail' ? 30 : 12);
+  // 大部分进程 CPU / 内存都接近 0（系统里几百个），先挑「真在吃资源」的，
+  // 不够一屏就按内存把剩下的补上 —— 否则卡片经常只剩三四行，看着像坏了
+  var hot = pool.filter(function (a) { return a.cpu > 0.15 || a.mem > 200; });
+  var cool = pool.filter(function (a) { return !(a.cpu > 0.15 || a.mem > 200); });
+  var apps = hot.concat(cool.slice(0, Math.max(0, limit - hot.length)));
+  var max = Math.max.apply(null, apps.map(function (a) { return a.cpu; }).concat([0.5]));
+  var idle = max < 1;
+  // 机器闲下来时 CPU 列全是 0.0%，按 CPU 排看着像坏了 —— 改按内存排，并把话说清楚
+  if (idle) apps = apps.slice().sort(function (a, b) { return b.mem - a.mem; });
+  $('#procN').textContent = (q ? apps.length + ' / ' : '') + pool.length + ' 个进程在册 · 合计 '
+    + (S.data.machine.rss_total_gb != null ? S.data.machine.rss_total_gb + ' GB' : '—')
+    + (idle ? ' · CPU 都接近 0，按内存排' : '');
+  $('#procs').innerHTML = apps.slice(0, limit).map(function (a) {
+    var barMax = idle ? Math.max.apply(null, apps.map(function (x) { return x.mem; }).concat([1])) : max;
+    var pct = Math.max(2, (idle ? a.mem / barMax : a.cpu / barMax) * 100);
+    var own = (a.owners || []).filter(function (x) { return OWNER_LABEL[x]; })[0];
+    return '<div class="prow' + (a.cpu > 30 ? ' warm' : '') + '" style="--c:' + procColor(a.name)
+      + '" title="' + esc(a.path || a.name) + '">'
+      + '<div class="barwrap"><i style="width:' + pct.toFixed(1) + '%"></i></div>'
+      + '<div class="nm">' + procLogo(a) + '<b>' + esc(a.name) + '</b>'
+      + (own && S.density !== 'simple' && OWNER_LABEL[own].toLowerCase() !== a.name.toLowerCase()
+          ? '<span class="own">' + esc(OWNER_LABEL[own]) + '</span>' : '')
+      + '</div>'
+      + '<div class="cpu">' + a.cpu.toFixed(1) + '%</div>'
+      + '<div class="mem">' + (a.mem >= 1024 ? (a.mem / 1024).toFixed(1) + 'G' : Math.round(a.mem) + 'M') + '</div>'
+      + '</div>';
+  }).join('') || '<div class="empty">还没采到进程（服务刚起，等 10 秒）</div>';
+
+  var t = $('#procTable');
+  if (S.density === 'simple') { t.innerHTML = ''; return; }
+  var rows = apps.slice(0, S.density === 'detail' ? 40 : 10);  if (!rows.length) { t.innerHTML = ''; return; }
+  t.innerHTML = '<thead><tr><th>进程</th><th>CPU</th><th>内存</th><th>累计 CPU 时间</th><th>运行</th><th>PID</th></tr></thead><tbody>'
+    + rows.map(function (a) {
+      return '<tr><td title="' + esc(a.path) + '"><span class="pcell" style="--c:' + procColor(a.name)
+        + '">' + procLogo(a, 'sm') + esc(a.name) + '</span></td>'
+        + '<td>' + a.cpu.toFixed(1) + '%</td>'
+        + '<td>' + a.mem.toFixed(0) + ' MB</td>'
+        + '<td>' + (a.cpu_s >= 3600 ? (a.cpu_s / 3600).toFixed(1) + ' 时' : (a.cpu_s / 60).toFixed(0) + ' 分') + '</td>'
+        + '<td>' + fmtAge(a.age) + '</td>'
+        + '<td class="dash">' + a.pids + '</td></tr>';
+    }).join('') + '</tbody>';
+}
+
+function renderKinds() {
+  $('#fKind').innerHTML = Object.keys(KIND_LABEL).map(function (k) {
+    return '<button class="chip" data-kind="' + k + '" aria-pressed="' + (S.kinds[k] ? 'true' : 'false') + '">'
+      + KIND_LABEL[k] + '</button>';
+  }).join('');
+}
+
+/* 客户端头那颗标。
+   以前画的是后端给的字符（✦ / ◈），可同一个页面的「进程消耗」里贴的都是真 .app
+   图标 —— 两处指的是同一个软件，长得却像两样东西。现在统一：有 .app 就贴它的图标
+   （/api/icon，后端扫 bundle 时转的 png），没有才退回字符。
+   口袋例外：它跑在 python 进程里，proc.icon 是 python 的标，贴上来等于认错人
+   （进程榜里那颗 python 图标本来就指它）。所以它用自己的四格标。 */
+var POCKET_MARK = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor"'
+  + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+  + '<rect x="3" y="3" width="7" height="9" rx="1.8"/><rect x="14" y="3" width="7" height="5" rx="1.8"/>'
+  + '<rect x="14" y="12" width="7" height="9" rx="1.8"/><rect x="3" y="16" width="7" height="5" rx="1.8"/></svg>';
+function clientArt(c) {
+  if (!c) return '';
+  if (c.id === 'pocket') return '<div class="g mark">' + POCKET_MARK + '</div>';
+  var ic = c.proc && c.proc.icon;
+  if (ic) {
+    return '<div class="g img"><img src="/api/icon?f=' + encodeURIComponent(ic)
+      + '" alt="" loading="lazy"></div>';
+  }
+  return '<div class="g">' + esc(c.glyph || '·') + '</div>';
+}
+function renderClients() {
+  var d = S.data;
+  var all = d.clients || [];
+  var q = S.q.toLowerCase();
+  var list = all.filter(function (c) { return S.client === 'all' || c.id === S.client; });
+  /* 顶部一行汇总：不展开也知道总量，省得挨个点开加 */
+  var calls = 0, tok = 0, sess = 0;
+  list.forEach(function (c) {
+    calls += c.calls || 0;
+    sess += c.sessions || 0;
+    var tk = c.tokens || {};
+    tok += (tk.in || 0) + (tk.out || 0);
+  });
+  var mo = d.money || {};
+  $('#clientN').textContent = list.length + (list.length !== all.length ? ' / ' + all.length : '') + ' 个客户端';
+  $('#clsum').innerHTML = list.length
+    ? '<span>调用 <b>' + fmtN(calls) + '</b> 次</span>'
+      + '<span>token <b>' + fmtN(tok) + '</b></span>'
+      + (mo.cost != null ? '<span>折算 <b>' + (mo.currency || '¥') + mo.cost.toFixed(2) + '</b></span>' : '')
+      + (sess ? '<span>会话 <b>' + sess + '</b> 个</span>' : '')
+    : '';
+  if (!list.length) { $('#clients').innerHTML = '<div class="empty">没有匹配的客户端</div>'; return; }
+  // 默认档只露最常用的几个工具，不然 30 多行全是「1 次」
+  var toolCap = S.density === 'simple' ? 4 : (S.density === 'normal' ? 9 : 999);
+  $('#clients').innerHTML = list.map(function (c) {
+    var open = S.open.has(c.id) || !!q || S.client !== 'all';
+    var pool = (c.kids || []).filter(function (k) { return S.kinds[k.kind]; });
+    var kids = pool.filter(function (k) {
+      return !q || k.name.toLowerCase().indexOf(q) >= 0;
+    });
+    var tok = c.tokens || {};
+    var tokSum = (tok.in || 0) + (tok.out || 0);
+    var cc = procColor(c.proc ? c.proc.name : c.name);
+    var head = '<div class="clh" data-cl="' + esc(c.id) + '" style="--c:' + cc + '">'
+      + clientArt(c)
+      + '<div class="nm">' + esc(c.name)
+      + (c.sessions ? '<small>' + c.sessions + ' 个会话</small>' : '')
+      + (c.ms ? '<small>共 ' + fmtMs(c.ms) + '</small>' : '') + '</div>'
+      + '<div class="v"><b>' + fmtN(c.calls) + '</b> 次</div>'
+      + '<div class="v">' + (tokSum ? '<b>' + fmtN(tokSum) + '</b> token' : (c.last ? '最近 ' + esc(c.last) : '')) + '</div>'
+      + '<div class="arw">▶</div></div>';
+    /* 按类别分组：以前 30 多行平铺，每行都挂一颗「工具 / 模型」小标签，
+       读起来像流水账。分组后类别只写一次，名字、次数、token 三列对齐。 */
+    var byKind = {};
+    kids.forEach(function (k) { (byKind[k.kind] = byKind[k.kind] || []).push(k); });
+    var kmax = Math.max.apply(null, kids.map(function (k) { return k.n; }).concat([1]));
+    var body = '<div class="clb">';
+    if (!kids.length) {
+      body += '<div class="empty">' + (q ? '「' + esc(S.q) + '」没匹配到子项' : '按当前筛选没有子项') + '</div>';
+    } else {
+      GROUPS.forEach(function (g) {
+        var arr = byKind[g[0]] || [];
+        if (!arr.length) return;
+        var cap = (g[0] === 'tool' && !q) ? toolCap : arr.length;
+        var shown = arr.slice(0, cap), hidden = arr.length - shown.length;
+        var gid = c.id + '|' + g[0];
+        var gopen = !S.closedGroups.has(gid) || !!q;
+        var rows = shown.map(function (k) {
+          var share = Math.max(1.5, k.n / kmax * 100);
+          var right = '';
+          if (k.tokens) {
+            right = fmtN((k.tokens.in || 0) + (k.tokens.out || 0)) + ' token'
+              + (k.points != null ? ' · ' + k.points.toFixed(1) + ' 点' : '')
+              + (k.cost != null ? ' · ¥' + k.cost.toFixed(2) : '');
+          } else if (k.ms) {
+            right = fmtMs(k.ms);
+          }
+          var nm = k.kind === 'model' ? shortModel(k.name) : k.name;
+          return '<div class="krow">'
+            + '<i class="kbg" style="width:' + share.toFixed(1) + '%"></i>'
+            + '<div class="kn"' + (nm !== k.name ? ' title="' + esc(k.name) + '"' : '')
+            + '>' + esc(nm) + (k.fail ? '<span>' + k.fail + ' 次失败</span>' : '') + '</div>'
+            + '<div class="kc">' + fmtN(k.n) + ' 次</div>'
+            + '<div class="kc" style="font-size:11.5px">' + right + '</div>'
+            + '</div>';
+        }).join('');
+        if (hidden > 0) {
+          rows += '<div class="empty gmore">…还有 ' + hidden
+            + ' 个用得少的工具（切「详细」看全部）</div>';
+        }
+        body += '<div class="kg' + (gopen ? ' open' : '') + '">'
+          + '<div class="kgh" data-kg="' + esc(gid) + '">'
+          + '<i class="kk ' + g[0] + '">' + g[1] + '</i>'
+          + '<b>' + arr.length + '</b><span class="kgline"></span><em>▾</em></div>'
+          + '<div class="kgb">' + rows + '</div></div>';
+      });
+    }
+    body += '</div>';
+    return '<div class="cl' + (open ? ' open' : '') + '">' + head + body + '</div>';
+  }).join('');
+}
+
+function renderMoney() {
+  var d = S.data, t = d.tokens || {}, mo = d.money || {};
+  var cur = mo.currency || '¥';
+  $('#moneyN').textContent = (t.totals && t.totals.calls ? t.totals.calls + ' 次模型调用' : '');
+  /* 有点数就并排两个大数；没有点数就让金额占主位、点数只留一句说明 ——
+     一个永远是「—」的空栏占掉半张卡，比不写还难看 */
+  $('#moneyHero').innerHTML = mo.points != null
+    ? '<div class="h"><div class="big">' + fmtN(mo.points) + '</div><div class="lbl">点数</div></div>'
+      + '<div class="h"><div class="big pri">' + (mo.cost == null ? '—' : cur + mo.cost.toFixed(2))
+      + '</div><div class="lbl">金额（估算）</div></div>'
+    : '<div class="h"><div class="big pri">' + (mo.cost == null ? '—' : cur + mo.cost.toFixed(2))
+      + '</div><div class="lbl">金额（估算）· 点数栏画横杠</div></div>'
+      + '<div class="why">这套计费没有点数概念，token 直接折成钱</div>';
+  var hit = t.cache_hit;
+  $('#moneyHint').innerHTML = '输入 ' + fmtN(t.totals ? t.totals.in : 0)
+    + ' · 输出 ' + fmtN(t.totals ? t.totals.out : 0)
+    + (hit != null ? ' · 缓存命中率 ' + (hit * 100).toFixed(0) + '%' : '');
+
+  var rows = (mo.rows || []);
+  if (!rows.length) {
+    $('#tokenTable').innerHTML = '<div class="empty">这段时间没有记录到 token（会话扫描还没读完？）</div>';
+  } else {
+    /* 半宽卡片放不下七列：缓存命中挪进「输入」的 title，主表只留六列 */
+    $('#tokenTable').innerHTML = '<table><thead><tr><th>模型</th><th>调用</th><th>输入</th><th>输出</th>'
+      + '<th>点数</th><th>金额</th></tr></thead><tbody>'
+      + rows.map(function (r) {
+        return '<tr><td class="mono">' + esc(r.model) + '</td>'
+          + '<td>' + fmtN(r.n) + '</td>'
+          + '<td title="其中缓存命中 ' + fmtN(r.cached) + '">' + fmtN(r.in) + '</td>'
+          + '<td>' + fmtN(r.out) + '</td>'
+          + '<td class="' + (r.points == null ? 'dash' : '') + '">' + (r.points == null ? '—' : r.points.toFixed(1)) + '</td>'
+          + '<td class="' + (r.cost == null ? 'dash' : '') + '">' + (r.cost == null ? '—' : cur + r.cost.toFixed(2)) + '</td>'
+          + '</tr>';
+      }).join('') + '</tbody></table>';
+  }
+  $('#formula').innerHTML = '<span>单价：' + esc(mo.formula || '') + '</span>'
+    + (mo.priced_ratio != null && mo.priced_ratio < 1
+        ? '<span class="flag">按已定价的 ' + (mo.priced_ratio * 100).toFixed(0)
+          + '% token 折算' + (mo.unpriced && mo.unpriced.length
+            ? '（' + esc(mo.unpriced.join('、')) + ' 没填价格，不假装算成 0 元）' : '') + '</span>'
+        : (mo.priced_ratio === 1 ? '<span class="flag ok">全部模型都有单价</span>' : ''))
+    + '<span>改价：<code>' + esc((mo.config || '').replace(/^.*\/Documents\//, '~/Documents/')) + '</code></span>';
+}
+
+function renderTokens() {
+  var t = S.data.tokens || {};
+  var rows = t.by_day || [];
+  $('#tokenN').textContent = rows.length ? rows.length + ' 天有记录' : '';
+  dayBars($('#tokenChart'), rows);
+  var tb = $('#dayTable');
+  if (!rows.length) { tb.innerHTML = ''; return; }
+  tb.innerHTML = '<thead><tr><th>日期</th><th>调用</th><th>输入</th><th>输出</th><th>缓存命中</th></tr></thead><tbody>'
+    + rows.slice().reverse().map(function (r) {
+      return '<tr><td>' + esc(r.d) + '</td><td>' + fmtN(r.calls) + '</td><td>' + fmtN(r.in)
+        + '</td><td>' + fmtN(r.out) + '</td><td class="dash">' + fmtN(r.cached) + '</td></tr>';
+    }).join('') + '</tbody>';
+}
+
+function renderPocket() {
+  var p = (S.data.pocket || {});
+  var rows = p.scripts || [];
+  $('#pocketN').textContent = rows.length ? rows.length + ' 个脚本' : '';
+  if (!rows.length) { $('#pocketCard').style.display = 'none'; return; }
+  $('#pocketCard').style.display = '';
+  $('#pocketBody').innerHTML = '<table><thead><tr><th>脚本</th><th>次数</th><th>累计耗时</th><th>失败</th><th>最近</th></tr></thead><tbody>'
+    + rows.map(function (r) {
+      return '<tr><td>' + esc(r.script) + '</td><td>' + r.n + '</td>'
+        + '<td>' + fmtMs(r.ms) + '</td>'
+        + '<td class="' + (r.fail ? '' : 'dash') + '">' + (r.fail || '—') + '</td>'
+        + '<td class="dash">' + esc((r.last || '').slice(5, 16).replace('T', ' ')) + '</td></tr>';
+    }).join('') + '</tbody></table>';
+}
+
+/* ---------------- 逐轮工作记录 ---------------- */
+/* 数据源就是本页 /api/rounds —— 这一页是数据源，工作台那张卡是调用方。
+   两边读同一份解析结果，不会出现「卡片有、工具页没有」。 */
+function rwClient(it) {
+  var a = (it.sources || []).filter(function (x) { return x.kind === 'tool'; });
+  return a.length ? a[0].name : (it.client || '—');
+}
+function rwModel(it) {
+  var a = (it.sources || []).filter(function (x) { return x.kind === 'ai'; });
+  return a.length ? shortModel(a[0].name) : '';
+}
+function rwFacets(it) {
+  var out = [], f = it.facets || {}, L = it.ctx_labels || {};
+  /* 维度名按 agent 预设：WorkBuddy 的模式/专家、TRAE 的代理、Claude 的权限模式。
+     没带 ctx_labels 的老数据退回默认中文名。 */
+  function chip(key, dflt, val) {
+    if (!val) return;
+    if (Array.isArray(val) && !val.length) return;
+    var v = Array.isArray(val) ? val.join('、') : val;
+    out.push('<span class="rwfc">' + esc(L[key] || dflt) + ' ' + esc(v) + '</span>');
+  }
+  chip('mode', '模式', f.mode);
+  chip('expert', '专家', f.expert);
+  chip('agent', '代理', f.agent);
+  (f.skills || []).slice(0, 4).forEach(function (x) {
+    chip('skills', '技能', x);
+  });
+  (f.connectors || []).slice(0, 4).forEach(function (x) {
+    chip('connectors', '连接器', x.name + (x.n > 1 ? '×' + x.n : ''));
+  });
+  return out.join('');
+}
+function renderRounds() {
+  var box = $('#rounds');
+  if (!box) return;
+  if (!S.rounds) { box.innerHTML = '<div class="rwempty">正在读本机逐轮记录…</div>'; return; }
+  if (S.rounds.ok === false) {
+    $('#roundN').textContent = ''; $('#roundAt').textContent = '';
+    // 报错也得给条出路：之前这里只有一行字，网络抖一下就再也不会自己好
+    box.innerHTML = '<div class="rwempty">逐轮记录暂时读不到'
+      + (S.rounds.error ? '：' + esc(S.rounds.error) : '')
+      + ' <button class="rwretry" data-rwretry type="button">重试</button></div>';
+    return;
+  }
+  var items = (S.rounds.items || []).slice();
+  items.sort(function (a, b) { return String(b.start || '').localeCompare(String(a.start || '')); });
+  var q = S.q.toLowerCase();
+  var cidOf = { WorkBuddy: 'workbuddy', 口袋: 'pocket' };
+  items = items.filter(function (it) {
+    var cl = rwClient(it);
+    if (S.client !== 'all' && (cidOf[cl] || cl.toLowerCase()) !== S.client) return false;
+    if (!q) return true;
+    var hay = [it.task, it.detail, cl, rwModel(it),
+               it.facets && JSON.stringify(it.facets)].join(' ').toLowerCase();
+    if (hay.indexOf(q) >= 0) return true;
+    return (it.children || []).some(function (k) {
+      return String(k.detail || '').toLowerCase().indexOf(q) >= 0;
+    });
+  });
+  $('#roundN').textContent = items.length + ' 轮';
+  $('#roundAt').textContent = S.rounds.at ? '更新 ' + S.rounds.at : '';
+  box.className = 'rwlist' + (S.roundView === 'flow' ? ' flow' : '');
+  if (!items.length) { box.innerHTML = '<div class="rwempty">没有符合条件的记录</div>'; return; }
+  box.innerHTML = items.map(function (it) {
+    var id = it.id || (it.start + it.task), open = S.roundOpen.has(id);
+    var kids = it.children || [];
+    var xp = '';
+    if (open) {
+      var steps = kids.map(function (k) {
+        return '<div class="rwstep"><i>' + esc(String(k.start || '').slice(11, 16))
+          + '</i><span>' + esc(k.detail || '—') + '</span></div>';
+      }).join('');
+      var more = it.more_steps ? '<div class="rwmore">共 ' + (kids.length + it.more_steps)
+        + ' 步，这里列最近 ' + kids.length + ' 步</div>' : '';
+      xp = '<div class="rwxp">' + rwFacets(it) + '<div class="rwsteps">' + steps
+        + '</div>' + more + '</div>';
+    }
+    var who = rwClient(it), model = rwModel(it), fullModel = '';
+    (it.sources || []).forEach(function (s) { if (s.kind === 'ai' && !fullModel) fullModel = s.name; });
+    var T = it.tokens || {}, tk = Number(T.total || 0);
+    var proj = String(it.project || '').trim() || '—';
+    // 项目名跟执行者同名就别再写一遍（WorkBuddy 的 project 就是 WorkBuddy，
+    // 执行者列已经写了）；不同名（TRAE「截图补录」）才留，那才是「哪份活」。
+    if (proj === who || proj === (it.client || '')) proj = '';
+    var st = it.status || 'ok', n = Number(it.count || 0), dur = rwDur(it.secs);
+    // 状态徽章：ok 不占地方（跟主页一致，只有非 ok 才显出来）
+    var stHtml = st === 'ok' ? '' : '<span class="rwst ' + esc(st) + '"><i></i>'
+      + esc(RW_ST[st] || st) + '</span>';
+    var cntHtml = n > 1 ? '<span class="rwcnt" title="这类相同记录合并了 '
+      + n + ' 次">×' + n + '</span>' : '';
+    var tokTitle = 'token 消耗：' + (proj ? proj + ' · ' : '') + '输入 ' + Number(T.in || 0)
+      + ' / 输出 ' + Number(T.out || 0) + (T.cached ? ' / 缓存命中 ' + Number(T.cached) : '');
+    var tokHtml = '<div class="rwproj" title="' + esc(tokTitle) + '">'
+      + (proj ? '<b>' + esc(proj) + '</b>' : '')
+      + '<span class="' + (tk ? '' : 'zero') + '">' + (tk ? esc(fmtTok(tk)) + ' token' : esc(fmtTok(tk))) + '</span></div>';
+    return '<div class="rwrow' + (open ? ' open' : '') + '" data-rw="' + esc(id) + '">'
+      + '<span class="rwt">' + esc(String(it.start || '').slice(5, 16))
+      + '<b>' + esc(String(it.end || '').slice(11, 16)) + '</b>'
+      + (dur ? '<em>' + esc(dur) + '</em>' : '') + '</span>'
+      + '<div class="rwmain"><div class="rwline">' + stHtml
+      + '<div class="rwtask" title="' + esc(it.task || '') + '">' + esc(it.task || '—')
+      + '</div>' + cntHtml + '</div><div class="rwdet"'
+      + (open ? ' style="white-space:normal"' : '') + '>'
+      + esc(open ? (it.rest || it.detail || '') : (it.detail || '')) + '</div></div>'
+      + '<div class="rwwho"><b title="' + esc(who) + '">' + esc(who) + '</b>'
+      + (model ? '<span class="mdl"' + modelStyle(fullModel || model)
+          + ' title="' + esc(fullModel || model) + '">' + esc(model) + '</span>' : '')
+      + '</div>'
+      + tokHtml
+      + '<span class="rwar">▶</span></div>' + xp;
+  }).join('');
+}
+var _rwBusy = false, _rwBusyAt = 0, _rwAt = 0;
+function loadRounds(retried) {
+  var now = Date.now();
+  if (_rwBusy) {
+    if (now - _rwBusyAt < 25000) return;       // 真在跑，别叠
+    _rwBusy = false;                            // 卡了（标签被挂起过），放过这轮
+  }
+  _rwBusy = true; _rwBusyAt = now;
+  hwFetch('/api/rounds?range=' + encodeURIComponent(S.range))
+    .then(function (d) {
+      _rwBusy = false;
+      if (d && d.ok === false) throw new Error(d.error || '接口报错');
+      _rwAt = Date.now();
+      S.rounds = d; renderRounds();
+    })
+    .catch(function (e) {
+      _rwBusy = false;
+      // 一次网络抖动不值当把整张卡打成红的：先自己悄悄重试一次，
+      // 还不行才报错（报错里留一颗「重试」，点一下就走这条路）。
+      if (!retried) { setTimeout(function () { loadRounds(1); }, 1200); return; }
+      S.rounds = { ok: false, error: e.message, items: [] }; renderRounds();
+    });
+}
+
+/* ---- 任务清单：同源 /api/tasks，只答「各 agent 有哪些任务」---- */
+function tkDays(t) {
+  var sp = t.span;
+  if (sp && sp.days && sp.days.length) return sp.days.map(function (x) { return x.d; });
+  return t.date ? [t.date] : [];
+}
+function tkYmd(base, n) {
+  var t = new Date(Date.parse(base + 'T00:00:00') + n * 86400000);
+  function p(x) { return String(x).padStart(2, '0'); }
+  return t.getFullYear() + '-' + p(t.getMonth() + 1) + '-' + p(t.getDate());
+}
+function tkOff(a, b) { return Math.round((Date.parse(a + 'T00:00:00') - Date.parse(b + 'T00:00:00')) / 86400000); }
+
+function renderTasks() {
+  var tabs = $('#taskTabs'), list = $('#taskList'), num = $('#taskN'), gantt = $('#taskGantt');
+  if (!tabs || !list) return;
+  if (S.taskErr) {
+    num.textContent = '离线';
+    // 手上有旧的就接着显示（标一句「旧数据」），别因为一次网络抖动把表清空
+    if (!(S.tasks && (S.tasks.groups || []).length)) {
+      tabs.innerHTML = '';
+      list.hidden = false; if (gantt) gantt.hidden = true;
+      list.innerHTML = '<div class="center">' + esc(S.taskErr) + '</div>'; return;
+    }
+    num.textContent = '离线 · 下面是旧数据';
+  }
+  var groups = (S.tasks && S.tasks.groups) || [];
+  if (!groups.length) { num.textContent = '—'; tabs.innerHTML = '';
+    list.hidden = false; if (gantt) gantt.hidden = true;
+    list.innerHTML = '<div class="center">还没有任务清单数据</div>'; return; }
+  if (!groups.some(function (g) { return g.agent === S.taskAgent; })) S.taskAgent = groups[0].agent;
+  var total = groups.reduce(function (n, g) { return n + (g.count || 0); }, 0);
+  num.textContent = total + ' 项 · ' + groups.length + ' 个 agent';
+  tabs.innerHTML = groups.map(function (g) {
+    return '<button class="chip" data-task-agent="' + esc(g.agent) + '"'
+      + ' aria-pressed="' + (g.agent === S.taskAgent) + '">' + esc(g.agent)
+      + ' <em>' + (g.count || 0) + '</em></button>';
+  }).join('');
+  var cur = groups.find(function (g) { return g.agent === S.taskAgent; }) || groups[0];
+  var tasks = cur.tasks || [];
+  if (S.taskView === 'gantt') {
+    list.hidden = true;
+    if (gantt) { gantt.hidden = false; renderTaskGantt(tasks, gantt); }
+    return;
+  }
+  list.hidden = false;
+  if (gantt) gantt.hidden = true;
+  // 跨天的任务在它干过的每一天都出现一次（以前只挂在最后一天）
+  var byDay = [], dayMap = {};
+  tasks.forEach(function (t) {
+    var ds = tkDays(t);
+    if (!ds.length) {
+      if (!dayMap['历史任务']) { dayMap['历史任务'] = []; byDay.push('历史任务'); }
+      dayMap['历史任务'].push({ t: t, idx: 0, tot: 0 });
+      return;
+    }
+    ds.forEach(function (d, i) {
+      if (!dayMap[d]) { dayMap[d] = []; byDay.push(d); }
+      dayMap[d].push({ t: t, idx: i, tot: ds.length });
+    });
+  });
+  byDay.sort(function (a, b) {
+    if (a === '历史任务') return 1;
+    if (b === '历史任务') return -1;
+    return a < b ? 1 : -1;
+  });
+  var html = '';
+  var open = S.taskOpen || (S.taskOpen = {});
+  byDay.forEach(function (dk) {
+    var items = dayMap[dk];
+    html += '<div class="tkday">' + esc(dk) + ' · ' + items.length + ' 项</div>';
+    items.forEach(function (it) {
+      var t = it.t;
+      var ocr = /OCR|截图/.test(t.source || '');
+      var all = t.children || [];
+      var kids = all.filter(function (k) {
+        // 那天只展开那一天说过的话
+        if (dk === '历史任务' || !k.at) return true;
+        return String(k.at).slice(0, 5) === dk.slice(5);
+      });
+      var key = S.taskAgent + '\u0001' + (t.name || '') + '\u0001' + dk;
+      var on = !!open[key];
+      var n = t.asks || all.length;
+      var sp = t.span || {};
+      var spanN = sp.n || 0;
+      var tip = spanN > 1 ? sp.from + ' → ' + sp.to + ' · ' + spanN + ' 天有记录' : '';
+      html += '<div class="tkrow' + (on ? ' on' : '') + '" data-task-row="' + esc(key) + '">'
+        + '<span class="tkcv' + (all.length ? '' : ' off') + '">▶</span>'
+        + '<span class="tkname" title="' + esc(t.name) + '">' + esc(t.name) + '</span>'
+        + (spanN > 1
+          ? '<span class="tkspan' + (it.idx < it.tot - 1 ? ' q' : '') + '" title="' + esc(tip) + '">'
+            + (it.idx + 1) + '/' + it.tot + ' 天</span>'
+          : '')
+        + '<span class="tkn">' + (n ? n + ' 轮' : '') + '</span>'
+        + '<span class="tksrc' + (ocr ? ' ocr' : '') + '" title="来源：' + esc(t.source || '—') + '">'
+        + esc(t.source || '—') + '</span></div>';
+      if (on) {
+        html += '<div class="tkkids">' + (kids.length
+          ? kids.slice(-14).map(function (k) {
+            return '<div class="tkkid"><span class="t">' + esc(k.at || '') + '</span>'
+              + '<span>' + esc(k.text || '') + '</span></div>';
+          }).join('')
+          : '<div class="tkmore">这天的对话没留下来</div>')
+          + (all.length && n > all.length
+            ? '<div class="tkmore">只列最近 ' + all.length + ' 段，这条任务一共 ' + n + ' 轮</div>' : '')
+          + '</div>';
+      }
+    });
+  });
+  list.innerHTML = html || '<div class="center">这个 agent 还没有记录到任务</div>';
+}
+
+function renderTaskGantt(tasks, box) {
+  function p(x) { return String(x).padStart(2, '0'); }
+  var now = new Date();
+  var today = now.getFullYear() + '-' + p(now.getMonth() + 1) + '-' + p(now.getDate());
+  var rows = tasks.filter(function (t) { return tkDays(t).length || (t.span && t.span.from); });
+  if (!rows.length) { box.innerHTML = '<div class="center">这组任务没有日期，画不了甘特</div>'; return; }
+  var maxD = today;
+  rows.forEach(function (t) {
+    tkDays(t).forEach(function (d) { if (d > maxD) maxD = d; });
+    if (t.span && t.span.to && t.span.to > maxD) maxD = t.span.to;
+  });
+  var minD = maxD;
+  if (S.taskWin) {
+    minD = tkYmd(maxD, -(S.taskWin - 1));
+  } else {
+    rows.forEach(function (t) {
+      tkDays(t).forEach(function (d) { if (d < minD) minD = d; });
+      if (t.span && t.span.from && t.span.from < minD) minD = t.span.from;
+    });
+    if (tkOff(maxD, minD) > 119) minD = tkYmd(maxD, -119);
+  }
+  var N = tkOff(maxD, minD) + 1;
+  var inWin = rows.filter(function (t) {
+    var e = (t.span && t.span.to) || tkDays(t).slice(-1)[0] || '';
+    return !e || e >= minD;
+  });
+  inWin.sort(function (a, b) {
+    var ae = (a.span && a.span.to) || tkDays(a).slice(-1)[0] || '';
+    var be = (b.span && b.span.to) || tkDays(b).slice(-1)[0] || '';
+    return ae < be ? 1 : ae > be ? -1 : 0;
+  });
+  var cols = 'display:grid;grid-template-columns:repeat(' + N + ',minmax(6px,1fr))';
+  var step = N <= 16 ? 1 : N <= 40 ? 5 : 10;
+  var marks = [];
+  for (var i = step; i < N; i += step) marks.push(i);   // 第一个不标，左边已有起止日
+  var ticks = marks.map(function (i) {
+    var d = tkYmd(minD, i);
+    var pct = N === 1 ? 0 : (i / N) * 100;
+    var shift = i === 0 ? '0' : (pct > 88 ? '-100%' : '-8%');
+    return '<span style="left:' + pct.toFixed(3) + '%;transform:translateX(' + shift + ')">'
+      + d.slice(5).replace('-', '/') + '</span>';
+  }).join('');
+  var body = inWin.map(function (t) {
+    var ds = tkDays(t);
+    var cnt = {};
+    ((t.span && t.span.days) || []).forEach(function (x) { cnt[x.d] = x.a || 1; });
+    var coarse = !!(t.span && t.span.coarse);
+    var f = (t.span && t.span.from) || ds[0] || '';
+    var e = (t.span && t.span.to) || ds.slice(-1)[0] || '';
+    var cells = '';
+    function on(i) { return !!cnt[tkYmd(minD, i)]; }
+    for (var i = 0; i < N; i++) {
+      var d = tkYmd(minD, i), cls = 'gtc', filled = false;
+      if (cnt[d]) {
+        var a = cnt[d];
+        cls += ' d' + (a >= 8 ? ' a3' : a >= 4 ? ' a2' : a >= 2 ? ' a1' : '');
+        filled = true;
+      } else if (coarse && f && e && d > f && d < e) {
+        cls += ' f'; filled = true;
+      }
+      if (filled) {
+        if (!on(i - 1)) cls += ' bs';
+        if (!on(i + 1)) cls += ' be';
+        if (d === today) cls += ' now';
+      }
+      cells += '<i class="' + cls + '"></i>';
+    }
+    var tip = (t.name || '') + '\n' + (f || '—') + ' → ' + (e || '—')
+      + (t.span && t.span.n ? ' · ' + t.span.n + ' 天有记录' : '');
+    return '<div class="gtrow"><span class="gtname" title="' + esc(tip) + '"'
+      + ' data-task-goto="' + esc(t.name) + '">' + esc(t.name) + '</span>'
+      + '<span class="gttrack" style="' + cols + '">' + cells + '</span></div>';
+  }).join('');
+  var wins = [14, 30, 0].map(function (w) {
+    return '<button type="button" data-task-win="' + w + '" class="' + (S.taskWin === w ? 'on' : '') + '">'
+      + (w ? w + ' 天' : '全部') + '</button>';
+  }).join('');
+  box.innerHTML = '<div class="gtbar">' + wins + '</div>'
+    + '<div class="gtaxis"><span class="lab">' + esc(minD.slice(5)) + ' → ' + esc(maxD.slice(5))
+    + ' · ' + N + ' 天</span><span class="gtticks">' + ticks + '</span></div>' + body;
+}
+
+var _tkBusy = false, _tkBusyAt = 0;
+function loadTasks(retried) {
+  var now = Date.now();
+  if (_tkBusy) {
+    if (now - _tkBusyAt < 25000) return;
+    _tkBusy = false;
+  }
+  _tkBusy = true; _tkBusyAt = now;
+  hwFetch('/api/tasks?range=' + encodeURIComponent(S.range))
+    .then(function (d) {
+      _tkBusy = false;
+      if (d.ok === false) throw new Error(d.error || '接口报错');
+      S.tasks = d; S.taskErr = ''; renderTasks();
+    })
+    .catch(function (e) {
+      _tkBusy = false;
+      if (!retried) { setTimeout(function () { loadTasks(1); }, 1200); return; }
+      S.taskErr = e.message;            // 有旧数据就留着，别把表清空
+      renderTasks();
+    });
+}
+$('#taskSeg') && $('#taskSeg').addEventListener('click', function (e) {
+  var b = e.target.closest('[data-tv]'); if (!b) return;
+  S.taskView = b.dataset.tv;
+  [].forEach.call($('#taskSeg').querySelectorAll('button'), function (x) {
+    x.classList.toggle('on', x.dataset.tv === S.taskView);
+  });
+  renderTasks();
+});
+$('#taskGantt') && $('#taskGantt').addEventListener('click', function (e) {
+  var w = e.target.closest('[data-task-win]');
+  if (w) { S.taskWin = Number(w.dataset.taskWin); renderTasks(); return; }
+  var g = e.target.closest('[data-task-goto]');
+  if (!g) return;
+  var cur = ((S.tasks || {}).groups || []).find(function (x) { return x.agent === S.taskAgent; });
+  var t = cur && (cur.tasks || []).find(function (x) { return x.name === g.dataset.taskGoto; });
+  var ds = t ? tkDays(t) : [];
+  S.taskOpen = {};
+  S.taskOpen[S.taskAgent + '\u0001' + g.dataset.taskGoto + '\u0001'
+    + (ds.length ? ds[ds.length - 1] : '历史任务')] = 1;
+  S.taskView = 'list';
+  [].forEach.call($('#taskSeg').querySelectorAll('button'), function (x) {
+    x.classList.toggle('on', x.dataset.tv === 'list');
+  });
+  renderTasks();
+});
+$('#taskTabs').addEventListener('click', function (e) {
+  var b = e.target.closest('[data-task-agent]'); if (!b) return;
+  S.taskAgent = b.dataset.taskAgent; S.taskOpen = {}; renderTasks();
+});
+$('#taskList').addEventListener('click', function (e) {
+  var row = e.target.closest('[data-task-row]'); if (!row) return;
+  var k = row.dataset.taskRow;
+  if (!S.taskOpen) S.taskOpen = {};
+  if (S.taskOpen[k]) delete S.taskOpen[k]; else S.taskOpen[k] = 1;
+  renderTasks();
+});
+
+function renderFoot() {
+  var d = S.data;
+  var daily = (d.daily || []).slice(-1)[0];
+  var extra = daily ? '今天在这台机器上醒了 ' + daily.awake_min + ' 分钟 · 内存峰值 ' + daily.mem.max
+    + '%（' + esc(daily.mem.max_at || '') + '）' : '';
+  var pp = String(d.procs_path || '').replace(/^.*\/AI项目\//, '');
+  $('#foot').innerHTML = '<span id="scanTip">会话已读完 ' + ((d.scan || {}).total || 0) + ' 个</span>'
+    + '<span>' + esc(extra) + '</span>'
+    + '<span>机器快照：每 2 分钟一笔（留 7 天）</span>'
+    + '<span>进程：每 10 秒采一次，内存里留 2 小时；每 2 分钟落一笔到 <code>' + esc(pp) + '</code></span>';
+}
+
+function render() {
+  if (!S.data) return;
+  buildColorMap();
+  document.body.dataset.density = S.density;
+  renderFilters();
+  // footer 先画：它里面装着 #scanTip，renderTop 才有地方写扫描状态
+  renderFoot();
+  renderTop(); renderKPI(); renderProcs(); renderKinds(); renderClients();
+  renderMoney(); renderTokens(); renderPocket(); renderRounds();
+  multiLine($('#appChart'), (S.data.app_series || {}));
+  machineChart($('#machChart'), S.data.series || {});
+  $('#machN').textContent = ((S.data.series || {}).disk || []).length + ' 个采样点';
+  $('#appChartN').textContent = ((S.data.app_series || {}).apps || []).length + ' 条线';
+}
+
+/* ---------------- 交互 ---------------- */
+function renderFilters() {
+  var ranges = [['today', '今天'], ['7d', '7 天'], ['30d', '30 天'], ['all', '全部']];
+  $('#fRange').innerHTML = ranges.map(function (r) {
+    return '<button class="chip" data-range="' + r[0] + '" aria-pressed="' + (S.range === r[0]) + '">' + r[1] + '</button>';
+  }).join('');
+  var dens = [['simple', '简单'], ['normal', '默认'], ['detail', '详细']];
+  $('#fDensity').innerHTML = dens.map(function (r) {
+    return '<button class="chip" data-density="' + r[0] + '" aria-pressed="' + (S.density === r[0]) + '">' + r[1] + '</button>';
+  }).join('');
+  var cs = [{ id: 'all', name: '全部' }].concat((S.data && S.data.clients || []).map(function (c) {
+    return { id: c.id, name: c.name };
+  }));
+  $('#fClient').innerHTML = cs.map(function (c) {
+    return '<button class="chip" data-client="' + esc(c.id) + '" aria-pressed="' + (S.client === c.id) + '">' + esc(c.name) + '</button>';
+  }).join('');
+}
+
+/* 30 秒一轮自动刷新：数据没变就一个字都不重画（省得每半分钟闪一下），
+   变了才重画，并且把滚动位置按原样放回去 —— 正在看「谁在干活」那棵树时
+   不能被拽回页顶。 */
+var _fp = '', _lastOk = 0;
+function load(force) {
+  var now = Date.now();
+  if (S.loading) {
+    // 看门狗：上一轮都转了 25 秒还没落地，说明请求被浏览器挂起了（后台标签最常见），
+    // 这时候要放过这一轮，否则单飞锁永远解不开、整页冻住。
+    if (now - (S.loadingAt || 0) < 25000) return;
+    S.loading = false;
+  }
+  S.loading = true; S.loadingAt = now;
+  if (!S.data) $('#sub').textContent = '读取中…';
+  hwFetch('/api/overview?range=' + encodeURIComponent(S.range))
+    .then(function (d) {
+      if (d && d.ok === false) throw new Error(d.error || '接口报错');
+      S.err = ''; _lastOk = Date.now();
+      var fp = JSON.stringify(d);
+      if (fp === _fp && !force) { S.data = d; return; }
+      _fp = fp;
+      S.data = d;
+      var y = window.scrollY;
+      render();
+      if (Math.abs(window.scrollY - y) > 1) window.scrollTo(0, y);
+    })
+    .catch(function (e) {
+      S.err = e.message;
+      $('#sub').textContent = '出错了：' + e.message
+        + (_lastOk ? '（下面还是 ' + new Date(_lastOk).toTimeString().slice(0, 5) + ' 的数据）' : '');
+    })
+    .then(function () { S.loading = false; loadRounds(); loadTasks(); });
+}
+
+$('#fRange').addEventListener('click', function (e) {
+  var b = e.target.closest('[data-range]'); if (!b) return;
+  S.range = b.dataset.range; lsSet('hw_range', S.range);
+  _fp = '';                       // 换了范围一定要重画，别被指纹挡掉
+  renderFilters(); load(true);
+});
+$('#fDensity').addEventListener('click', function (e) {
+  var b = e.target.closest('[data-density]'); if (!b) return;
+  S.density = b.dataset.density; lsSet('hw_density', S.density); renderFilters(); render();
+});
+$('#fClient').addEventListener('click', function (e) {
+  var b = e.target.closest('[data-client]'); if (!b) return;
+  S.client = b.dataset.client; lsSet('hw_client', S.client);
+  renderFilters(); renderClients(); renderRounds();
+});
+$('#fq').addEventListener('input', function (e) {
+  S.q = (e.target.value || '').trim();
+  $('#fqClear').hidden = !S.q;
+  renderProcs(); renderClients(); renderRounds();
+});
+$('#fqClear').addEventListener('click', function () {
+  $('#fq').value = ''; S.q = ''; $('#fqClear').hidden = true;
+  renderProcs(); renderClients(); renderRounds(); $('#fq').focus();
+});
+/* 逐轮记录：点行展开步骤；表格 / 流水只改标题能不能折行，数据不重取 */
+$('#rounds').addEventListener('click', function (e) {
+  if (e.target.closest('[data-rwretry]')) {          // 读不到时那颗「重试」
+    S.rounds = null; renderRounds(); loadRounds();
+    return;
+  }
+  var row = e.target.closest('[data-rw]'); if (!row) return;
+  var id = row.getAttribute('data-rw');
+  if (S.roundOpen.has(id)) S.roundOpen.delete(id); else S.roundOpen.add(id);
+  renderRounds();
+});
+$('#roundCard').addEventListener('click', function (e) {
+  var b = e.target.closest('[data-rwv]'); if (!b) return;
+  S.roundView = b.dataset.rwv;
+  [].forEach.call($('#roundCard').querySelectorAll('[data-rwv]'), function (x) {
+    x.setAttribute('aria-pressed', String(x.dataset.rwv === S.roundView));
+  });
+  renderRounds();
+});
+$('#fKind').addEventListener('click', function (e) {
+  var b = e.target.closest('[data-kind]'); if (!b) return;
+  var k = b.dataset.kind;
+  S.kinds[k] = S.kinds[k] ? 0 : 1;
+  if (!Object.keys(S.kinds).some(function (x) { return S.kinds[x]; })) S.kinds[k] = 1;
+  lsSet('hw_kinds', S.kinds); renderKinds(); renderClients();
+});
+$('#clients').addEventListener('click', function (e) {
+  var gh = e.target.closest('[data-kg]');
+  if (gh) {
+    var gid = gh.dataset.kg;
+    if (S.closedGroups.has(gid)) S.closedGroups.delete(gid); else S.closedGroups.add(gid);
+    renderClients();
+    return;
+  }
+  var h = e.target.closest('[data-cl]'); if (!h) return;
+  var id = h.dataset.cl;
+  if (S.open.has(id)) S.open.delete(id); else S.open.add(id);
+  renderClients();
+});
+$('#btnRefresh').addEventListener('click', function () { load(true); });
+/* 窗口一变，图的 viewBox 得跟着容器重算，否则线会被拉长压扁 */
+var _rzT;
+function redrawCharts() {
+  if (!S.data) return;
+  multiLine($('#appChart'), (S.data.app_series || {}));
+  machineChart($('#machChart'), S.data.series || {});
+  dayBars($('#tokenChart'), (S.data.tokens || {}).by_day || []);
+}
+window.addEventListener('resize', function () {
+  clearTimeout(_rzT);
+  _rzT = setTimeout(redrawCharts, 180);
+});
+$('#btnTheme').addEventListener('click', function () {
+  var cur = document.documentElement.dataset.theme;
+  var next = cur === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  lsSet('hw_theme', next);
+  try {
+    document.cookie = 'cuntu_theme=' + encodeURIComponent(next)
+      + '; path=/; max-age=31536000; SameSite=Lax';
+  } catch (e) {}
+  // 进程色是算出来的（深色要提亮），不重绘就得等 30 秒后那次刷新才换过来
+  if (S.data) render();
+});
+
+/* ============================================================
+   布局编辑：卡片可拖位置、可拖右下角改大小，顺序和尺寸存 hw_layout。
+   默认骨架是 HTML 里那几行 .hwrow；记忆坏了/新版本加了卡就退回默认位置。
+   ============================================================ */
+var LAYOUT_KEY = 'hw_layout';
+var HW_CELL = 88;                       // 一格高，跟 :root --cell 对齐
+var editing = false, dragKey = null, ph = null, rz = null, rzTip = null;
+var rowsOf = function () { return [].slice.call(document.querySelectorAll('.hwrow')); };
+var cardsOf = function (row) { return [].slice.call(row.querySelectorAll(':scope > [data-card]')); };
+var allCards = function () { return [].slice.call(document.querySelectorAll('[data-card]')); };
+
+/* 默认顺序：卡 key → 所在行的 data-row。改结构时这里是唯一真相。 */
+var DEFAULT_ROW = {
+  clients: 'top', money: 'topright', proc: 'topright',
+  daytok: 'charts', appchart: 'charts',
+  mach: 'mach', rounds: 'rounds', agenttasks: 'agenttasks', pocket: 'pocket'
+};
+
+function layoutSnapshot() {
+  var rows = {};
+  rowsOf().forEach(function (row) {
+    rows[row.dataset.row] = cardsOf(row)
+      .filter(function (c) { return c.style.display !== 'none'; })
+      .map(function (c) { return c.dataset.card; });
+  });
+  var hidden = allCards().filter(function (c) { return c.style.display === 'none'; })
+    .map(function (c) { return c.dataset.card; });
+  var size = {};
+  allCards().forEach(function (c) {
+    var key = c.dataset.card, w = c.dataset.w === '1' ? '1' : '2', h = c.dataset.h || '0';
+    // 只记跟默认不同的，压得住 localStorage
+    if (w !== '2' || h !== '0') size[key] = [w, h];
+  });
+  return { rows: rows, hidden: hidden, size: size };
+}
+function saveLayout() { paintSplit(); lsSet(LAYOUT_KEY, layoutSnapshot()); }
+
+function applyLayout() {
+  var L = ls(LAYOUT_KEY, null), all = {};
+  allCards().forEach(function (c) { all[c.dataset.card] = c; });
+  var rows = rowsOf(), byRow = {};
+  rows.forEach(function (r) { byRow[r.dataset.row] = r; });
+
+  // 尺寸独立于顺序：布局整份无效也照落，别因为改坏一次 cols 把尺寸全丢了
+  var size = (L && L.size) || {};
+  allCards().forEach(function (c) { delete c.dataset.w; delete c.dataset.h; });
+  Object.keys(size).forEach(function (k) {
+    var c = all[k], s = size[k];
+    if (!c || !Array.isArray(s)) return;
+    if (s[0] === '1') c.dataset.w = '1';
+    if (s[1] && s[1] !== '0') c.dataset.h = String(s[1]);
+  });
+
+  // 顺序：只认「每张卡都还在、每行键都对得上」的完整快照，否则退回默认骨架
+  var saved = (L && L.rows) || null;
+  var ok = saved && Object.keys(DEFAULT_ROW).every(function (k) { return all[k]; })
+    && Object.keys(saved).every(function (r) { return byRow[r]; });
+  if (ok) {
+    var placed = {};
+    Object.keys(saved).forEach(function (r) {
+      (saved[r] || []).forEach(function (k) {
+        if (all[k] && byRow[r]) { byRow[r].appendChild(all[k]); placed[k] = 1; }
+      });
+    });
+    // 新版加的卡（旧记忆里没有）放回默认行末尾，别让它悬空
+    Object.keys(all).forEach(function (k) {
+      if (placed[k]) return;
+      var r = byRow[DEFAULT_ROW[k]] || rows[0];
+      if (r) r.appendChild(all[k]);
+    });
+    (L.hidden || []).forEach(function (k) { if (all[k]) all[k].style.display = 'none'; });
+  }
+  paintSplit();
+}
+
+function paintSplit() {
+  rowsOf().forEach(function (row) {
+    var half = cardsOf(row).some(function (c) {
+      return c.dataset.w === '1' && c.style.display !== 'none';
+    });
+    row.classList.toggle('split', half);
+  });
+}
+
+function toast(msg) {
+  var t = document.createElement('div');
+  t.textContent = msg;
+  t.style.cssText = 'position:fixed;left:50%;top:64px;transform:translateX(-50%);z-index:120;'
+    + 'background:var(--tx);color:var(--card);padding:8px 16px;border-radius:10px;'
+    + 'font-size:12px;box-shadow:var(--sh);pointer-events:none';
+  document.body.appendChild(t);
+  setTimeout(function () { t.remove(); }, 1800);
+}
+function resetLayout() {
+  var all = {}, byRow = {}, rows = rowsOf();
+  allCards().forEach(function (c) { all[c.dataset.card] = c; });
+  rows.forEach(function (r) { byRow[r.dataset.row] = r; });
+  allCards().forEach(function (c) {
+    c.style.display = ''; delete c.dataset.w; delete c.dataset.h;
+  });
+  Object.keys(DEFAULT_ROW).forEach(function (k) {
+    var r = byRow[DEFAULT_ROW[k]] || rows[0];
+    if (all[k] && r) r.appendChild(all[k]);
+  });
+  paintSplit(); cancelResize();
+  try { localStorage.removeItem(LAYOUT_KEY); } catch (e) { }
+  paintHiddenN();
+  toast('布局已恢复默认');
+}
+
+function addCardTools(c) {
+  if (c.querySelector('.card-tools')) return;
+  var h = c.querySelector(':scope > h3'); if (!h) return;
+  var t = document.createElement('div');
+  t.className = 'card-tools';
+  t.innerHTML = '<button type="button" data-mv="-1" title="上移" aria-label="上移">↑</button>'
+    + '<button type="button" data-mv="1" title="下移" aria-label="下移">↓</button>'
+    + '<button type="button" data-mv="h" title="收起" aria-label="收起">×</button>';
+  h.appendChild(t);
+}
+function addResize(c) {
+  if (c.querySelector(':scope > .rsz')) return;
+  var g = document.createElement('div');
+  g.className = 'rsz'; g.title = '拖这里改大小'; g.setAttribute('aria-hidden', 'true');
+  g.draggable = false;
+  g.innerHTML = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"'
+    + ' stroke-linecap="round"><path d="M11 4.4L4.4 11M11 8L8 11"/></svg>';
+  c.appendChild(g);
+  g.addEventListener('pointerdown', startResize);
+}
+
+function enterEdit() {
+  if (editing) return;
+  editing = true;
+  document.body.classList.add('editing');
+  $('#editbar').hidden = false;
+  $('#btnLayout').setAttribute('aria-pressed', 'true');
+  allCards().forEach(function (c) {
+    c.setAttribute('draggable', 'true'); addCardTools(c); addResize(c);
+  });
+  paintHiddenN();
+}
+function exitEdit() {
+  if (!editing) return;
+  editing = false;
+  document.body.classList.remove('editing');
+  $('#editbar').hidden = true;
+  $('#hiddenPool').hidden = true;
+  $('#btnLayout').setAttribute('aria-pressed', 'false');
+  cancelResize();
+  allCards().forEach(function (c) { c.removeAttribute('draggable'); });
+  saveLayout();
+}
+
+function paintHiddenN() {
+  var hid = allCards().filter(function (c) { return c.style.display === 'none'; });
+  $('#ebHiddenN').textContent = hid.length;
+  $('#hiddenPool').innerHTML = hid.length
+    ? hid.map(function (c) {
+        return '<button type="button" data-show="' + c.dataset.card + '">＋ '
+          + esc(c.dataset.title || c.dataset.card) + '</button>';
+      }).join('')
+    : '<span class="hp-empty">全部卡片都在页面上</span>';
+}
+
+/* —— 缩放 —— */
+function cardSize(c) { return { w: c.dataset.w === '1' ? '1' : '2', h: c.dataset.h || '0' }; }
+function startResize(e) {
+  if (!editing) return;
+  var c = e.currentTarget.parentElement; if (!c) return;
+  e.preventDefault(); e.stopPropagation();
+  var r = c.getBoundingClientRect(), host = c.parentElement;
+  rz = { c: c, x0: e.clientX, y0: e.clientY, w0: r.width, h0: r.height,
+         colW: Math.max(220, host.clientWidth || r.width) };
+  c.classList.add('rszing'); document.body.classList.add('rszing');
+  if (!rzTip) { rzTip = document.createElement('div'); rzTip.className = 'rztip'; document.body.appendChild(rzTip); }
+  rzTip.hidden = false; paintTip(e.clientX, e.clientY);
+  window.addEventListener('pointermove', onResize, true);
+  window.addEventListener('pointerup', endResize, true);
+  window.addEventListener('pointercancel', endResize, true);
+}
+function onResize(e) {
+  if (!rz) return;
+  var c = rz.c, dx = e.clientX - rz.x0, dy = e.clientY - rz.y0;
+  // 宽：整列卡拖窄到 0.72 以下变半列；半列卡拖宽到 0.62 以上变整列
+  var ratio = (rz.w0 + dx) / rz.colW;
+  var cur = cardSize(c), w = cur.w;
+  if (cur.w === '2' && ratio < 0.72) w = '1';
+  else if (cur.w === '1' && ratio > 0.62) w = '2';
+  var tz = rz.h0 + dy;
+  var gh = Math.max(1, Math.min(6, Math.round(tz / HW_CELL)));
+  var h = tz <= rz.h0 + 6 ? '0' : String(gh);
+  if (w !== cur.w || h !== cur.h) {
+    setCardSize(c, w, h, true); paintTip(e.clientX, e.clientY);
+  }
+}
+function paintTip(x, y) {
+  if (!rzTip || !rz) return;
+  var cs = cardSize(rz.c);
+  rzTip.innerHTML = (cs.w === '1' ? '半列' : '整列') + ' · '
+    + (cs.h === '0' ? '自动高' : cs.h + ' 格高');
+  rzTip.style.left = Math.min(window.innerWidth - 110, x + 14) + 'px';
+  rzTip.style.top = Math.min(window.innerHeight - 40, y + 16) + 'px';
+}
+function endResize() {
+  if (!rz) return;
+  rz.c.classList.remove('rszing'); document.body.classList.remove('rszing');
+  if (rzTip) rzTip.hidden = true;
+  rz = null;
+  window.removeEventListener('pointermove', onResize, true);
+  window.removeEventListener('pointerup', endResize, true);
+  window.removeEventListener('pointercancel', endResize, true);
+  saveLayout(); redrawCharts();
+}
+function cancelResize() {
+  if (!rz) return;
+  if (rzTip) rzTip.hidden = true;
+  rz.c.classList.remove('rszing'); document.body.classList.remove('rszing');
+  rz = null;
+  window.removeEventListener('pointermove', onResize, true);
+  window.removeEventListener('pointerup', endResize, true);
+  window.removeEventListener('pointercancel', endResize, true);
+}
+function setCardSize(c, w, h, silent) {
+  if (w === '1') c.dataset.w = '1'; else delete c.dataset.w;
+  if (h && h !== '0') c.dataset.h = h; else delete c.dataset.h;
+  paintSplit(); if (!silent) { saveLayout(); redrawCharts(); }
+}
+
+/* —— 拖拽排序 —— */
+document.addEventListener('dragstart', function (e) {
+  if (!editing) return;
+  if (e.target.closest && e.target.closest('.rsz')) { e.preventDefault(); return; }
+  var c = e.target.closest && e.target.closest('[data-card]'); if (!c) return;
+  dragKey = c.dataset.card;
+  if (!ph) { ph = document.createElement('div'); ph.className = 'drop-ph'; }
+  c.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  try { e.dataTransfer.setData('text/plain', dragKey); } catch (err) { }
+});
+function dropSpot(row, x, y, skip) {
+  var best = null, bd = Infinity;
+  cardsOf(row).forEach(function (n) {
+    if (n === skip || n.style.display === 'none') return;
+    var r = n.getBoundingClientRect();
+    var dx = x < r.left ? r.left - x : (x > r.right ? x - r.right : 0);
+    var dy = y < r.top ? r.top - y : (y > r.bottom ? y - r.bottom : 0);
+    var d = dx * dx + dy * dy;
+    if (d < bd) { bd = d; best = n; }
+  });
+  if (!best) return { node: null, before: true };
+  var r = best.getBoundingClientRect();
+  var sideBySide = row.classList.contains('split') && r.width < row.clientWidth * 0.72;
+  return { node: best, before: sideBySide ? x < r.left + r.width / 2 : y < r.top + r.height / 2 };
+}
+document.addEventListener('dragover', function (e) {
+  if (!dragKey) return;
+  var row = e.target.closest && e.target.closest('.hwrow'); if (!row) return;
+  e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+  var src = document.querySelector('[data-card].dragging');
+  var spot = dropSpot(row, e.clientX, e.clientY, src);
+  if (spot.node) row.insertBefore(ph, spot.before ? spot.node : spot.node.nextSibling);
+  else row.appendChild(ph);
+});
+document.addEventListener('drop', function (e) {
+  if (!dragKey) return;
+  e.preventDefault();
+  var row = e.target.closest && e.target.closest('.hwrow');
+  var src = document.querySelector('[data-card].dragging');
+  if (row && src) {
+    if (ph && ph.parentElement) ph.remove();
+    var spot = dropSpot(row, e.clientX, e.clientY, src);
+    if (spot.node) row.insertBefore(src, spot.before ? spot.node : spot.node.nextSibling);
+    else row.appendChild(src);
+  }
+  finishDrag();
+});
+document.addEventListener('dragend', finishDrag);
+function finishDrag() {
+  var src = document.querySelector('[data-card].dragging');
+  if (src) src.classList.remove('dragging');
+  if (ph && ph.parentElement) ph.remove();
+  dragKey = null; saveLayout(); paintHiddenN();
+}
+
+/* —— 工具钮与编辑条事件 —— */
+document.addEventListener('click', function (e) {
+  var mv = e.target.closest && e.target.closest('.card-tools button');
+  if (mv && editing) {
+    var c = mv.closest('[data-card]'), dir = mv.dataset.mv;
+    if (dir === 'h') { c.style.display = 'none'; paintHiddenN(); saveLayout(); return; }
+    var sib = dir === '-1' ? c.previousElementSibling : c.nextElementSibling;
+    if (sib && sib.dataset && sib.dataset.card) {
+      if (dir === '-1') sib.parentElement.insertBefore(c, sib);
+      else sib.parentElement.insertBefore(sib, c);
+      saveLayout();
+    }
+    return;
+  }
+  var show = e.target.closest && e.target.closest('[data-show]');
+  if (show) {
+    var c2 = document.querySelector('[data-card="' + show.dataset.show + '"]');
+    if (c2) { c2.style.display = ''; paintHiddenN(); saveLayout(); }
+  }
+});
+$('#btnLayout').addEventListener('click', function () { editing ? exitEdit() : enterEdit(); });
+$('#ebDone').addEventListener('click', exitEdit);
+$('#ebReset').addEventListener('click', resetLayout);
+$('#ebHidden').addEventListener('click', function () {
+  var pool = $('#hiddenPool'); pool.hidden = !pool.hidden;
+});
+
+/* 首次进入：读记忆里的偏好 */
+(function init() {
+  applyLayout();
+  try {
+    S.range = ls('hw_range', '7d');
+    S.density = ls('hw_density', 'normal');
+    S.client = ls('hw_client', 'all') || 'all';
+    var k = ls('hw_kinds', null);
+    // 合并而不是整个替换：老记忆里没有 mode / expert 两个键，直接顶上去会把
+    // 新加的这两类过滤掉，页面看起来像「根本没记」。
+    if (k && typeof k === 'object') S.kinds = Object.assign({}, S.kinds, k);
+  } catch (e) { }
+  renderFilters();
+  load();
+  setInterval(function () { if (!document.hidden) load(); }, 30000);
+  // 切回这个标签时立刻补一次：后台标签里定时器会被限流甚至冻结，
+  // 光靠 30 秒一轮会「回来看到的是半小时前的数」。
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && Date.now() - _lastOk > 20000) load(true);
+  });
+  window.addEventListener('pageshow', function (ev) {
+    if (ev.persisted && Date.now() - _lastOk > 20000) load(true);   // 从往返缓存里翻出来
+  });
+})();
+</script>
+</body>
+</html>

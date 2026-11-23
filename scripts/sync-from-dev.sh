@@ -44,8 +44,12 @@ PATCHED="server.py ocr_runner.py plan_mcp.py article.py linkbox.py articlebox.py
 # 开发机上有 cuntu 所以跑得起来；交付版没有这个目录，缺一个文件就是
 # 「新用户装完打不开」——而且本机永远复现不了。
 # 这类文件登记在这里，同步时从 cuntu/ 取，和 pocket 的文件一样逐字镜像。
+#
+# 0.2.4 起本机工作的采集层（hostwork）也随包交付，所以它和它的依赖一起
+# 挪到了这里。以前它们只在作者本机的 cuntu/ 里，交付版靠 _CLIENTS 降级，
+# 结果每台装 Moshan 的机器「本机工作模块没装上」。
 CUNTU_DIR="${MOSHAN_CUNTU:-$HOME/Documents/cuntu}"
-EXTERNAL="textfmt.py"
+EXTERNAL="textfmt.py hostwork.py trae_work.py cherry_usage.py billing.py hostwork_ui.html"
 
 MODE="sync"
 case "${1:-}" in

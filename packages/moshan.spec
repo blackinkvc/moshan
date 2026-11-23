@@ -60,7 +60,9 @@ try:
 except Exception:                                       # noqa: BLE001
     pass
 # 默认皮肤资源若存在则一并带上（缺失时运行期会退回纯渐变，不报错）
-for extra in ("appearance.css", "appearance.json"):
+# hostwork_ui.html 是 /hostwork 详情页：0.2.4 起 hostwork 进包了，页面也得跟进来，
+# 否则使用者点「本机工作」只会拿到 404（README 里那张表就是靠它）。
+for extra in ("appearance.css", "appearance.json", "hostwork_ui.html"):
     p = SRC / extra
     if p.exists():
         datas.append((str(p), "."))
