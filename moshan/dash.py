@@ -3248,6 +3248,14 @@ def _worklog(cfg: dict) -> dict:
     """
     auto = _auto_worklog(cfg)               # 口袋自己的活
     items = _collapse(auto + _plugin_items(cfg))
+    # 「系统巡检」是状态卡，不是流水：只留最近一条。否则「各项正常」和上个月那条
+    # 「有检查项没过」会并排出现（_collapse 按 status 分组，两种状态各成一桶），
+    # 看的人会以为现在还没好 —— 这正是修完之后最容易让人困惑的地方。
+    _hb = [x for x in items if x.get("task") == "系统巡检"]
+    if len(_hb) > 1:
+        _keep = max(_hb, key=lambda x: x.get("start") or "")
+        items = [x for x in items
+                 if x.get("task") != "系统巡检" or x.get("start") == _keep.get("start")]
     # 进行中的永远顶在最上面（「现在在跑什么」比五分钟前跑完什么更该先看到）
     items.sort(key=lambda x: (x.get("status") == "run", x.get("start") or ""), reverse=True)
 
