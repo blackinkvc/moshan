@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """跨平台解释器解析 —— 「这个 .venv 里的 python 在哪」「这台机器到底有没有 python」。
 
-0.2.5 之前有三处把 `.venv/bin/python` 写死（ai_trends_runner / dedupe_runner /
+0.2.6 之前有三处把 `.venv/bin/python` 写死（ai_trends_runner / dedupe_runner /
 ocr_runner）。macOS 上没问题，Windows 上那串路径**永远不存在**，于是任务卡片上
 写着「找不到 Python：C:\\...\\.venv/bin/python」—— 看起来像机器没装 Python，
 实际上那台机器装着 Python 3.11，只是叫 `py.exe`、躺在

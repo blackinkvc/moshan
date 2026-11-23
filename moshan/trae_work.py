@@ -47,7 +47,7 @@ def _trae_cn_dir() -> Path:
     Windows  %APPDATA%\\Trae CN     实测 C:\\Users\\<u>\\AppData\\Roaming\\Trae CN
              （User\\globalStorage\\state.vscdb 与 ModularData\\ai-agent\\ 都在）
 
-    0.2.5 之前这里写死成 Library/...，结果 Windows 那台机器上「会话索引 / 项目快照 /
+    0.2.6 之前这里写死成 Library/...，结果 Windows 那台机器上「会话索引 / 项目快照 /
     命令记录 / 侧栏 OCR」四个源全被判成「没找到」—— 不是没装 TRAE，是路径找错了。
     """
     if os.name == "nt":
