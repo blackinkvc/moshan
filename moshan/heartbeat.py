@@ -624,7 +624,10 @@ def _run_once_win(cfg: dict, heal: bool = True) -> dict:
         STATE["running"] = True
         import selfcheck
         c = cfg_of(cfg)
-        port = c.get("port") or None
+        # 端口用**中台自己的**（CFG["port"]），不是 heartbeat.port —— 那个是
+        # mac 上 gateway 的端口（18789），Windows 上根本没有这个服务，拿它去探
+        # 只会得到一个必然失败的「本机服务」。
+        port = cfg.get("port") or None
         rows: list[dict] = []
         healed: list[str] = []
         if heal:                                  # 能自愈的只有目录骨架
