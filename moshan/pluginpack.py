@@ -611,6 +611,24 @@ def _install_tree(cfg: dict, pack_root: Path, m: dict, *, source: str,
                     pass
                 break
 
+    # 顶层点开头的文件是「这台机器上的配置」，不是程序：.llmcost-dir（数据目录指针）、
+    # .env、.secret 这类。升级只该换程序，把这些一起挪走等于把用户设置清了。
+    if old_ver:
+        hist = dest_root / HISTORY_DIR
+        donors = sorted((p for p in hist.iterdir() if p.name.startswith(pid + "-")),
+                        key=lambda p: p.stat().st_mtime, reverse=True)
+        if donors:
+            for item in donors[0].iterdir():
+                if not item.name.startswith(".") or item.name in (".git", ".DS_Store"):
+                    continue
+                target = dest / item.name
+                if target.exists():
+                    continue
+                try:
+                    shutil.move(str(item), str(target))
+                except OSError:
+                    pass
+
     # manifest 里的 version 回写到插件目录，升级检查读这里（plugins.json 可能被手改）
     try:
         (dest / MANIFEST).write_text(
@@ -1028,7 +1046,17 @@ def find_manifest_dict(p: Path) -> dict:
 
 
 def upgrade(cfg: dict, pid: str) -> dict:
-    """按清单里记的来源重装一遍（版本从远端下）。"""
+    """按清单里记的来源重装一遍（版本从远端下）。
+
+    三条取包地址的路，按「掌握的信息多少」排：
+
+      1. update.pack / update.zip —— 作者写清楚了，直接用
+      2. 从 update.manifest 推断 —— manifest 和包通常放在同一个目录
+         （站点根上摆 plugin.json + <id>.moshanplug 是最省事的发布方式）。
+         **这条是为老版本准备的**：1.0.0 的 plugin.json 里只有 `"update": "git pull"`，
+         没有 pack 字段，不给它一条推断路径，第一批用户永远升不上来。
+      3. repo 的 Release 资产 —— 作者按约定挂 <id>.moshanplug
+    """
     row = find_row(cfg, pid)
     if not row:
         raise PackError("清单里没有这个插件")
@@ -1036,14 +1064,26 @@ def upgrade(cfg: dict, pid: str) -> dict:
     if not isinstance(upd, dict):
         upd = {}
     pack_url = str(upd.get("pack") or upd.get("zip") or "").strip()
+
     if not pack_url:
-        repo = re.sub(r"^https?://github\.com/", "", str(upd.get("repo") or row.get("repo") or "")).strip("/")
+        man = str(upd.get("manifest") or "").strip()
+        if not man:                                     # 上手时还没查过新版，读一次缓存
+            man = str((load_cache().get(pid) or {}).get("url") or "").strip()
+        if man and re.search(r"/[^/]+\.json$", man):
+            pack_url = man.rsplit("/", 1)[0] + f"/{pid}.moshanplug"
+
+    if not pack_url:
+        repo = re.sub(r"^https?://github\.com/", "",
+                      str(upd.get("repo") or row.get("repo") or "")).strip("/")
         if repo:
-            # 约定：Release 里挂 <id>.moshanplug，或者名字里带 moshanplug 的那一个
             pack_url = f"https://github.com/{repo}/releases/latest/download/{pid}.moshanplug"
+
     if not pack_url:
-        raise PackError("这个插件没写 update.pack / repo，没法自己下新版 —— 把新包拖进来就行")
-    res = install_url(cfg, pack_url)
+        raise PackError("这个版本里没写更新地址，自己下不了新版 —— 把新包拖进中台就行")
+    try:
+        res = install_url(cfg, pack_url)
+    except PackError as exc:
+        raise PackError(f"{exc}（下载地址：{pack_url}）") from exc
     res["upgraded"] = True
     return res
 

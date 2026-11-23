@@ -573,11 +573,25 @@ JS = r"""
     b.disabled = true; b.textContent = '更新中';
     api('/api/pack/upgrade', { method: 'POST', body: JSON.stringify({ id: id }) })
       .then(function (r) {
-        if (!r.ok) { b.disabled = false; b.textContent = '更新'; say(r.error || '更新失败'); return; }
+        if (!r.ok) {
+          b.disabled = false; b.textContent = '更新';
+          // 失败原因写在这行下面，别只弹个 toast —— 关掉就忘，用户还想照着改
+          $('mpk-upd-hint').textContent = '更新失败：' + (r.error || '不知道什么原因');
+          say(r.error || '更新失败');
+          return;
+        }
         say('已更新 ' + (r.plugin ? r.plugin.name : id) + ' → v' + (r.plugin ? r.plugin.version : ''));
+        // 文件换了，但正在跑的进程还是旧代码 —— 说清楚，别让人以为没生效
+        $('mpk-upd-hint').textContent = '已换到 v' + (r.plugin ? r.plugin.version : '?')
+          + '。它现在开着的话，重启一次才用上新代码。'
+          + (r.warnings && r.warnings.length ? ' ' + r.warnings.join('；') : '');
         refresh(true);
       })
-      .catch(function (err) { b.disabled = false; b.textContent = '更新'; say('更新失败：' + err.message); });
+      .catch(function (err) {
+        b.disabled = false; b.textContent = '更新';
+        $('mpk-upd-hint').textContent = '更新失败：' + err.message;
+        say('更新失败：' + err.message);
+      });
   });
 
   document.addEventListener('click', function (e) {
