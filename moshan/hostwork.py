@@ -973,10 +973,13 @@ def _app_from_path(path: str) -> str:
 
 # 哪个软件的进程：按可执行文件路径认，比按进程名靠谱得多
 # （pocket 跑的是 .venv/bin/python，名字跟别的 python 撞在一起）
+# 分隔符一律写成 [\\/]：Windows 上是反斜杠，写死 `/` 在那边一条都匹配不上。
 _OWNER_PAT = {
     "workbuddy": re.compile(r"(?i)workbuddy"),
-    "trae": re.compile(r"(?i)(trae cn|trae\.app|/trae)"),
-    "pocket": re.compile(r"(?i)(local-ai-workspace/pocket|pocket\.log|pocket/journal|/pocket/server\.py)"),
+    "trae": re.compile(r"(?i)(trae cn|trae\.app|[\\/]trae)"),
+    "pocket": re.compile(r"(?i)(local-ai-workspace[\\/]pocket|pocket\.log"
+                         r"|pocket[\\/]journal|[\\/]pocket[\\/]server\.py"
+                         r"|[\\/]moshan[\\/])"),
 }
 
 
@@ -990,8 +993,119 @@ def _group_name(name: str, path: str = "") -> str:
     return base
 
 
+# ---------------------------------------------------------------- Windows 采样
+# macOS 走 libproc（零依赖、字段最全，路径/启动时刻/磁盘 IO 都有）。Windows 没有
+# 对应的一套 syscall，用 psutil —— 它是唯一能跨平台拿到「每个进程的 CPU 时间 /
+# 内存 / IO 计数」的东西。代价是多一个依赖（requirements.txt 里标成 Windows 必需），
+# 换来的是「本机工作」的进程卡、CPU 曲线在 Windows 上不再是空白。
+_WIN_IO_PREV: dict[str, tuple] = {}
+_WIN_AT_PREV = [0.0]
+
+
+def _sample_procs_win() -> dict:
+    now = time.time()
+    try:
+        import psutil
+    except ImportError:
+        rec = {"at": round(now, 1), "apps": [], "cpu_pct": 0.0, "cpu_true": 0.0,
+               "cpu_ready": False, "total_rss": 0.0,
+               "why": "这台 Windows 上缺 psutil，采不到进程（pip install psutil 即可）"}
+        with _proc_lock:
+            _PROC.update(rec)
+        return rec
+
+    cpus = os.cpu_count() or 1
+    try:
+        whole = round(float(psutil.cpu_percent(interval=None)), 1)
+    except Exception:                                       # noqa: BLE001
+        whole = 0.0
+    groups: dict[str, dict] = {}
+    for p in psutil.process_iter(["pid", "name", "exe", "memory_info",
+                                  "create_time", "cmdline"]):
+        info = p.info or {}
+        name = info.get("name") or ""
+        if not name:
+            continue
+        exe = info.get("exe") or ""
+        key = _group_name(name, exe)
+        g = groups.setdefault(key, {"cpu": 0.0, "mem": 0.0, "pids": 0, "path": exe,
+                                    "start": 0.0, "io_r": 0.0, "io_w": 0.0,
+                                    "owners": set()})
+        try:
+            # 这里的百分比已经是「上次调用到现在」，psutil 自己记着上一次的 cpu_times，
+            # 所以第一次对每个进程都是 0 —— 与 mac 那条「等下一轮」的行为一致。
+            g["cpu"] += float(p.cpu_percent(None))
+        except Exception:                                   # noqa: BLE001  进程刚好退出
+            pass
+        mi = info.get("memory_info")
+        if mi is not None:
+            g["mem"] += float(getattr(mi, "rss", 0)) / 1048576.0
+        g["pids"] += 1
+        if not g["path"] and exe:
+            g["path"] = exe
+        ct = info.get("create_time") or 0
+        if ct:
+            g["start"] = min(g["start"] or ct, float(ct))
+        try:
+            io = p.io_counters()
+            g["io_r"] += float(io.read_bytes)
+            g["io_w"] += float(io.write_bytes)
+        except Exception:                                   # noqa: BLE001  权限/不支持
+            pass
+        hay = f"{exe} {' '.join(info.get('cmdline') or [])}"
+        for cid, pat in _OWNER_PAT.items():
+            if pat.search(hay):
+                g["owners"].add(cid)
+
+    dt = now - (_WIN_AT_PREV[0] or now)
+    _WIN_AT_PREV[0] = now
+    apps = []
+    for key, g in groups.items():
+        prev = _WIN_IO_PREV.get(key)
+        if prev and dt > 0:
+            dr = max(0.0, (g["io_r"] - prev[0]) / dt)
+            dw = max(0.0, (g["io_w"] - prev[1]) / dt)
+        else:
+            dr = dw = 0.0
+        _WIN_IO_PREV[key] = (g["io_r"], g["io_w"])
+        apps.append({
+            "name": key,
+            "cpu": round(g["cpu"], 1),
+            "cpu_s": 0.0,                       # psutil 只给百分比，不给累计秒数
+            "cores": round(g["cpu"] / 100, 2),
+            "mem": round(g["mem"], 1),
+            "dread": round(dr, 1),
+            "dwrite": round(dw, 1),
+            "net": 0.0,                         # Windows 没有按进程的网络计数
+            "net_in": 0.0,
+            "net_out": 0.0,
+            "pwr": 0.0,                         # 也没有按进程的能耗
+            "pids": g["pids"],
+            "age": round(now - g["start"]) if g["start"] else None,
+            "path": g["path"],
+            "owners": sorted(g["owners"]),
+        })
+    apps.sort(key=lambda a: (-a["cpu"], -a["mem"]))
+    for a in apps[:_ICON_MAX]:
+        if a["path"]:
+            icon_name(a["name"], a["path"])
+    total_pct = round(sum(a["cpu"] for a in apps) / cpus, 1)
+    rec = {"at": round(now, 1), "apps": apps,
+           "cpu_pct": total_pct, "cpu_true": whole, "cpu_ready": bool(whole),
+           "total_rss": round(sum(a["mem"] for a in apps), 1)}
+    with _proc_lock:
+        _PROC.update(rec)
+        _HIST.append({"at": rec["at"], "cpu": rec["cpu_true"],
+                      "apps": {a["name"]: [a["cpu"], a["mem"], a["dwrite"],
+                                           a["dread"], a["net"], a["pwr"]]
+                               for a in apps[:40]}})
+    return rec
+
+
 def sample_procs() -> dict:
     """采一次全量进程，按名字合并。返回 {at, apps:[...], cpu_pct, total_rss}。"""
+    if os.name == "nt":
+        return _sample_procs_win()
     pids = list_pids()
     cpu_now: dict[str, float] = {}
     rss: dict[str, float] = {}

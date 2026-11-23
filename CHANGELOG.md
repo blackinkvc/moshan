@@ -10,6 +10,36 @@
 - 应用内托盘图标与「退出」菜单
 - 真正的原子更新（versions/ + current 符号链接，替换正在运行的程序）
 
+## [0.2.6] - 2026-11-23
+
+**让 Windows 那台机器「有数据可看」：进程采样、巡检、解释器三处补齐。**
+
+之前 EVO 上「本机工作」只有 TRAE 的逐轮记录、巡检页一片空 —— 不是那台机器没干活，
+是三处代码默认自己跑在 macOS 上。这一版把这三处按平台分开。
+
+### 新增
+- `moshan/pyexe.py`：跨平台解释器解析。venv 路径按平台取
+  （POSIX `bin/python` / Windows `Scripts\python.exe`），找不到时依次试
+  当前解释器 → PATH → Windows `py` 启动器 → `%LOCALAPPDATA%\Programs\Python\Python3*`，
+  并把**试过的每一条**带回界面。`ai_trends_runner` / `dedupe_runner` / `ocr_runner`
+  三处写死 `.venv/bin/python` 的地方全部改走它。
+- `hostwork._sample_procs_win()`：Windows 的进程采样。字段形状与 mac 完全一致，
+  前端不用改；`_OWNER_PAT` 的分隔符改成 `[\\/]`（写死 `/` 在 Windows 上一条都匹配不上）。
+  `psutil==7.2.2` 进依赖，`moshan.spec` 显式加 hiddenimports（函数内 import 抓不到）；
+  缺它时返回 `why` 说明而不是空白。
+- `moshan/selfcheck.py`：不依赖 cuntu 的**基线巡检**。8774（cuntu 的 syscheck）不在时
+  `/api/inspect/run|state` 退回本机这一套：数据目录可写、磁盘、内存、运行时长、
+  Python 可用、https 证书、本机端口、采集层命中、运行依赖、外网可达。
+  报告写到 `10-系统记录/巡检/报告`（和 syscheck 同目录，读法不变），历史进 `历史.jsonl`。
+- `docs/WINDOWS-PARITY.md`：mac / Windows 能力对照，哪些用系统自带、哪些要额外装、
+  PowerToys 怎么定位（用户侧便利，不是程序依赖）。
+
+### 说明
+- 文件名是 `selfcheck` 不是 `inspect`：`moshan/` 在 sys.path 上，叫 `inspect.py`
+  会顶掉标准库，pydantic import 当场炸（`module 'inspect' has no attribute 'signature'`）。
+- 「AI 新闻抓取」在 Windows 上一直报「找不到 Python」，根因是它按 macOS 的 venv 布局
+  找解释器 —— 那台机器装着 Python 3.11，只是 `python` 不在 SYSTEM 的 PATH 上。
+
 ## [0.2.5] - 2026-11-23
 
 **更新权交给主机：程序包由主机推过来，被更新的机器不需要 GitHub。**

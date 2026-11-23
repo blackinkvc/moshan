@@ -459,10 +459,13 @@ macOS 用系统自带 `sips` 缩图；Windows 没有这个命令，列表退回�
   cuntu 插件集（未随包分发）。不装时这些入口会明确报「没有 cuntu」而不是把服务拖崩；
   想用就把 `MOSHAN_CUNTU` 指向自己的副本。
 - **macOS 未公证**，首次需右键打开（见上方折叠说明）。
-- **Windows 无缩略图**（缺 `sips` 的等价实现）。
+- **Windows 无缩略图**（缺 `sips` 的等价实现）、**无 OCR**（WinRT 那套还没接）、
+  **视频封面不可用**（需 ffmpeg）。哪块用什么补、要不要额外装东西，见
+  [`docs/WINDOWS-PARITY.md`](docs/WINDOWS-PARITY.md)。
 - **暂无 Intel Mac 官方包**（CI 只构 arm64，可本地自建）。
 - **暂无 Linux 包**，但代码本身没有 macOS 专属依赖（除缩略图一条），理论上可直接跑源码。
-- **更新不是原子替换**，需要走一次系统安装流程；正在运行的程序不会被热替换。
+- **更新不是原子替换**：走 GitHub 的那条交给系统安装器；走主机推送的那条是原地替换
+  （有备份、sha256 校验、白名单解包、一键 rollback），但替换途中进程是停的。
 - **无托盘图标**：关闭浏览器标签不会退出服务，要退出请从启动器窗口 `Ctrl+C`，或结束进程。
 - **0.2.0 的用户请手动重下 0.2.2**：0.2.0 的安装版缺 CA 证书，任何 https 请求
   （包括「检查更新」本身）都会失败，没法自动升上来；Windows 包还叠加了首次启动崩溃。
@@ -475,6 +478,7 @@ macOS 用系统自带 `sips` 缩图；Windows 没有这个命令，列表退回�
 欢迎 issue 与 PR。动手前请先看：
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) —— 为什么这么分层、几个关键取舍
+- [`docs/WINDOWS-PARITY.md`](docs/WINDOWS-PARITY.md) —— mac 与 Windows 的能力差异怎么补
 - [`docs/SYNC.md`](docs/SYNC.md) —— 本仓库与上游开发目录的同步规则（哪些文件带补丁）
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) —— 提交前要跑什么
 

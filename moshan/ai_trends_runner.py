@@ -19,6 +19,8 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import pyexe
+
 _LOCK = threading.Lock()
 STATE: dict = {"running": False, "started": "", "error": "", "last": None}
 
@@ -28,8 +30,14 @@ def _cfg(cfg: dict) -> dict:
     script = Path(d.get("script")
                  or Path.home() / ".trae-cn/assistant/2026-11-11/local-ai-workspace"
                     / "work/local-ai-workspace/scripts/ai_trends_daily.py")
+    # 解释器以前写死 `.venv/bin/python`（macOS 的 venv 布局），Windows 上那串路径
+    # 根本不存在，卡片上就写「找不到 Python」—— 其实人家装着 Python，只是叫 py.exe。
+    venv = script.parents[1] / ".venv" if len(script.parents) > 1 else None
+    py, py_tried = pyexe.resolve(d.get("python"), venv)
     return {
-        "python": Path(d.get("python") or script.parents[1] / ".venv/bin/python"),
+        "python": py or (pyexe.venv_python(venv) if venv else Path("python")),
+        "py_found": py is not None,
+        "py_tried": py_tried,
         "script": script,
         "root": Path(d.get("root") or Path.home() / "Documents/AI项目"),
         "hour": int(d.get("hour", 9)),
@@ -116,8 +124,8 @@ def already_done(cfg: dict, day: str | None = None) -> bool:
 def run(cfg: dict, force: bool = False, timeout: int = 900) -> dict:
     """跑一次。力的来源：手动 / 定时。已在跑时直接拒绝。"""
     c = _cfg(cfg)
-    if not c["python"].exists():
-        return {"ok": False, "error": f"找不到 Python：{c['python']}"}
+    if not c["py_found"]:
+        return {"ok": False, "error": pyexe.not_found_hint(c["py_tried"])}
     if not c["script"].exists():
         return {"ok": False, "error": f"找不到脚本：{c['script']}"}
     day = datetime.now().strftime("%Y-%m-%d")

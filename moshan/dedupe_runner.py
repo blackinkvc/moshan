@@ -13,15 +13,23 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import pyexe
+
 _LOCK = threading.Lock()          # 同一时刻只允许一次扫描
 STATE: dict = {"running": False, "started": "", "error": "", "last": None}
 
 
 def _cfg(cfg: dict) -> dict:
     d = cfg.get("dedupe") or {}
+    script = Path(d.get("script") or Path.home() / "Documents/cuntu/dedupe.py")
+    # 同 ai_trends：解释器不写死 `.venv/bin/python`，交给 pyexe 按平台找
+    venv = Path.home() / "Documents/cuntu/.venv"
+    py, py_tried = pyexe.resolve(d.get("python"), venv)
     return {
-        "python": Path(d.get("python") or Path.home() / "Documents/cuntu/.venv/bin/python"),
-        "script": Path(d.get("script") or Path.home() / "Documents/cuntu/dedupe.py"),
+        "python": py or pyexe.venv_python(venv),
+        "py_found": py is not None,
+        "py_tried": py_tried,
+        "script": script,
         "root": Path(d.get("root") or Path.home() / "Documents" / "AI项目" / "04-存图"),
         "hour": int(d.get("hour", 3)),
         "apply": bool(d.get("apply", True)),
@@ -66,8 +74,8 @@ def run(cfg: dict, apply: bool | None = None, limit: int | None = None,
         timeout: int = 1800) -> dict:
     """跑一次扫描。返回 dedupe.py --json 的结果。已在跑时直接拒绝。"""
     c = _cfg(cfg)
-    if not c["python"].exists():
-        return {"ok": False, "error": f"找不到 Python：{c['python']}"}
+    if not c["py_found"]:
+        return {"ok": False, "error": pyexe.not_found_hint(c["py_tried"])}
     if not c["script"].exists():
         return {"ok": False, "error": f"找不到脚本：{c['script']}"}
     if not _LOCK.acquire(blocking=False):

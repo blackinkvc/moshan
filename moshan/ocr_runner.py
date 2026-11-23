@@ -17,10 +17,12 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import pyexe
+
 # OCR 是可选增强：识别逻辑在 cuntu 仓库里。别人机器上没有这个目录时，
 # 调度器会静默跳过（下方 exists 判断），不影响中台其余功能。
 CUNTU = Path(os.environ.get("MOSHAN_CUNTU", "") or (Path.home() / "Documents" / "cuntu"))
-DEFAULT_PY = str(CUNTU / ".venv/bin/python")
+DEFAULT_PY = str(pyexe.venv_python(CUNTU / ".venv"))
 DEFAULT_SCRIPT = str(CUNTU / "ocr.py")
 
 import paths  # 交付版：阅读目录走资料库，不写死开发机的 ~/Documents/AI项目
@@ -36,10 +38,12 @@ STATE: dict = {"last_at": "", "scanned": 0, "done": 0, "failed": 0,
 
 def cfg_of(cfg: dict) -> dict:
     c = (cfg or {}).get("ocr") or {}
+    # 解释器按平台找（Windows 是 .venv\Scripts\python.exe），别写死 mac 布局
+    py, _tried = pyexe.resolve(c.get("python"), CUNTU / ".venv")
     return {
         "enabled": c.get("enabled", True),
         "interval": int(c.get("interval_sec", 300)),
-        "python": c.get("python") or DEFAULT_PY,
+        "python": str(py or DEFAULT_PY),
         "script": c.get("script") or DEFAULT_SCRIPT,
         "limit": int(c.get("limit", 20)),
         "timeout": int(c.get("timeout_sec", 420)),

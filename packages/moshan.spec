@@ -30,6 +30,10 @@ LOCAL_MODULES = sorted(
     if p.stem != "launcher" and not p.name.startswith(".")
 )
 
+# psutil 在 hostwork._sample_procs_win 里是**函数内** import（macOS 不需要它，
+# 不想让它在 mac 版里也把 hook 拖下水）。函数内 import 静态分析抓不到，必须显式列。
+EXTRA_HIDDEN = ["psutil"]
+
 UVICORN_HIDDEN = [
     "uvicorn.logging",
     "uvicorn.loops", "uvicorn.loops.auto", "uvicorn.loops.asyncio",
@@ -72,7 +76,7 @@ a = Analysis(
     pathex=[str(SRC)],
     binaries=[],
     datas=datas,
-    hiddenimports=LOCAL_MODULES + UVICORN_HIDDEN,
+    hiddenimports=LOCAL_MODULES + UVICORN_HIDDEN + EXTRA_HIDDEN,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

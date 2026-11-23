@@ -2542,12 +2542,15 @@ def api_inspect_report(name: str = "") -> dict:
 
 
 @app.post("/api/inspect/run", dependencies=[Depends(auth)])
-def api_inspect_run(payload: dict) -> dict:
+def api_inspect_run(payload: dict, request: Request) -> dict:
     """触发一轮巡检（heal=true 时顺带把能修的服务拉起来）。
 
     **这一轮是后台跑的**（8774 的 repair_round 起了个 daemon 线程，结果写 REPAIR），
     所以返回的只有 started；进度要靠 /api/inspect/state 轮询 —— 前端按钮上那个
     「跑着 12s」就是轮它。
+
+    8774 不在（交付版常态，Windows 上必然）：退回中台自带的基线巡检
+    （selfcheck.py），照样出一份报告落到同一个目录，页面不用改。
     """
     heal = bool((payload or {}).get("heal", False))
     body = json.dumps({"heal": heal}).encode("utf-8")
@@ -2558,7 +2561,13 @@ def api_inspect_run(payload: dict) -> dict:
         with urllib.request.urlopen(req, timeout=30) as r:
             return json.loads(r.read().decode("utf-8") or "{}")
     except Exception as e:  # 端口没起 / 超时 / 返回不是 JSON
-        raise HTTPException(502, "巡检服务没响应：%s" % e)
+        try:
+            import selfcheck
+            port = request.url.port or CFG.get("port")
+            log({"event": "inspect_local", "why": str(e)[:120], "port": port})
+            return selfcheck.run(CFG, port=int(port) if port else None, heal=heal)
+        except Exception as e2:                        # noqa: BLE001
+            raise HTTPException(502, "巡检服务没响应：%s（本机兜底也失败：%s）" % (e, e2))
 
 
 @app.get("/api/inspect/state", dependencies=[Depends(auth)])
@@ -2567,12 +2576,17 @@ def api_inspect_state() -> dict:
 
     只从 8774 的 /api/state 里拎 repair 段 —— 别把服务矩阵、机器状态整包转发，
     那个页面已经在 /api/dash 里有一份了，两处口径不同迟早对不上。
+    8774 不在时给本机基线巡检的状态，字段里 `local: true` 表示不是 cuntu 那份。
     """
     try:
         with urllib.request.urlopen(INSPECT_BASE + "/api/state", timeout=10) as r:
             st = json.loads(r.read().decode("utf-8") or "{}")
-    except Exception as e:
-        raise HTTPException(502, "巡检服务没响应：%s" % e)
+    except Exception:                                   # noqa: BLE001
+        try:
+            import selfcheck
+            return selfcheck.state()
+        except Exception as e2:                         # noqa: BLE001
+            raise HTTPException(502, "巡检服务没响应：%s" % e2)
     return {"ok": True, "repair": st.get("repair") or {}}
 
 

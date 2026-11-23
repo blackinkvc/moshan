@@ -14,3 +14,7 @@ python-multipart==0.0.32
 # 不存在，不显式带上 certifi 的话安装版里所有 https 请求都 CERTIFICATE_VERIFY_FAILED
 # （0.2.0 的「检查更新」就是这么对所有人失效的）。netca.py 负责把它指给 ssl。
 certifi==2026.11.20
+# Windows 上采进程必须靠它。macOS 有 libproc（ctypes 直连内核，零依赖），
+# 这条是为 Windows 补的；两个平台都装，省掉一套「有则用没有则降级」的分支。
+# 缺了不会崩：hostwork._sample_procs_win 会把原因写进卡片（不再是空白）。
+psutil==7.2.2
