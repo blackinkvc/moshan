@@ -1062,6 +1062,11 @@ def _sample_procs_win() -> dict:
         name = info.get("name") or ""
         if not name:
             continue
+        # pid 0 = System Idle Process，它那点 CPU 时间是**空闲**时间，算进来
+        # 会让「谁在干活」第一名永远是它（实测 2971%），整机占比也跟着失真。
+        # pid 4 = System（内核），不是应用，页面上没有意义。
+        if int(info.get("pid") or 0) < 8 or name.lower() in ("system idle process", "idle"):
+            continue
         exe = info.get("exe") or ""
         key = _group_name(name, exe)
         g = groups.setdefault(key, {"cpu": 0.0, "mem": 0.0, "pids": 0, "path": exe,
