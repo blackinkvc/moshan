@@ -39,6 +39,7 @@ import math
 import os
 import plistlib
 import re
+import shutil
 import sqlite3
 import struct
 import subprocess
@@ -128,12 +129,20 @@ def human_bytes(n: float) -> str:
 # ---------------------------------------------------------------- 机器指标
 
 def _disk() -> dict:
+    # statvfs 是 Unix 专有。Windows 上它不是「抛 OSError」而是**根本没有这个属性**，
+    # 所以只 catch OSError 会漏 —— 一漏整份 /api/overview 直接降级，资源卡、
+    # 「谁在干活」、节奏账全变成空表。这个坑在 EVO 上就是这么现形的。
+    target = str(SYS_DIR if SYS_DIR.exists() else HOME)
     try:
-        st = os.statvfs(str(SYS_DIR if SYS_DIR.exists() else HOME))
-    except OSError:
-        return {"disk_pct": 0.0, "free_gb": 0.0, "total_gb": 0.0}
-    total = st.f_blocks * st.f_frsize
-    free = st.f_bavail * st.f_frsize
+        if hasattr(os, "statvfs"):
+            st = os.statvfs(target)
+            total = st.f_blocks * st.f_frsize
+            free = st.f_bavail * st.f_frsize
+        else:
+            u = shutil.disk_usage(target)
+            total, free = u.total, u.free
+    except (OSError, AttributeError):
+        return {"disk_pct": 0.0, "free_gb": 0.0, "total_gb": 0.0, "used_gb": 0.0}
     used = total - free
     return {"disk_pct": round(used * 100 / total, 1) if total else 0.0,
             "free_gb": round(free / GB, 1), "total_gb": round(total / GB, 1),
@@ -279,7 +288,20 @@ def _gpu() -> dict:
 
 
 def _mem() -> dict:
-    """口径与 metrics.py / syscheck.py 一致：active + wired + compressor。"""
+    """口径与 metrics.py / syscheck.py 一致：active + wired + compressor。
+
+    Windows 上没有 vm_stat/sysctl，交给 sysinfo（那边按平台各写了一条：
+    有 psutil 走 psutil，没有就走 GlobalMemoryStatusEx）。不借这一步的话，
+    Windows 上内存会一直报 0 GB —— 不崩，但比空还糟：看着像真值。
+    """
+    if os.name == "nt":
+        try:
+            import sysinfo
+            m = sysinfo.sample().get("mem") or {}
+            return {"mem_pct": m.get("pct") or 0.0, "mem_gb": m.get("used_gb") or 0.0,
+                    "mem_total_gb": m.get("total_gb") or 0.0}
+        except Exception:                              # noqa: BLE001
+            return {"mem_pct": 0.0, "mem_gb": 0.0, "mem_total_gb": 0.0}
     out = _run(["/usr/bin/vm_stat"])
     m = re.search(r"page size of (\d+) bytes", out)
     page = int(m.group(1)) if m else 4096
@@ -298,6 +320,12 @@ def _mem() -> dict:
 
 
 def _uptime_h() -> float:
+    if os.name == "nt":                                # 没有 kern.boottime
+        try:
+            import sysinfo
+            return float(sysinfo.sample().get("uptime_h") or 0.0)
+        except Exception:                              # noqa: BLE001
+            return 0.0
     bt = _run(["/usr/sbin/sysctl", "-n", "kern.boottime"])
     mb = re.search(r"sec = (\d+)", bt)
     return round(max(0, time.time() - int(mb.group(1))) / 3600, 1) if mb else 0.0
@@ -2691,7 +2719,7 @@ def overview(range_key: str = "7d", fresh: bool = False) -> dict:
     disk = _disk()
     try:
         load = [round(x, 2) for x in os.getloadavg()]
-    except OSError:
+    except (OSError, AttributeError):               # Windows 没有 getloadavg
         load = [0.0, 0.0, 0.0]
 
     clients = clients_view(days, cfg)

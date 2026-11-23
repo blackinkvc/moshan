@@ -35,6 +35,12 @@
   PowerToys 怎么定位（用户侧便利，不是程序依赖）。
 
 ### 说明
+- **`/api/overview` 在 Windows 上整份降级**：`hostwork._disk()` 调 `os.statvfs`，
+  而 Windows 上它不是「抛 OSError」而是**根本没这个属性** —— 只 catch OSError 会漏，
+  一漏整份 payload 走降级分支，资源卡、「谁在干活」、节奏账全变空表。
+  改成没有 statvfs 时走 `shutil.disk_usage`。同一处的 `os.getloadavg()` 同理。
+- 内存与开机时长在 Windows 上改由 `sysinfo` 提供（没有 `vm_stat` / `kern.boottime`）。
+  不借这一步的话，内存会一直报 0 GB —— 不崩，但比空更糟：看着像真值。
 - 文件名是 `selfcheck` 不是 `inspect`：`moshan/` 在 sys.path 上，叫 `inspect.py`
   会顶掉标准库，pydantic import 当场炸（`module 'inspect' has no attribute 'signature'`）。
 - 「AI 新闻抓取」在 Windows 上一直报「找不到 Python」，根因是它按 macOS 的 venv 布局
