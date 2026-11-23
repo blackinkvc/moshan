@@ -38,3 +38,6 @@ desktop.ini
 
 # 发版时由 CI 生成（.github/workflows/build.yml）
 notes.md
+
+# 可选的 openssl 二进制（vendor/openssl/openssl.exe + dll）：谁要谁放，不入库
+vendor/openssl/

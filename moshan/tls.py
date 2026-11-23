@@ -17,22 +17,32 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
+import time
 from pathlib import Path
 
 TAILSCALE_BINS = ("/Applications/Tailscale.app/Contents/MacOS/Tailscale",
-                  "/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale")
+                  "/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale",
+                  # Windows 装 Tailscale 后默认落在这里，加进来才能把
+                  # Tailscale 的真证书（公信 CA，手机不再报警告）接上
+                  r"C:\Program Files\Tailscale\tailscale.exe",
+                  r"C:\Program Files (x86)\Tailscale\tailscale.exe")
 
 
 def lan_ip() -> str | None:
-    for iface in ("en0", "en1", "en2"):
-        try:
-            r = subprocess.run(["ipconfig", "getifaddr", iface],
-                               capture_output=True, text=True, timeout=3)
-            if r.returncode == 0 and r.stdout.strip():
-                return r.stdout.strip()
-        except (OSError, subprocess.SubprocessError):
-            pass
+    # Windows 上没有 ipconfig getifaddr 这种东西（`ipconfig` 是另一个命令，
+    # 也没有 getifaddr 子命令），照原样跑只会白等三次超时。直接走下面的
+    # 「连一个外网地址看自己用了哪张网卡」——这条在三条平台上都成立。
+    if os.name != "nt":
+        for iface in ("en0", "en1", "en2"):
+            try:
+                r = subprocess.run(["ipconfig", "getifaddr", iface],
+                                   capture_output=True, text=True, timeout=3)
+                if r.returncode == 0 and r.stdout.strip():
+                    return r.stdout.strip()
+            except (OSError, subprocess.SubprocessError):
+                pass
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("223.5.5.5", 80))
@@ -80,6 +90,16 @@ def tailscale_name() -> str | None:
 
 
 def _iface_ip_by_prefix(prefix: str) -> str | None:
+    # psutil 在（两条平台都装了）就先用它：一次拿到所有网卡的地址，
+    # Windows 上不用去猜 `ifconfig` 不存在这件事。
+    try:
+        import psutil
+        for addrs in psutil.net_if_addrs().values():
+            for a in addrs:
+                if a.family == socket.AF_INET and (a.address or "").startswith(prefix):
+                    return a.address
+    except Exception:                               # noqa: BLE001
+        pass
     try:
         r = subprocess.run(["ifconfig"], capture_output=True, text=True, timeout=4)
     except (OSError, subprocess.SubprocessError):
@@ -92,6 +112,10 @@ def _iface_ip_by_prefix(prefix: str) -> str | None:
 
 
 def local_hostname() -> str:
+    if os.name == "nt":
+        # Windows 没有 scutil，也没有 `xxx.local` 这个概念（除非装了 Bonjour），
+        # 用裸主机名 —— 同一网段里 `\\EVO-X2` 这种写法是能解析的
+        return (socket.gethostname() or "localhost").split(".")[0]
     try:
         n = subprocess.run(["scutil", "--get", "LocalHostName"],
                            capture_output=True, text=True, timeout=3).stdout.strip()
@@ -151,13 +175,173 @@ authorityKeyIdentifier = keyid:always
 
 
 def _openssl() -> str | None:
+    """PATH 里（或安装包自带目录里）有没有 openssl 命令。
+
+    顺序有讲究：打包版把 openssl.exe 放在**程序目录**，PATH 里根本没有它，
+    所以先看自己身边，再问 PATH。以前只查 PATH，于是「把 openssl 打进包」
+    这件事做了也等于没做 —— 打进去了但找不到。
+    """
+    override = os.environ.get("MOSHAN_OPENSSL", "").strip()
+    if override and Path(override).exists():
+        return override
+    names = ("openssl.exe", "openssl") if os.name == "nt" else ("openssl",)
+    roots = []
+    for attr in ("_MEIPASS",):
+        base = getattr(sys, attr, None)          # PyInstaller 解包目录
+        if base:
+            roots.append(Path(base))
+    try:
+        roots.append(Path(sys.executable).resolve().parent)   # 安装包根目录
+    except (OSError, ValueError):
+        pass
+    roots.append(Path(__file__).resolve().parent)             # 源码运行时
+    for root in roots:
+        for n in names:
+            for sub in (root, root / "openssl", root / "bin"):
+                p = sub / n
+                if p.is_file():
+                    return str(p)
     return shutil.which("openssl")
+
+
+# ------------------------------------------------------------------ cryptography 通道
+# 为什么还要一条不依赖 openssl 的路：Windows 上根本没有 openssl 命令，
+# 打包版也从来没把它打进去。`_generate()` 返回 None 之后，server.py 就把
+# scheme 定成 http —— 令牌（URL 上的 ?k=）明文走局域网。这不是「少个功能」，
+# 是「同网段谁抓一次包谁就拿到整台中台」。
+#
+# cryptography 是纯 Python 轮子（Windows 上 7 MB，装完约 15 MB），不需要任何
+# 外部可执行文件，生成、解析、校验全在进程内。于是三条平台一条代码路径，
+# 而 mac 上原来那条 openssl 路径原样保留当首选（它已经跑了很久，不出事）。
+_UNSET = object()
+_CRYPTO = _UNSET
+
+
+def _crypto():
+    """返回 (x509, hashes, serialization, rsa) 或 None（没装）。"""
+    global _CRYPTO
+    if _CRYPTO is not _UNSET:
+        return _CRYPTO
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        _CRYPTO = (x509, hashes, serialization, rsa)
+    except ImportError:
+        _CRYPTO = None
+    return _CRYPTO
+
+
+def _san_objects(x509, hosts: list[str]) -> list:
+    out = []
+    for h in hosts:
+        try:
+            out.append(x509.IPAddress(ipaddress.ip_address(h)))
+        except ValueError:
+            out.append(x509.DNSName(h))
+    return out
+
+
+def _generate_crypto(d: Path, hosts: list[str]) -> tuple[Path, Path] | None:
+    """用 cryptography 签一张自签证书，落盘成 PEM。"""
+    lib = _crypto()
+    if lib is None:
+        return None
+    x509, hashes, ser, rsa = lib
+    from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+    import datetime as dt
+
+    crt, key = d / "server.crt", d / "server.key"
+    try:
+        pk = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        name = x509.Name([x509.NameAttribute(
+            NameOID.COMMON_NAME, hosts[0] if hosts else "localhost")])
+        now = dt.datetime.now(dt.timezone.utc)
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(name)
+            .issuer_name(name)                      # 自签：签发者就是自己
+            .public_key(pk.public_key())
+            .serial_number(x509.random_serial_number())
+            # 往回留 5 分钟：别的机器时钟略慢时不至于判成「还没生效」
+            .not_valid_before(now - dt.timedelta(minutes=5))
+            # 825 天是 Apple 对服务端证书的上限；自签本来就不被信任，
+            # 但贴着这个上限走，换到哪个浏览器都不会因为「有效期过长」被额外拦
+            .not_valid_after(now + dt.timedelta(days=825))
+            .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            .add_extension(x509.KeyUsage(
+                digital_signature=True, key_encipherment=True,
+                content_commitment=False, data_encipherment=False,
+                key_agreement=False, key_cert_sign=False, crl_sign=False,
+                encipher_only=False, decipher_only=False), critical=True)
+            .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
+                           critical=False)
+            # SAN 才是浏览器的判定依据，CN 现在基本没人看了
+            .add_extension(x509.SubjectAlternativeName(_san_objects(x509, hosts)),
+                           critical=False)
+            .add_extension(x509.SubjectKeyIdentifier.from_public_key(pk.public_key()),
+                           critical=False)
+            .sign(pk, hashes.SHA256())
+        )
+        key.write_bytes(pk.private_bytes(
+            ser.Encoding.PEM, ser.PrivateFormat.PKCS8, ser.NoEncryption()))
+        crt.write_bytes(cert.public_bytes(ser.Encoding.PEM))
+    except Exception as exc:                        # noqa: BLE001
+        print(f"[tls] cryptography 生成证书失败：{type(exc).__name__}: {exc}")
+        return None
+    try:
+        os.chmod(key, 0o600)
+        os.chmod(crt, 0o644)
+    except OSError:
+        pass                                    # Windows 上 chmod 基本是空操作
+    (d / "cert-hosts.json").write_text(
+        json.dumps(hosts, ensure_ascii=False), encoding="utf-8")
+    return crt, key
+
+
+def _valid_crypto(crt: Path, key: Path, lib) -> bool:
+    x509, _hashes, ser, _rsa = lib
+    try:
+        cert = x509.load_pem_x509_certificate(crt.read_bytes())
+        sk = ser.load_pem_private_key(key.read_bytes(), password=None)
+    except Exception:                               # noqa: BLE001
+        return False
+    # 46.x 起有 not_valid_after_utc（带时区）；老版本只有 naive 的 not_valid_after
+    exp = getattr(cert, "not_valid_after_utc", None) or cert.not_valid_after
+    try:
+        left = exp.timestamp() - time.time()
+    except (AttributeError, OSError, ValueError):
+        left = 0
+    if left <= 86400:                               # 剩不到一天就重签，别等它过期
+        return False
+    try:
+        return (cert.public_key().public_numbers()
+                == sk.public_key().public_numbers())
+    except (AttributeError, ValueError):
+        return False
+
+
+def _covers_crypto(crt: Path, hosts: list[str], lib) -> bool:
+    x509 = lib[0]
+    try:
+        cert = x509.load_pem_x509_certificate(crt.read_bytes())
+        san = cert.extensions.get_extension_for_class(
+            x509.SubjectAlternativeName).value
+        have = {str(v) for v in san.get_values_for_type(x509.DNSName)}
+        have |= {str(v) for v in san.get_values_for_type(x509.IPAddress)}
+    except Exception:                               # noqa: BLE001
+        # 解析不了就当「够用」：宁可留一张旧证书，也不要每轮启动都重签
+        return True
+    return all(h in have for h in hosts)
 
 
 def _valid(crt: Path, key: Path) -> bool:
     """证书没过期且与私钥配套。"""
     if not (crt.exists() and key.exists()):
         return False
+    lib = _crypto()
+    if lib is not None:
+        return _valid_crypto(crt, key, lib)
     op = _openssl()
     if not op:
         return crt.exists() and key.exists()
@@ -177,6 +361,9 @@ def _valid(crt: Path, key: Path) -> bool:
 
 def _cert_covers(crt: Path, hosts: list[str]) -> bool:
     """现有证书是否已经包含全部名字（IP 变了就要重签）。"""
+    lib = _crypto()
+    if lib is not None:
+        return _covers_crypto(crt, hosts, lib)
     op = _openssl()
     if not op:
         return True
@@ -196,7 +383,9 @@ def _cert_covers(crt: Path, hosts: list[str]) -> bool:
 def _generate(cert_dir: Path, hosts: list[str]) -> tuple[Path, Path] | None:
     op = _openssl()
     if not op:
-        return None
+        # 没有 openssl：走 cryptography（Windows 上就是这个分支，原来在这里
+        # 直接返回 None，整台中台退回明文 HTTP）
+        return _generate_crypto(cert_dir, hosts)
     crt, key = cert_dir / "server.crt", cert_dir / "server.key"
     conf = _TEMPLATE.format(cn=hosts[0] if hosts else "localhost", san=_san(hosts))
 

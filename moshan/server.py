@@ -3605,7 +3605,17 @@ def main() -> int:
                   ("（Tailscale 公信证书）" if info["trusted_ca"] else "（自签，手机首次访问需点“继续”）"))
         else:
             scheme = "http"
-            print("[警告] 没找到 openssl，无法生成证书，退化为明文 HTTP。")
+            # 说清到底缺什么：以前只说「没找到 openssl」，而 Windows 上从来
+            # 就没有 openssl，用户照着这句话去装 openssl 也未必能解决 —— 真正
+            # 的修法是装 cryptography（纯 Python 轮子，不依赖外部程序）。
+            lacks = []
+            if not tlsmod._openssl():
+                lacks.append("openssl 命令")
+            if tlsmod._crypto() is None:
+                lacks.append("cryptography 库")
+            print(f"[警告] 证书生成不了（缺：{'、'.join(lacks) or '未知原因'}），"
+                  f"退化为明文 HTTP —— 令牌会以明文经过局域网。"
+                  f"装 cryptography 即可恢复 HTTPS。")
 
     ts_ip = tlsmod.tailscale_ip()
     ts_name = tlsmod.tailscale_name()

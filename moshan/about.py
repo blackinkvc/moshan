@@ -532,6 +532,75 @@ def register(app: FastAPI, cfg: dict, token: str) -> None:
         threading.Thread(target=work, daemon=True).start()
         return {"ok": True, "started": True}
 
+    def _source_zip(tag: str) -> bytes:
+        r"""从 codeload 取某个 tag 的源码包（不带 .git，约 1~3 MB）。
+
+        为什么源码部署走这条路而不是安装包：EVO 那种部署是「run-evo.cmd →
+        C:\moshan-024\moshan\server.py」，开机自启指向的就是那个目录。给它
+        装一个 exe，要么起两个服务，要么自启还指着旧的源码目录 —— 都不对。
+        """
+        import urllib.request
+        r_ = (_CFG.get("update", {}) or {}).get("repo") or version.DEFAULT_REPO
+        url = f"https://codeload.github.com/{r_}/zip/refs/tags/v{tag.lstrip('vV')}"
+        req = urllib.request.Request(url, headers={"User-Agent": "curl/8"})
+        with urllib.request.urlopen(req, timeout=90) as r:      # noqa: S310
+            return r.read()
+
+    def _strip_top(raw: bytes) -> bytes:
+        """codeload 的 zip 顶层多一层 `moshan-0.3.1/` 壳。
+
+        `pushupd._unpack` 是平铺写到程序目录的（它收到的主机推送包本来就没壳），
+        不削掉这层，server.py 会落在 `moshan-0.3.1/` 子目录里，随后被判「包里没有
+        server.py，拒收」。
+        """
+        import io
+        import zipfile
+        src = zipfile.ZipFile(io.BytesIO(raw))
+        names = src.namelist()
+        tops = {n.split("/")[0] for n in names if "/" in n}
+        if len(tops) != 1:
+            return raw
+        top = tops.pop() + "/"
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as dst:
+            for n in names:
+                if n.startswith(top) and not n.endswith("/"):
+                    dst.writestr(n[len(top):], src.read(n))
+        return out.getvalue()
+
+    def _apply_source_from_github(tag: str) -> dict:
+        """源码部署自己从 GitHub 更新：取源码包 → 削壳 → 交给 pushupd 原地替换。"""
+        import base64
+        import hashlib
+        import pushupd
+
+        with _LOCK:
+            STATE.update(phase="downloading", done=0, total=0, msg="", path="")
+        try:
+            raw = _strip_top(_source_zip(tag))
+        except Exception as exc:                                # noqa: BLE001
+            with _LOCK:
+                STATE.update(phase="error", msg=f"取源码包失败：{exc}"[:200])
+            return {"ok": False, "error": f"取源码包失败：{type(exc).__name__}: {exc}"}
+        digest = hashlib.sha256(raw).hexdigest()
+        # 一片 1 MB：base64 会涨 4/3，单片 1.4 MB 的请求体对 8 MB 的包最省事
+        chunk = 1 << 20
+        parts = [raw[i:i + chunk] for i in range(0, len(raw), chunk)] or [b""]
+        body = {"version": tag, "sha256": digest, "name": f"github-source-{tag}.zip",
+                "total": len(parts)}
+        out: dict = {"ok": False, "error": "没有分片"}
+        for i, p in enumerate(parts):
+            body.update(index=i, b64=base64.b64encode(p).decode("ascii"))
+            # 只在最后一片要求重启：中途重启会把剩下的分片丢掉
+            body["restart"] = (i == len(parts) - 1)
+            out = pushupd.push(dict(body))
+            if not out.get("ok"):
+                return out
+        with _LOCK:
+            STATE.update(phase="done", done=len(raw), total=len(raw),
+                         path=f"github:v{tag}", msg=f"源码包 {len(raw) // 1024} KB")
+        return out
+
     @app.post("/api/update/apply")
     def update_apply(request: Request):
         if not _token_ok(request):
@@ -545,6 +614,18 @@ def register(app: FastAPI, cfg: dict, token: str) -> None:
         with _LOCK:
             p = STATE["path"]
         path = Path(p) if p else _existing_package()
+        # 源码部署：安装包对它没用（装完要么起两个服务，要么自启还指着旧目录），
+        # 改从 GitHub 取源码包原地替换 —— 和主机推送走的是同一套 pushupd。
+        import sys as _sys
+        if not getattr(_sys, "frozen", False):
+            with _LOCK:
+                info = STATE["info"] or {}
+            tag = str(info.get("latest") or "").strip()
+            if not tag:
+                return JSONResponse(
+                    {"ok": False, "error": "还没查过有没有新版本，先点一次「检查更新」"},
+                    status_code=400)
+            return _apply_source_from_github(tag)
         if not path or not Path(path).exists():
             return JSONResponse({"ok": False, "error": "还没有下载好的安装包"},
                                 status_code=400)

@@ -32,7 +32,9 @@ LOCAL_MODULES = sorted(
 
 # psutil 在 hostwork._sample_procs_win 里是**函数内** import（macOS 不需要它，
 # 不想让它在 mac 版里也把 hook 拖下水）。函数内 import 静态分析抓不到，必须显式列。
-EXTRA_HIDDEN = ["psutil"]
+EXTRA_HIDDEN = ["psutil", "cryptography", "cryptography.hazmat.backends.openssl"]
+# cryptography 是 rust 编译的扩展，PyInstaller 不会自己从 import 里推出来；
+# 不显式列出来，安装版里的 TLS 会在「没有 openssl 命令」时静默降级成 http。
 
 UVICORN_HIDDEN = [
     "uvicorn.logging",
@@ -70,6 +72,19 @@ for extra in ("appearance.css", "appearance.json", "hostwork_ui.html"):
     p = SRC / extra
     if p.exists():
         datas.append((str(p), "."))
+
+# 可选的 openssl.exe：往仓库根放 vendor/openssl/（openssl.exe + 两个 dll）就会
+# 打进包，tls._openssl() 会优先在自己身边找到它。
+#
+# 但它**不再是 HTTPS 的前提** —— TLS 首选走 cryptography，纯 Python 生成证书，
+# 不需要任何外部可执行文件。这里留个钩子，是因为「用户自己想敲 openssl」这类
+# 需求真实存在，而 OpenSSL 官方不发 Windows 二进制、第三方预编译包来源难辨，
+# 所以不自动下载，只认你自己放进去的那份。
+_VENDOR_SSL = ROOT / "vendor" / "openssl"
+if _VENDOR_SSL.is_dir():
+    for f in sorted(_VENDOR_SSL.iterdir()):
+        if f.is_file() and f.suffix.lower() in (".exe", ".dll"):
+            datas.append((str(f), "."))
 
 a = Analysis(
     [str(SRC / "launcher.py")],

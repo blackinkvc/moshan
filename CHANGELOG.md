@@ -6,9 +6,48 @@
 ## [未发布]
 
 ### 计划
-- Windows 上补缩略图（用 PowerShell + System.Drawing 替代 macOS 的 sips）
+- Windows 上补缩略图：优先 Pillow（pip 装、进程内、Windows 轮子 7 MB），而不是 PowerShell + System.Drawing —— 后者每张图都要起一次 PowerShell，约 200 ms，列表页会明显卡（详见 docs/WINDOWS-PARITY.md）
 - 应用内托盘图标与「退出」菜单
 - 真正的原子更新（versions/ + current 符号链接，替换正在运行的程序）
+
+## [0.3.1] - 2026-11-24
+
+**Windows 版从「明文 HTTP」变回 HTTPS。** 这条是安全问题，不是功能：没有证书
+就生成不了证书，`server.py` 把 scheme 定成 http，令牌以 `?k=` 明文走局域网 ——
+同网段谁抓一次包，就拿到整台中台的读写权。
+
+### 新增
+- `tls.py` 增加 **cryptography 通道**：证书的生成、解析、校验全部在进程内完成，
+  不依赖任何外部可执行文件。Windows 上没有 `openssl` 命令，原来 `_generate()`
+  直接返回 None，于是必然降级；现在这条路补上了。（mac 上原有的 openssl 路径
+  保留当首选，它跑得久、没出过事。）
+- `_valid()` / `_cert_covers()` 也走 cryptography：以前没有 openssl 时这两个函数
+  一律返回 True，意味着「证书剩 0 天也不重签」「IP 变了也不重签」—— 浏览器随即
+  拒绝连接，而程序自己不知道。
+- **源码部署可以从 GitHub 更新**（`/api/update/apply`）：取 codeload 的源码包、
+  削掉顶层 `moshan-<ver>/` 壳，再交给 `pushupd` 原地替换。EVO 那种「run-evo.cmd →
+  源码目录」的部署，装个 exe 只会变成两个服务或自启指着旧目录，所以它需要的是
+  这条路而不是安装包。
+- `packages/moshan.spec` 收 `vendor/openssl/`（有就打包，没有就跳过）。
+
+### 修正
+- `_openssl()` 先看**程序目录**再看 PATH。打包版把 openssl.exe 放身边，PATH 里
+  没有它 —— 以前「打进包」等于白打，打进去了也找不到。
+- `lan_ip()` 在 Windows 上不再跑 `ipconfig getifaddr`（那是 macOS 的命令，
+  Windows 的 `ipconfig` 没有这个子命令），直接走「连外网看自己用了哪张网卡」。
+- `_iface_ip_by_prefix()` 优先用 psutil 取网卡地址（Windows 上没有 `ifconfig`）。
+- `local_hostname()` 在 Windows 上用裸主机名（没有 scutil，也没有 `.local`）。
+- Tailscale 可执行文件路径补上 Windows 默认安装位置，于是 Tailscale 的公信
+  证书在 Windows 上也能接上（手机访问不再有警告）。
+- 降级日志说清缺什么：「没找到 openssl」换成「缺 openssl 命令 / 缺 cryptography 库」，
+  并直接给出修法 —— 原来那句话会让 Windows 用户去装一个装不上的东西。
+
+### 说明
+- **为什么不把 openssl.exe 打进包**：TLS 只需要「一对 PEM 文件 + 私钥」，
+  `cryptography` 在进程内就能签出来，不需要命令行程序。打 openssl 进来是
+  +6~8 MB，且 OpenSSL 官方**不发** Windows 二进制，第三方预编译包来源难辨 ——
+  一个安全组件用来源不明的二进制，比升级一次依赖更危险。所以 spec 留了
+  `vendor/openssl/` 钩子：真要放，你自己放，构建会带上；不靠它也能跑 HTTPS。
 
 ## [0.3.0] - 2026-11-23
 

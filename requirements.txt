@@ -18,3 +18,9 @@ certifi==2026.11.20
 # 这条是为 Windows 补的；两个平台都装，省掉一套「有则用没有则降级」的分支。
 # 缺了不会崩：hostwork._sample_procs_win 会把原因写进卡片（不再是空白）。
 psutil==7.2.2
+
+# Windows 上没有 openssl 命令，tls.py 生成不了证书就把整台中台降级成明文 HTTP
+# （令牌走 ?k=，同网段抓一次包就拿到控制权）。cryptography 是纯 Python 轮子，
+# 生成/解析/校验证书全在进程内，不依赖任何外部可执行文件。mac 上原有那条
+# openssl 路径保留当首选。缺了不会崩：降级行为与之前一致，只是会打警告。
+cryptography==46.0.3
