@@ -359,6 +359,11 @@ git push origin main && git push origin v0.2.0
 | `POST /api/agent/link/install` | 把说明书写进它的技能目录（一次装好，长期生效） |
 | `POST /api/agent/link/report` | Agent 回执：它把数据放哪了 |
 | `POST /api/agent/link/import` | 按回执把它的账导进中台 |
+| `POST /api/trae/note` | Trae 自报一笔「这轮干了什么 + 用量」，进工作台的 TRAE 卡 |
+
+> **Trae 这边不用手动接**：`~/.trae-cn` 存在时，启动会把 `pocket-bridge` 技能写进
+> Trae 的技能目录（版本变了才重写），Trae 下次开会话就知道往 `/api/trae/note` 报账。
+> 想自己看一眼那段说明书：`curl -s http://127.0.0.1:8323/api/agent/link/prompt?agent=trae`。
 
 还有 `GET /api/sys`（内存 / CPU / 负载 / 运行时长，轻量，适合轮询）和
 `GET /api/status`（完整状态，较重）。

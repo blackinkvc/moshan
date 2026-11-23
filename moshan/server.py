@@ -59,6 +59,7 @@ import ledger
 import transfer
 import metrics
 import sysinfo
+import version
 # import fleet as fleetmod      # 多机监控已拆成独立服务（2026-11-21），见下方挂载处注释
 import report
 import report_runner
@@ -488,6 +489,37 @@ def _startup() -> None:
     _start_hostwork()
     _start_pending()
     _start_brief()
+    _start_trae_bridge()
+
+
+_BRIDGE_STARTED = {"done": False}
+
+
+def _start_trae_bridge() -> None:
+    """升级后自动把「TRAE 自述」说明书塞进 Trae 的技能目录。
+
+    用户装完新版本不会去点「装说明」，但 Trae 不知道要报账，TRAE 卡就永远是空的。
+    所以这一步默认执行，版本变了才重写；失败只打日志，绝不影响启动。
+    """
+    if _BRIDGE_STARTED["done"]:
+        return
+    _BRIDGE_STARTED["done"] = True
+
+    def run() -> None:
+        try:
+            base = f"http://127.0.0.1:{int(CFG.get('local_port') or 8323)}"
+            res = agent_link.auto_install(dashmod._root(CFG), base, version.VERSION)
+        except Exception as exc:                       # noqa: BLE001
+            print(f"[Moshan] TRAE 说明书自动投放失败（不影响使用）：{exc}", flush=True)
+            return
+        if res.get("ok") and not res.get("skipped"):
+            print(f"[Moshan] 已更新 TRAE 自述说明书 {version.VERSION} → {res.get('path')}",
+                  flush=True)
+        elif res.get("skipped") in ("no-trae", "no-path"):
+            print(f"[Moshan] 本机没装 Trae，跳过说明书投放（{res.get('skipped')}）",
+                  flush=True)
+
+    threading.Thread(target=run, daemon=True, name="trae-bridge").start()
 
 
 _BRIEF_STARTED = {"done": False}
@@ -1342,15 +1374,16 @@ def agent_read(ns: str = "all", since: str = "7d", limit: int = 100,
 
 @app.post("/api/trae/note", dependencies=[Depends(auth_agent)])
 async def trae_note(request: Request) -> dict:
-    """TRAE 收尾时自报一笔「这一轮干了什么」，进 **TRAE 卡**。
+    """TRAE 收尾时自报一笔「这一轮干了什么、花了多少」，进 **TRAE 卡**。
 
     跟 /api/agent/event 的分工：那条进 agent 总线（给别的 agent 读），
-    这条落 `_本机工作/TRAE自述.jsonl`，由 trae_work.note_rounds() 读成逐轮记录。
+    这条落 `_本机工作/TRAE自述.jsonl`，由 dash._trae_self_items() 读成逐轮记录。
     同一 task 5 分钟内只记一次，防止模型每轮重复刷同一句。
+
+    用量字段（model / in / out / cached / calls）可省：估不出来就别填，
+    卡片按 0 显示。**这个接口在没装 cuntu 的干净机器上也得能用** —— 以前
+    trae_work 导入失败就直接 503，等于「新装的中台收不到任何自述」。
     """
-    if twmod is None:
-        return JSONResponse({"ok": False, "error": "cuntu/trae_work.py 没找到"},
-                            status_code=503)
     try:
         body = await request.json()
     except ValueError:
@@ -1364,14 +1397,29 @@ async def trae_note(request: Request) -> dict:
         at = float(body.get("at") or time.time())
     except (TypeError, ValueError):
         at = time.time()
+
+    def _num(key: str) -> int:
+        try:
+            return max(0, int(float(body.get(key) or 0)))
+        except (TypeError, ValueError):
+            return 0
+
     rec = {
         "at": round(at, 1),
         "task": task,
         "summary": " ".join(str(body.get("summary") or "").split())[:400],
         "project": str(body.get("project") or "").strip()[:120],
+        "model": str(body.get("model") or "").strip()[:60],
+        "tin": _num("in"),
+        "tout": _num("out"),
+        "cached": _num("cached"),
+        "calls": _num("calls"),
         "source": "TRAE 自述",
     }
-    p = Path(twmod.NOTE_PATH)
+    # 模块在就用它的路径（开发机上和采集层同源），不在就自己拼一份同样的位置 ——
+    # 两边都指向 `<数据根>/_本机工作/TRAE自述.jsonl`，谁写谁读都对得上。
+    p = Path(getattr(twmod, "NOTE_PATH", "") or
+             (paths.data_root() / "_本机工作" / "TRAE自述.jsonl"))
     recent: set[str] = set()
     if p.exists():
         try:

@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -41,6 +42,7 @@ import dedupe_runner  # noqa: E402
 import extplugins  # noqa: E402  第三方插件（.app / brew 装的开源程序）
 import heartbeat  # noqa: E402
 import ocr_runner  # noqa: E402
+import paths  # noqa: E402  数据根（别人机器上不是 ~/Documents/AI项目）
 
 _NOTES_LOCK = threading.Lock()
 _MAX_NOTES_BYTES = 512 * 1024
@@ -3011,6 +3013,70 @@ def _trae_items(since_ms: float) -> list[dict]:
                 it = _req_item(b, mid, "TRAE", "tr" + mid[:8])
                 if it:
                     out.append(it)
+    out.extend(_trae_self_items(since_ms))
+    return out
+
+
+def _trae_self_items(since_ms: float) -> list[dict]:
+    """TRAE 自己报回来的账（`_本机工作/TRAE自述.jsonl`），一轮一条。
+
+    为什么还要这条路：会话记忆（session_memory_*.jsonl）只有「想干什么、结论是什么」，
+    **没有用量**，而且新版 Trae 一换存放位置就读不到；自述这条是 Trae 主动 POST 来的，
+    带 token、换了机器和版本都还在。两条并存，按 id 天然不撞（一个带 message_id，
+    一个带时间戳+任务名）。
+
+    字段口径与 /api/trae/note 一致：task / summary / project / model / tin / tout /
+    cached / calls。估不出来就写 0 —— 宁可显示 0，也不编一个像样的数字。
+    """
+    p = paths.data_root() / "_本机工作" / "TRAE自述.jsonl"
+    out: list[dict] = []
+    try:
+        if not p.exists() or p.stat().st_mtime * 1000 < since_ms:
+            return out
+        lines = p.read_text(encoding="utf-8", errors="replace").splitlines()[-400:]
+    except OSError:
+        return out
+    for ln in lines:
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            o = json.loads(ln)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(o, dict):
+            continue
+        try:
+            ts = float(o.get("at") or 0) * 1000
+        except (TypeError, ValueError):
+            continue
+        if not ts or ts < since_ms:
+            continue
+        task = " ".join(str(o.get("task") or "").split())
+        if not task:
+            continue
+        b = _new_req(ts, str(o.get("project") or ""))
+        b["t1"] = ts
+        b["ask"] = _clip(task, 320)
+        b["note"] = " ".join(str(o.get("summary") or "").split())
+        b["model"] = str(o.get("model") or "")
+        for k, src in (("tin", "tin"), ("tout", "tout"), ("cached", "cached")):
+            try:
+                b[k] = max(0, int(o.get(src) or 0))
+            except (TypeError, ValueError):
+                b[k] = 0
+        try:
+            b["calls"] = max(0, int(o.get("calls") or 0))
+        except (TypeError, ValueError):
+            b["calls"] = 0
+        # 自述里没有分步，calls 只用来让卡片显示「× 步」；一条都没有就按 1 算，
+        # 否则 _req_item 会因为「没调用也没提问」把它整条丢掉。
+        b["calls"] = b["calls"] or 1
+        rid = "trself" + hashlib.sha1(f"{o.get('at')}|{task}".encode()).hexdigest()[:10]
+        it = _req_item(b, rid, "TRAE", rid)
+        if it:
+            it["source"] = "自述"
+            out.append(it)
     return out
 
 

@@ -131,6 +131,35 @@ else
   bad "版本号不一致：version.py=$V1 / VERSION=$V2"
 fi
 
+say "== 7. TRAE 自述通道 =="
+# 这条通道有三段，少一段 Trae 报的账就落不到卡片上：
+#   写（POST /api/trae/note）→ 存（_本机工作/TRAE自述.jsonl）→ 读（dash 折成卡片行）
+# 说明书里的接口写错端点（曾经写成 /api/agent/event，那条进总线、卡片读不到），
+# 装到用户机器上表现就是「Trae 明明报了，工作台却空着」—— 只能用断言钉住。
+if ( cd moshan && python3 - <<'PY'
+import sys
+import agent_link
+t = agent_link.prompt("trae", "http://127.0.0.1:8323")
+问题 = []
+if "/api/trae/note" not in t:
+    问题.append("说明书没让 Trae 报 /api/trae/note")
+for k in ('"in"', '"out"', '"calls"'):
+    if k not in t:
+        问题.append(f"说明书缺用量字段 {k}")
+if not callable(getattr(agent_link, "auto_install", None)):
+    问题.append("没有 auto_install（升级后不会自动投放说明书）")
+if 问题:
+    print("；".join(问题)); sys.exit(1)
+PY
+); then ok "说明书要求 Trae 报「工作 + 用量」，且升级后自动投放"; else bad "TRAE 自述通道不完整（改文案时别把接口写回 /api/agent/event）"; fi
+
+if grep -q "def _trae_self_items" moshan/dash.py && \
+   grep -q '_trae_self_items(since_ms)' moshan/dash.py; then
+  ok "工作台会把 TRAE自述.jsonl 折成卡片行"
+else
+  bad "dashboard 没读 TRAE自述.jsonl（Trae 报了也看不见）"
+fi
+
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then say "全部通过，可以提交。"; else say "有失败项，修完再来。"; fi
 exit "$FAIL"

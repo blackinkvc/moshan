@@ -352,7 +352,7 @@ description: 本机「个人中台」的接入说明。用户提到中台 / 工�
 | 能力清单 | `{base}/api/agent/schema` |
 | 现状摘要 | `{base}/api/agent/brief` |
 
-能做的三件事：报 token 用量、写一条事件（干完活留一笔）、读中台现状。
+能做的三件事：**报这一轮干的活（带 token 用量）、报用量账、读中台现状**。
 字段和口径全在 `/agent` 里，别自己发明新字段。
 
 ## 二、第一次：把你的数据目录告诉它
@@ -390,23 +390,54 @@ Invoke-RestMethod -Uri "{base}/api/agent/link/report" -Method Post `
 curl -s -X POST "{base}/api/agent/link/import" -H 'content-type: application/json' -d '{{"agent":"{agent}"}}'
 ```
 
-## 三、以后每一轮
+## 三、以后每一轮：报「干了什么 + 花了多少」
 
-任务结束（或用户说「记一下」）报一笔，别报问候和纯查询：
+**干完活收尾时必须报一笔**（用户说「记一下」也算）。这条进的是中台「工作台 → TRAE」
+那张卡；本机回环免令牌，不用带 token。
+
+```bash
+curl -s -X POST "{base}/api/trae/note" -H 'content-type: application/json' \\
+  -d '{{"task":"<80 字以内，这轮干了什么>","summary":"<400 字以内，结论/改了什么>","project":"<项目名或目录>","model":"<模型名>","in":<输入 token>,"out":<输出 token>,"calls":<工具调用次数>}}'
+```
+
+Windows PowerShell 版：
+
+```powershell
+$b = @{{task='<这轮干了什么>'; summary='<结论>'; project='<项目>';
+       model='<模型>'; in=1200; out=800; calls=6}} | ConvertTo-Json
+Invoke-RestMethod -Uri '{base}/api/trae/note' -Method Post `
+  -ContentType 'application/json' -Body $b
+```
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `task` | 是 | 一句话：这轮干了什么。同一条任务 5 分钟内重复报会被服务端丢掉 |
+| `summary` | 否 | 结论、改了哪些文件、留了什么坑。**写结论，别抄对话过程** |
+| `project` | 否 | 项目名或目录，卡片上按它分堆 |
+| `model` | 否 | 实际用的模型名 |
+| `in` / `out` | 否 | 输入 / 输出 token。**估算值就够，估不出来写 0，不要编数字** |
+| `cached` | 否 | 命中缓存的输入 token |
+| `calls` | 否 | 这轮工具调用 / 步数。没有就省 |
+
+还想让「用量账本」按客户端、模型汇总算成本，再补一条（可省）：
 
 ```bash
 curl -s -X POST "{base}/api/agent/usage" -H 'content-type: application/json' \\
   -d '{{"client":"{agent}","model":"<模型>","in":<估>,"out":<估>,"calls":<轮数>,"task":"<20 字>"}}'
 ```
 
-产出值得留档的（改了脚本、定了方案）再加一条事件：
+产出值得留档的（定了方案、改了脚本），再往总线加一条 —— **这条是给别的 agent 读的，
+不能替代上面那条工作账**：
 
 ```bash
 curl -s -X POST "{base}/api/agent/event" -H 'content-type: application/json' \\
   -d '{{"ns":"工作","type":"task","title":"<一句话>","text":"<两三句结论>"}}'
 ```
 
-token 估不出来就 in/out 写 0、只填 calls，**不要编数字**。
+两条铁律：
+
+1. `task` 写具体动作（「把 dmg 的校验值并进 release.json」），不要写「完成了任务」。
+2. in/out 估不出来就写 0、只填 `calls`。**宁可显示 0，也不要编一个像样的数字。**
 
 ## 四、边界
 
@@ -421,6 +452,41 @@ def prompt(agent_id: str, base: str = "http://127.0.0.1:8323") -> str:
     if a is None:
         return ""
     return _PROMPT.format(agent=a["name"], base=base.rstrip("/"))
+
+
+def auto_install(root, base: str, version: str) -> dict:
+    """升级后自动把说明书写进 TRAE 的技能目录（每一版只做一次）。
+
+    为什么要自动：说明书里写着「干完活往哪个接口报」，用户装完新版本根本不会想到
+    去点一次「装说明」，于是 Trae 永远不知道该报账 —— 中台的 TRAE 卡就一直空着。
+    用户明确要的是「更新完就生效」，所以这一步默认执行。
+
+    三条保险，都不影响启动：
+      * 这台机器没装 Trae（`~/.trae-cn` 不存在）→ 跳过，不凭空造目录；
+      * `links.json` 里记的最后投放版本就是当前版本 → 跳过，不在每次启动重写；
+      * 写失败只返回错误对象，由调用方打日志。
+    """
+    a = next((x for x in AGENTS if x["id"] == "trae"), None)
+    if a is None:
+        return {"ok": False, "skipped": "no-agent"}
+    p = _skill_path(a)
+    if p is None:
+        return {"ok": False, "skipped": "no-path"}
+    root = Path(root)
+    links = _load_links(root)
+    last = str(((links.get("trae") or {}).get("prompt") or {}).get("version") or "")
+    if last == version and p.exists():
+        return {"ok": True, "skipped": "same-version", "path": str(p)}
+    if not p.parents[2].is_dir():          # ~/.trae-cn 不在＝没装 Trae
+        return {"ok": False, "skipped": "no-trae", "path": str(p)}
+    res = install(root, "trae", base)
+    if res.get("ok"):
+        links = _load_links(root)
+        rec = links.setdefault("trae", {}).setdefault("prompt", {})
+        rec["version"] = version
+        rec["auto"] = True
+        _save_links(root, links)
+    return res
 
 
 def _rule_wrap(agent_id: str, body: str) -> str:
