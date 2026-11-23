@@ -41,7 +41,8 @@ import netca  # 交付版：把 CA 证书指到 certifi，否则打包后所有 
 
 netca.install()
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
+from fastapi import (Depends, FastAPI, File, Form, Header, HTTPException, Query,
+                     Request, UploadFile)
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                PlainTextResponse, RedirectResponse, Response)
 from starlette.background import BackgroundTask
@@ -55,6 +56,8 @@ import dash as dashmod
 import pushupd            # 主机推送更新（不走 GitHub），见 /api/update/push
 import plan as planmod
 import extplugins
+import pluginpack        # 插件包：装 / 卸 / 升级 / 查更新（.moshanplug）
+import pluginui          # 工作台右下角那颗「插件」胶囊 + 拖拽安装（注入，不改 dash.html）
 import brief as briefmod
 import ledger
 import transfer
@@ -935,6 +938,8 @@ def workbench() -> HTMLResponse:
     # sync 顺手把 appearance.css 刷一遍：json 被手改过也能跟上，不必等下次保存
     appmod.sync(CFG)
     boot = appmod.bootstrap(CFG, href="/__appearance.css")
+    # 插件胶囊 + 拖拽安装 + 更新提示：注入而不是改 dash.html（理由见 pluginui.py 顶部）
+    html = pluginui.inject(html)
     if "</head>" in html:
         html = html.replace("</head>", boot + "</head>", 1)
     else:
@@ -2449,6 +2454,186 @@ def ext_parse(body: dict) -> dict:
 def ext_compose(body: dict) -> dict:
     """配了自己的模型就直接生成；没配就返回提示词，让用户自己粘给模型。"""
     return extplugins.compose(CFG, str(body.get("goal") or ""))
+
+
+# —— 插件包（.moshanplug）：装 / 卸 / 升级 / 查更新 ——
+#   跟 /api/plugins/add 的分工：那边只登记一行 json（程序得已经在机器上），
+#   这边连程序一起装进来。三条入口（拖 / 选文件夹 / 给网址）走同一套校验。
+#   实现见 pluginpack.py，界面由 pluginui.py 注入到 /dash。
+
+def _about_mod():
+    """关于 / 更新页那个模块。交付版有 about.py，开发版没有 —— 没有就返回 None，
+    本体那条降级成「不知道」，插件那几条照常工作。"""
+    try:
+        import about
+        return about
+    except Exception:                                   # noqa: BLE001
+        return None
+
+
+def _self_version() -> str:
+    try:
+        import version
+        return version.VERSION
+    except Exception:                                   # noqa: BLE001
+        return ""
+
+
+@app.get("/api/pack/list", dependencies=[Depends(auth)])
+def pack_list() -> dict:
+    return {"ok": True, "plugins": pluginpack.installed_packs(CFG)}
+
+
+@app.post("/api/pack/preview", dependencies=[Depends(auth)])
+def pack_preview(file: UploadFile = File(...)) -> dict:
+    """只看不装：拖进来先认一遍，别闷头往 _插件 里写东西。"""
+    tmp = Path(tempfile.mkdtemp(prefix="mpk-prev-"))
+    try:
+        p = tmp / (file.filename or "pack.moshanplug")
+        p.write_bytes(file.file.read())
+        return pluginpack.inspect_zip(p)
+    except pluginpack.PackError as exc:
+        return {"ok": False, "error": str(exc)}
+    except OSError as exc:
+        return {"ok": False, "error": f"读不了这个文件：{exc}"}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@app.post("/api/pack/install", dependencies=[Depends(auth)])
+def pack_install(file: UploadFile = File(...)) -> dict:
+    try:
+        return pluginpack.install_raw(CFG, file.file.read(), file.filename or "")
+    except pluginpack.PackError as exc:
+        return {"ok": False, "error": str(exc)}
+    except OSError as exc:
+        return {"ok": False, "error": f"写不进去：{exc}"}
+
+
+@app.post("/api/pack/install-files", dependencies=[Depends(auth)])
+def pack_install_files(files: list[UploadFile] = File(...), paths: str = Form("")) -> dict:
+    """拖文件夹 / 选文件夹：文件按顺序 + 一份相对路径表。
+
+    浏览器不给真实路径（安全限制），只能 webkitRelativePath。两边顺序由同一个
+    FormData 保证；路径表缺了或长度不对就按文件名兜 —— 兜出来的包多半认不出
+    plugin.json，但那也比 500 好，用户能看到「包里没有 plugin.json」。
+    """
+    try:
+        rel = json.loads(paths) if paths.strip().startswith("[") else []
+    except json.JSONDecodeError:
+        rel = []
+    pairs = []
+    for i, f in enumerate(files):
+        name = rel[i] if i < len(rel) and isinstance(rel[i], str) else (f.filename or "")
+        try:
+            pairs.append((name, f.file.read()))
+        except OSError as exc:
+            return {"ok": False, "error": f"读 {name} 失败：{exc}"}
+    try:
+        return pluginpack.install_files(CFG, pairs, source="folder")
+    except pluginpack.PackError as exc:
+        return {"ok": False, "error": str(exc)}
+    except OSError as exc:
+        return {"ok": False, "error": f"写不进去：{exc}"}
+
+
+@app.post("/api/pack/install-url", dependencies=[Depends(auth)])
+def pack_install_url(body: dict) -> dict:
+    """让中台自己去下。下载可能慢，给足超时。"""
+    try:
+        return pluginpack.install_url(CFG, str(body.get("url") or ""))
+    except pluginpack.PackError as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception as exc:                            # noqa: BLE001
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:200]}
+
+
+@app.post("/api/pack/install-path", dependencies=[Depends(auth)])
+def pack_install_path(body: dict) -> dict:
+    """装一个本机目录（已经 clone 下来的仓库）。只允许数据根以内的路径。"""
+    raw = str(body.get("path") or "").strip()
+    if not raw:
+        return {"ok": False, "error": "要给一个路径"}
+    p = Path(raw).expanduser()
+    try:
+        p = p.resolve()
+    except OSError:
+        return {"ok": False, "error": f"路径不对：{raw}"}
+    roots = [Path(x).expanduser().resolve() for x in (CFG.get("allowed_roots") or [])]
+    if roots and not any(str(p).startswith(str(r)) for r in roots):
+        return {"ok": False, "error": "只允许装数据根以内的目录"}
+    try:
+        return pluginpack.install_dir(CFG, p)
+    except pluginpack.PackError as exc:
+        return {"ok": False, "error": str(exc)}
+    except OSError as exc:
+        return {"ok": False, "error": f"装不上：{exc}"}
+
+
+@app.post("/api/pack/uninstall", dependencies=[Depends(auth)])
+def pack_uninstall(body: dict) -> dict:
+    try:
+        return pluginpack.uninstall(CFG, str(body.get("id") or ""))
+    except pluginpack.PackError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.post("/api/pack/upgrade", dependencies=[Depends(auth)])
+def pack_upgrade(body: dict) -> dict:
+    try:
+        return pluginpack.upgrade(CFG, str(body.get("id") or ""))
+    except pluginpack.PackError as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception as exc:                            # noqa: BLE001
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:200]}
+
+
+@app.get("/api/updates", dependencies=[Depends(auth)])
+def updates_all(force: int = 0) -> dict:
+    """本体 + 插件的更新总账：工作台角落那颗胶囊只问这一个接口。
+
+    本体那条不在这里发网络请求 —— about.py 有节流的后台线程在查，这里只读它
+    记下的状态。真没查过（刚装好、还没到第一次检查时间）才顺手踢一次，不阻塞。
+    """
+    try:
+        pk = pluginpack.check_updates(CFG, force=bool(force))
+    except Exception as exc:                            # noqa: BLE001  插件查挂了不能连累本体
+        pk = {"ok": True, "plugins": [], "updates": 0,
+              "error": f"{type(exc).__name__}: {exc}"}
+
+    m = _about_mod()
+    st = getattr(m, "STATE", {}) if m else {}
+    info = (st or {}).get("info") or {}
+    checked = float((st or {}).get("checked_at") or 0)
+    try:
+        push = bool(m and getattr(m, "_push_mode")())
+    except Exception:                                   # noqa: BLE001
+        push = False
+    if m is not None and not info and not push and (time.time() - checked) > 3600:
+        def _kick() -> None:
+            try:
+                m._do_check()                           # noqa: SLF001  同一包里的函数
+            except Exception:                           # noqa: BLE001
+                pass
+        threading.Thread(target=_kick, daemon=True).start()
+
+    return {
+        "ok": True,
+        "plugins": pk.get("plugins") or [],
+        "updates": pk.get("updates") or 0,
+        "checked_at": pk.get("checked_at") or 0,
+        "self": {
+            "current": _self_version(),
+            "latest": info.get("latest") or "",
+            "has_update": bool(info.get("has_update")),
+            "notes": (info.get("notes") or "")[:1500],
+            "page": info.get("page") or "",
+            "platform": info.get("platform") or "",
+            "error": (st or {}).get("error") or "",
+            "checked_at": checked,
+            "mode": "push" if push else "release",
+        },
+    }
 
 
 @app.get("/api/apps", dependencies=[Depends(auth)])
