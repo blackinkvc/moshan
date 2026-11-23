@@ -1282,6 +1282,10 @@ def _auto_worklog(cfg: dict) -> list[dict]:
              detail, [_code("transfer.py")], "tf" + at,
              _go("", "#card=transfer"))    # 点这行滚回传输卡，东西就在那儿
 
+    # 系统巡检上一轮是不是好的。用来判断「恢复」这一刻值不值得记一笔：
+    # 一直正常就不记账（每 2 分钟一条太吵），但**由坏转好**必须记 ——
+    # 否则修好之后卡片还挂着上次的失败，比不修更让人困惑（EVO 上就是这样）。
+    hb_prev_ok = True
     for d in rows:
         ev = str(d.get("event") or "")
         at = _iso(d.get("ts"))
@@ -1434,11 +1438,15 @@ def _auto_worklog(cfg: dict) -> list[dict]:
 
         if ev == "heartbeat_done":
             healed = d.get("healed") or []
-            if d.get("ok") and not healed:
-                continue                     # 正常心跳不记账，否则两分钟一条
-            push("系统巡检", "ok" if d.get("ok") else "fail", at, at,
-                 ("自愈 " + "、".join(str(x) for x in healed[:3])) if healed
-                 else str(d.get("error") or "有检查项没过")[:140],
+            ok_now = bool(d.get("ok"))
+            if ok_now and not healed and hb_prev_ok:
+                continue                     # 一直正常的心跳不记账，否则两分钟一条
+            hb_prev_ok = ok_now
+            if ok_now:
+                detail = "自愈 " + "、".join(str(x) for x in healed[:3]) if healed else "各项正常"
+            else:
+                detail = str(d.get("error") or "有检查项没过")[:140]
+            push("系统巡检", "ok" if ok_now else "fail", at, at, detail,
                  [_code("heartbeat.py")], "h" + at, _go("inspect"))
             continue
 

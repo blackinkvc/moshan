@@ -606,8 +606,66 @@ def check_transfer_push(cfg: dict | None) -> dict:
 # --------------------------------------------------------------------------
 # 跑一次
 # --------------------------------------------------------------------------
+def _run_once_win(cfg: dict, heal: bool = True) -> dict:
+    """Windows 上的一轮「系统巡检」。
+
+    下面那一整套检查（gateway / launchd / Locks / node+brew / 微信会话体积 /
+    App 监工 / 8774 巡检服务）都是作者 mac 上的常驻结构，Windows 上一项都不存在。
+    照原样跑，每轮都是「有检查项没过」，任务卡永远红着 —— 而那其实是**配置不存在**，
+    不是机器有病。
+
+    所以 Windows 改跑基线检查（selfcheck 的那 10 项：数据目录 / 磁盘 / 内存 /
+    运行时长 / Python / 证书 / 端口 / 采集层 / 依赖 / 外网）。结论照样写进
+    STATE、流水和 worklog，卡片读法一个字都不用改。
+    """
+    if not _LOCK.acquire(blocking=False):
+        return {"ok": False, "error": "正在自检，等这次结束", "at": _now()}
+    try:
+        STATE["running"] = True
+        import selfcheck
+        c = cfg_of(cfg)
+        port = c.get("port") or None
+        rows: list[dict] = []
+        healed: list[str] = []
+        if heal:                                  # 能自愈的只有目录骨架
+            try:
+                import paths as _paths
+                for sub in ("10-系统记录/巡检/报告", "_本机工作"):
+                    _paths.ensure(_paths.data_root() / sub)
+            except Exception:                     # noqa: BLE001
+                pass
+        for i, (label, fn) in enumerate(selfcheck._checks(cfg, port)):
+            row = selfcheck._one(label, fn)
+            rows.append({
+                "id": "win%d" % i,
+                "level": "critical" if row["status"] == "fail" else "warn",
+                "ok": row["status"] != "fail",
+                "name": label,
+                "detail": row["detail"],
+            })
+        ok = all(x["ok"] for x in rows if x["level"] == "critical")
+        result = {"at": _now(), "ok": ok, "checks": rows, "healed": healed,
+                  "platform": "windows",
+                  "needs_attention": STATE.get("needs_attention") or 0,
+                  "restart_count": STATE.get("restart_count") or 0,
+                  "interval_sec": c["interval"]}
+        STATE["last_at"] = result["at"]
+        STATE["last"] = result
+        _save_state(result)
+        _log({"at": result["at"], "event": "heartbeat", "ok": ok,
+              "platform": "windows", "healed": healed,
+              "fail": [x["name"] for x in rows if not x["ok"]]})
+        _log_disk(disk_sample())
+        return result
+    finally:
+        STATE["running"] = False
+        _LOCK.release()
+
+
 def run_once(cfg: dict | None = None, heal: bool = True) -> dict:
     cfg = cfg or load_config()          # 下面的只读检查要 allowed_roots，留个完整配置
+    if os.name == "nt":                 # 检查项整套是 mac 结构，Windows 跑基线那份
+        return _run_once_win(cfg, heal)
     c = cfg_of(cfg)
     port = c["port"]
     do_heal = c["heal"] and heal
