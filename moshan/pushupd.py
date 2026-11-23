@@ -30,6 +30,8 @@ import hashlib
 import io
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import time
@@ -123,6 +125,7 @@ def status() -> dict:
         "dir": cur.get("dir") or "",
         "at": cur.get("at") or "",
         "source": cur.get("source") or "",
+        "backup": cur.get("backup") or "",
         "packages": pkgs[-10:],
         # 跑的是哪份程序：packages 里的解包目录，还是原来的 app_dir
         "running_from": str(paths.app_dir()),
@@ -175,7 +178,8 @@ def _restart_script(new_dir: Path, version: str) -> dict:
     return {"ok": False, "error": "这个平台不会写重启脚本，包已落盘，手工重启即可"}
 
 
-def _commit(version: str, dest: Path, *, source: str = "push", restart: bool = True) -> dict:
+def _commit(version: str, dest: Path, *, source: str = "push", restart: bool = True,
+            backup: str = "") -> dict:
     d = _ensure()
     prev = _read_json(d / "current.json", {})
     _write_json(d / "current.json", {
@@ -183,9 +187,11 @@ def _commit(version: str, dest: Path, *, source: str = "push", restart: bool = T
         "dir": str(dest),
         "at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "source": source,
+        "backup": backup,
         "prev": prev.get("version") or "",
     })
-    out = {"ok": True, "version": version, "dir": str(dest), "prev": prev.get("version") or ""}
+    out = {"ok": True, "version": version, "dir": str(dest),
+           "prev": prev.get("version") or "", "backup": backup}
     if getattr(sys, "frozen", False):
         out.update({"restart": False,
                     "note": "这是安装版（frozen），换程序要走安装包；包已落盘，未重启"})
@@ -242,48 +248,78 @@ def push(body: dict) -> dict:
                 "want": want, "got": got, "bytes": len(raw)}
 
     # ---- 解包到版本目录（先清再解，避免半新半旧）----
-    dest = d / "pkgs" / version
-    if dest.exists():
-        for p in sorted(dest.rglob("*"), reverse=True):
-            try:
-                p.unlink() if p.is_file() else p.rmdir()
-            except Exception:                          # noqa: BLE001
-                pass
-    dest.mkdir(parents=True, exist_ok=True)
+    frozen = bool(getattr(sys, "frozen", False))
+    if frozen:
+        # 安装版：程序在 _internal 里，运行中换不掉，只能落盘等人跑安装包
+        dest = d / "pkgs" / version
+        if dest.exists():
+            shutil.rmtree(dest, ignore_errors=True)
+        dest.mkdir(parents=True, exist_ok=True)
+    else:
+        # 源码部署：**原地替换**。为什么要原地 —— 开机自启的那条命令指向
+        # app_dir（EVO 是 run-evo.cmd → C:\moshan-024\moshan），换成别的目录
+        # 就等于「这次更新有效、重启又回旧版」。所以先备份，再覆盖同名文件。
+        dest = paths.app_dir()
+    backup = ""
+    if not frozen:
+        cur = _read_json(d / "current.json", {})
+        curver = str(cur.get("version") or "") or _app_version(dest)
+        bak = d / "pkgs" / (curver + "-bak-" + time.strftime("%Y%m%d-%H%M%S"))
+        try:
+            shutil.copytree(dest, bak, dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.log"))
+            backup = str(bak)
+        except Exception as exc:                       # noqa: BLE001
+            return {"ok": False,
+                    "error": f"备份失败，为免更新到一半退不回去，已中止：{exc}"}
+
     try:
         info = _unpack(raw, dest)
     except Exception as exc:                           # noqa: BLE001
         return {"ok": False, "error": f"解包失败：{exc}"}
     if not (dest / "server.py").exists():
-        # 拒收时把空目录收掉，别在 packages 里留个「看起来收过」的空壳
-        try:
-            for p in sorted(dest.rglob("*"), reverse=True):
-                p.unlink() if p.is_file() else p.rmdir()
-            dest.rmdir()
-        except OSError:
-            pass
-        return {"ok": False, "error": "包里没有 server.py，拒收",
-                "unpacked": info}
+        # 拒收时把空壳收掉，别在 packages 里留个「看起来收过」的目录
+        if frozen:
+            shutil.rmtree(dest, ignore_errors=True)
+        return {"ok": False, "error": "包里没有 server.py，拒收", "unpacked": info}
     if (d / "parts.json").exists():
         try:
             (d / "parts.json").unlink()
         except OSError:
             pass
 
-    out = _commit(version, dest, source=f"push:{name}", restart=restart)
+    out = _commit(version, dest, source=f"push:{name}", restart=restart, backup=backup)
     out["unpacked"] = info
     out["sha256"] = got
+    out["mode"] = "frozen" if frozen else "in-place"
     return out
 
 
+def _app_version(app: Path) -> str:
+    """读 app_dir 里 version.py 的版本号（备份目录命名用）。"""
+    try:
+        m = re.search(r'VERSION\s*=\s*"([^"]+)"', (app / "version.py").read_text(encoding="utf-8"))
+        return m.group(1) if m else "unknown"
+    except OSError:
+        return "unknown"
+
+
 def rollback(restart: bool = True) -> dict:
-    """回到上一版（current.json 里记着 prev）。"""
+    """回到更新前那份（current.json 里记着 backup / 上一版目录）。"""
     d = _ensure()
     cur = _read_json(d / "current.json", {})
+    bak = str(cur.get("backup") or "")
+    if bak and Path(bak).is_dir():
+        dest = paths.app_dir()
+        try:
+            shutil.copytree(bak, dest, dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        except Exception as exc:                       # noqa: BLE001
+            return {"ok": False, "error": f"回滚复制失败：{exc}"}
+        return _commit(_app_version(dest), dest, source="rollback", restart=restart,
+                       backup="")
     prev = str(cur.get("prev") or "")
-    if not prev:
-        return {"ok": False, "error": "没有上一版记录"}
-    dest = d / "pkgs" / prev
-    if not dest.is_dir():
-        return {"ok": False, "error": f"上一版目录不存在：{dest}"}
-    return _commit(prev, dest, source="rollback", restart=restart)
+    dest = d / "pkgs" / prev if prev else None
+    if not dest or not dest.is_dir():
+        return {"ok": False, "error": "没有可回滚的备份", "prev": prev}
+    return _commit(prev, dest, source="rollback", restart=restart, backup="")
