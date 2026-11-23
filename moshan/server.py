@@ -61,6 +61,7 @@ import transfer
 import metrics
 import sysinfo
 import version
+import llmwatch          # 本机在跑什么大模型（进程 + 命令行 + 端口自报三路核对）
 # import fleet as fleetmod      # 多机监控已拆成独立服务（2026-11-21），见下方挂载处注释
 import report
 import report_runner
@@ -2113,6 +2114,27 @@ def _ov_fallback(key: str, reason: str) -> dict:
     }
 
 
+def _with_llm(d: dict) -> dict:
+    """把「这台机器跑着什么大模型」并进 overview。
+
+    放在路由这一层、而不是写进 hostwork：mac 上 hostwork 是从 cuntu 目录加载的
+    （`MOSHAN_CUNTU`），那份代码不跟着中台发版；llmwatch 是 moshan 自己的模块，
+    挂在这儿两个平台、两种 hostwork 都能拿到同一份结果。
+    """
+    try:
+        d["llm"] = llmwatch.snapshot()
+    except Exception as e:                             # noqa: BLE001
+        d["llm"] = {"ok": False, "models": [], "total_rss_gb": 0.0,
+                    "error": f"{type(e).__name__}: {e}"}
+    return d
+
+
+@app.get("/api/llm", dependencies=[Depends(auth)])
+def llm_api(fresh: int = 0) -> dict:
+    """本机在跑什么大模型。`?fresh=1` 跳过 20 秒缓存，手动核对用。"""
+    return llmwatch.snapshot(fresh=bool(fresh))
+
+
 @app.get("/api/overview", dependencies=[Depends(auth)])
 def overview_api(range: str = "7d", fresh: int = 0) -> dict:
     key = range if range in ("today", "7d", "30d", "all") else "7d"
@@ -2120,13 +2142,13 @@ def overview_api(range: str = "7d", fresh: int = 0) -> dict:
         try:
             d = hwmod.overview(key, fresh=bool(fresh))
             if d.get("ok", True):
-                return d
+                return _with_llm(d)
             # 采集层自己报了错（EVO 上就是 os.statvfs 在 Windows 不存在）：
             # 把它的错因带上，但照样给一份能看的机器指标，别整块空掉。
-            return _ov_fallback(key, str(d.get("error") or "采集层返回失败"))
+            return _with_llm(_ov_fallback(key, str(d.get("error") or "采集层返回失败")))
         except Exception as e:                         # noqa: BLE001
-            return _ov_fallback(key, f"{type(e).__name__}: {e}")
-    return _ov_fallback(key, f"本机工作模块没装上（{_HW_IMPORT_ERR}）")
+            return _with_llm(_ov_fallback(key, f"{type(e).__name__}: {e}"))
+    return _with_llm(_ov_fallback(key, f"本机工作模块没装上（{_HW_IMPORT_ERR}）"))
 
 
 @app.get("/api/hourly", dependencies=[Depends(auth)])

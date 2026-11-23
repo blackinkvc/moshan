@@ -260,6 +260,11 @@ body.editing .wrap{padding-bottom:90px}
 .prow .cpu{font-size:12px;color:var(--tx2);text-align:right;font-variant-numeric:tabular-nums}
 .prow .mem{font-size:12px;color:var(--tx3);text-align:right;font-variant-numeric:tabular-nums}
 .prow.warm .cpu{color:var(--warn);font-weight:600}
+/* 「本机大模型」这一卡允许模型名换行：名字本身就是结论，截成
+   「Qwen3.6-35B-A3B-Uncensore…」跟没说差不多。别的卡仍单行 ——
+   进程列表一换行，一屏就装不下几个了。 */
+#llmList .prow{padding-top:5px;padding-bottom:5px}
+#llmList .prow .nm b{white-space:normal;word-break:break-all;line-height:1.32}
 
 /* ---------- 表格 ---------- */
 table{width:100%;border-collapse:collapse;font-size:12.5px}
@@ -574,6 +579,11 @@ html[data-theme="dark"] .rwwho span.mdl{color:var(--mcd,var(--pri))}
         <div class="hero" id="moneyHero"></div>
         <div id="tokenTable" class="mt tscroll"></div>
         <div class="foot" id="formula"></div>
+      </div>
+      <div class="card" data-card="llm" data-title="本机大模型">
+        <h3>本机大模型 <span class="n" id="llmN"></span></h3>
+        <p class="hint">三路核对：进程名 → 命令行 → 端口自报；内存是整组 RSS，显存由服务自报</p>
+        <div class="plist" id="llmList"></div>
       </div>
       <div class="card" data-card="proc" data-title="进程消耗">
         <h3>进程消耗 <span class="n" id="procN"></span></h3>
@@ -1133,6 +1143,53 @@ function renderKPI() {
       + (c.pct == null ? ''
           : '<div class="meter"><i style="width:' + Math.min(100, Math.max(0, c.pct)).toFixed(1) + '%"></i></div>')
       + (c.spark && c.spark.length > 1 ? '<div class="spk">' + spark(c.spark, c.color) + '</div>' : '')
+      + '</div>';
+  }).join('');
+}
+
+function renderLLM() {
+  var box = $('#llmList'), n = $('#llmN');
+  if (!box || !n) return;
+  var d = (S.data && S.data.llm) || {};
+  var ms = d.models || [];
+  if (d.ok === false) {
+    n.textContent = '探测失败';
+    box.innerHTML = '<div class="empty">' + esc(d.error || '未知原因') + '</div>';
+    return;
+  }
+  if (!ms.length) {
+    var svc = (d.services || []).filter(function (s) { return s.family; });
+    if (svc.length) {
+      // 服务活着但没加载模型是常态（Ollama 空闲 5 分钟就把模型卸了），
+      // 这时候说「没在跑」会让人以为服务挂了，得把「服务在、模型没装/没加载」分开说。
+      n.textContent = '服务在，没加载模型';
+      box.innerHTML = '<div class="empty">这些推理服务在跑，但此刻没加载模型：<br>'
+        + svc.map(function (s) {
+          return esc(s.family) + (s.port ? '（:' + s.port + '）' : '');
+        }).join('、')
+        + '<br>模型放进去或发一次请求就会加载。</div>';
+      return;
+    }
+    n.textContent = '没在跑';
+    // 说清「认哪些」：否则用户拿别的推理服务跑着模型，会以为这功能坏了
+    box.innerHTML = '<div class="empty">这台机器上没在跑本地大模型。'
+      + '认得的服务：llama.cpp（llama-server）、Ollama、LM Studio、vLLM、SGLang、'
+      + 'KoboldCpp、MLX-LM、GPT4All、Jan</div>';
+    return;
+  }
+  n.textContent = ms.length + ' 个模型 · 合计 ' + (d.total_rss_gb || 0) + ' GB';
+  var max = Math.max.apply(null, ms.map(function (m) { return m.rss_gb || 0; }).concat([1]));
+  box.innerHTML = ms.map(function (m) {
+    var pct = Math.max(2, (m.rss_gb || 0) / max * 100);
+    var sub = [m.size, m.quant, m.family, m.ctx ? '上下文 ' + m.ctx : '',
+      m.port ? ':' + m.port : '', m.pid ? 'PID ' + m.pid : ''].filter(Boolean).join(' · ');
+    return '<div class="prow" style="--c:' + procColor(m.name) + '" title="' + esc(sub) + '">'
+      + '<div class="barwrap"><i style="width:' + pct.toFixed(1) + '%"></i></div>'
+      + '<div class="nm"><b>' + esc(m.name) + '</b>'
+      + (S.density !== 'simple' ? '<span class="own">' + esc(m.family) + '</span>' : '')
+      + '</div>'
+      + '<div class="cpu">' + (m.vram_gb ? '显存 ' + m.vram_gb + 'G' : esc(m.quant || '—')) + '</div>'
+      + '<div class="mem">' + (m.rss_gb ? m.rss_gb.toFixed(1) + 'G' : '—') + '</div>'
       + '</div>';
   }).join('');
 }
@@ -1785,7 +1842,7 @@ function render() {
   renderFilters();
   // footer 先画：它里面装着 #scanTip，renderTop 才有地方写扫描状态
   renderFoot();
-  renderTop(); renderKPI(); renderProcs(); renderKinds(); renderClients();
+  renderTop(); renderKPI(); renderLLM(); renderProcs(); renderKinds(); renderClients();
   renderMoney(); renderTokens(); renderPocket(); renderRounds();
   multiLine($('#appChart'), (S.data.app_series || {}));
   machineChart($('#machChart'), S.data.series || {});

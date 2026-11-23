@@ -396,8 +396,9 @@ git push origin main && git push origin v0.2.0
 > Trae 的技能目录（版本变了才重写），Trae 下次开会话就知道往 `/api/trae/note` 报账。
 > 想自己看一眼那段说明书：`curl -s http://127.0.0.1:8323/api/agent/link/prompt?agent=trae`。
 
-还有 `GET /api/sys`（内存 / CPU / 负载 / 运行时长，轻量，适合轮询）和
-`GET /api/status`（完整状态，较重）。
+还有 `GET /api/sys`（内存 / CPU / 负载 / 运行时长，轻量，适合轮询）、
+`GET /api/status`（完整状态，较重）和 `GET /api/llm`（本机在跑什么大模型：
+模型名 / 参数量 / 量化 / 上下文 / 端口 / 占用内存）。
 
 ```bash
 # 例子：本机查一句
