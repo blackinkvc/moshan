@@ -52,6 +52,7 @@ import agentbus
 import agent_link
 import appearance as appmod
 import dash as dashmod
+import pushupd            # 主机推送更新（不走 GitHub），见 /api/update/push
 import plan as planmod
 import extplugins
 import brief as briefmod
@@ -1449,6 +1450,52 @@ async def trae_note(request: Request) -> dict:
         if isinstance(cache, dict):
             cache["at"] = 0.0
     return {"ok": True, "note": rec}
+
+
+# ---------------------------------------------------------------------------
+# 主机推送更新（不走 GitHub）
+#   nucbox 那类机器连不上 github.com，也不该为了更新去外网拉包：更新包由主机
+#   （mac / 虫巢中台）推进来。**更新权在主机，不在被更新的机器**。
+#   实现见 pushupd.py；官方客户端是 scripts/host_push_update.py。
+# ---------------------------------------------------------------------------
+@app.post("/api/update/push", dependencies=[Depends(auth_agent)])
+async def update_push(request: Request) -> dict:
+    """接收主机推来的程序包：校验 sha256 → 解包到 updates/pkgs/<ver> → 切换 → 重启。
+
+    单包：{version, sha256, b64}；大包分片：再加 {index, total, part}。
+    frozen（安装版）只落盘不重启 —— 换 exe 得走安装包，这一点如实返回，不假装成功。
+    """
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "body 不是 JSON"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "error": "body 要是对象"}, status_code=400)
+    try:
+        res = pushupd.push(body)
+    except Exception as exc:                        # noqa: BLE001
+        return JSONResponse({"ok": False, "error": f"收包异常：{exc}"}, status_code=500)
+    return res if res.get("ok") else JSONResponse(res, status_code=400)
+
+
+@app.get("/api/update/status", dependencies=[Depends(auth_agent)])
+def update_status() -> dict:
+    """当前由推送更新落到哪一版、在哪个目录、历史有哪些包。"""
+    return pushupd.status()
+
+
+@app.post("/api/update/rollback", dependencies=[Depends(auth_agent)])
+async def update_rollback(request: Request) -> dict:
+    """回退到上一版（current.json 里记的 prev）；推送更新出问题时的退路。"""
+    restart = True
+    try:
+        body = await request.json()
+        if isinstance(body, dict) and "restart" in body:
+            restart = bool(body.get("restart"))
+    except ValueError:
+        pass
+    res = pushupd.rollback(restart=restart)
+    return res if res.get("ok") else JSONResponse(res, status_code=400)
 
 
 @app.get("/api/agent/brief", dependencies=[Depends(auth_agent)])

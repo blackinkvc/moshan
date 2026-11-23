@@ -1,8 +1,21 @@
-# Windows 构建脚本：源码 -> dist\Moshan -> Inno Setup 安装程序
+# Windows build: source -> dist\Moshan -> Inno Setup installer
 #
-# 用法（在仓库根目录）：
+# Usage (from repo root):
 #   powershell -ExecutionPolicy Bypass -File packages\windows\build.ps1
-# 前置：Python 3.10+、Inno Setup 6（iscc 在 PATH，或设 ISCC 环境变量）
+# Requires: Python 3.10+, Inno Setup 6 (iscc on PATH, or set ISCC env var)
+#
+# TWO HARD RULES (both were learned the painful way, not defensive coding):
+#
+#   1) KEEP THIS FILE PURE ASCII. PowerShell 5.1 reads a BOM-less script as GBK;
+#      a trailing CJK char can swallow the newline and pull the NEXT LINE into
+#      the comment. Symptom: statements like Set-Location silently do nothing.
+#      scripts/check.sh enforces this for every .ps1/.cmd in the repo.
+#
+#   2) ALWAYS Set-Location to the repo root. Processes started by proc_start or
+#      a scheduled task have CWD = C:\Windows\System32, where PyInstaller
+#      refuses to run ("Do not run pyinstaller from C:\Windows\System32").
+#      These builds usually run in a hidden remote session, so a missing log
+#      line is the only symptom you get.
 $ErrorActionPreference = "Stop"
 
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
@@ -10,32 +23,35 @@ $Src = Join-Path $Root "moshan"
 $Dist = Join-Path $Root "dist"
 $BuildVenv = Join-Path $Root ".venv-build"
 
-# ---- 版本号 ----
+Set-Location $Root
+Write-Host "==> cwd $Root" -ForegroundColor DarkGray
+
+# ---- version ----
 $versionLine = Select-String -Path (Join-Path $Src "version.py") -Pattern '^VERSION\s*=\s*"([^"]+)"' |
     Select-Object -First 1
-if (-not $versionLine) { throw "读不到版本号" }
+if (-not $versionLine) { throw "cannot read VERSION from version.py" }
 $Version = $versionLine.Matches[0].Groups[1].Value
-Write-Host "==> 版本 $Version" -ForegroundColor Cyan
+Write-Host "==> version $Version" -ForegroundColor Cyan
 
-# ---- 构建环境 ----
+# ---- build environment ----
 if (-not (Test-Path (Join-Path $BuildVenv "Scripts\python.exe"))) {
-    Write-Host "==> 创建独立构建环境"
+    Write-Host "==> creating build venv"
     python -m venv $BuildVenv
 }
 $Py = Join-Path $BuildVenv "Scripts\python.exe"
 & $Py -m pip install -q --upgrade pip
-Write-Host "==> 安装依赖"
+Write-Host "==> installing requirements"
 & $Py -m pip install -q -r (Join-Path $Root "requirements.txt")
 & $Py -m pip install -q "pyinstaller>=6.6"
 
-# ---- 打包 ----
-Write-Host "==> PyInstaller 打包"
+# ---- package ----
+Write-Host "==> pyinstaller"
 if (Test-Path (Join-Path $Dist "Moshan")) { Remove-Item -Recurse -Force (Join-Path $Dist "Moshan") }
 & (Join-Path $BuildVenv "Scripts\pyinstaller.exe") --noconfirm --clean `
     --distpath $Dist --workpath (Join-Path $Root "build") (Join-Path $Root "packages\moshan.spec")
-if (-not (Test-Path (Join-Path $Dist "Moshan\Moshan.exe"))) { throw "打包失败：没有生成 Moshan.exe" }
+if (-not (Test-Path (Join-Path $Dist "Moshan\Moshan.exe"))) { throw "build failed: no Moshan.exe" }
 
-# ---- 安装程序 ----
+# ---- installer ----
 $Iscc = $env:ISCC
 if (-not $Iscc) {
     $candidates = @(
@@ -45,15 +61,20 @@ if (-not $Iscc) {
     foreach ($c in $candidates) { if (Test-Path $c) { $Iscc = $c; break } }
 }
 if (-not $Iscc) {
-    Write-Warning "未找到 Inno Setup（iscc）。已产出 dist\Moshan 目录，可手动打包。"
+    # No silent download: Inno Setup only ships via GitHub Releases now, and the
+    # machines we build on often cannot reach github.com. Host pushes the
+    # installer in instead (scripts/host_push_update.py has the chunked transport).
+    Write-Warning "Inno Setup (iscc) not found. dist\Moshan is ready; install Inno Setup 6 and re-run."
 } else {
-    Write-Host "==> 生成安装程序"
+    Write-Host "==> compiling installer"
     & $Iscc "/DAppVersion=$Version" "/DSourceDir=$Dist\Moshan" (Join-Path $Root "packages\windows\moshan.iss")
     $setup = Join-Path $Dist "Moshan-$Version-windows-x64-Setup.exe"
     if (Test-Path $setup) {
+        $fi = Get-Item $setup
         $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
-        Write-Host "==> 安装程序: $setup" -ForegroundColor Green
+        Write-Host "==> installer: $setup" -ForegroundColor Green
+        Write-Host "    size: $($fi.Length) bytes"
         Write-Host "    sha256: $hash"
     }
 }
-Write-Host "==> 完成" -ForegroundColor Green
+Write-Host "==> done" -ForegroundColor Green

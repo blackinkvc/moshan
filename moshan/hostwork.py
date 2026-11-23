@@ -2936,11 +2936,23 @@ def _task_title(text: str) -> str:
 
 
 def _rounds_parser():
-    """装载工作台那份解析层；失败返回 None，由调用方降级成空列表。"""
+    """装载工作台那份解析层；失败返回 None，由调用方降级成空列表。
+
+    两条路，顺序不能反：
+      1) 开发机 —— cuntu/dash.py（POCKET_DASH），最新解析逻辑在那儿先跑；
+      2) 交付版 —— 包内 `dash` 模块。安装版没有 ~/Documents/cuntu，
+         以前这里直接 return None，于是「逐轮」在别人机器上永远是空，
+         而作者本机永远复现不了。0.2.4 把 hostwork 打进包了，解析层同理。
+    """
     if _ROUNDS_MOD["m"] is not None:
         return _ROUNDS_MOD["m"]
     if not POCKET_DASH.exists():
-        return None
+        try:
+            import dash as _bundled_dash
+            _ROUNDS_MOD["m"] = _bundled_dash
+            return _bundled_dash
+        except Exception:                          # noqa: BLE001
+            return None
     try:
         import importlib.util
         sys.path.insert(0, str(POCKET_DASH.parent))

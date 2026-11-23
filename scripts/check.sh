@@ -164,6 +164,40 @@ else
   bad "dashboard 没读 TRAE自述.jsonl（Trae 报了也看不见）"
 fi
 
+say "== 8. 远端脚本编码与工作目录 =="
+# PowerShell 5.1 把无 BOM 的 .ps1/.cmd 当 GBK 读：末尾汉字的尾字节会吃掉换行，
+# 把**下一行**并进注释。踩过一次：Set-Location 静默失效，PyInstaller 在
+# C:\Windows\System32 里拒绝运行，日志里只少一行。所以这类文件只允许
+# 「纯 ASCII」或「带 UTF-8 BOM」，中间态一律判失败。
+BADFILES=$(python3 - <<'PY'
+import pathlib
+bad = []
+for p in pathlib.Path('.').rglob('*'):
+    if p.suffix.lower() not in ('.ps1', '.cmd', '.bat'):
+        continue
+    parts = set(p.parts)
+    if parts & {'.git', 'dist', 'build', '.venv-build', 'node_modules'}:
+        continue
+    b = p.read_bytes()
+    if not b or b[:3] == b'\xef\xbb\xbf':
+        continue
+    if all(x < 128 for x in b):
+        continue
+    bad.append(str(p))
+print(' '.join(bad))
+PY
+)
+if [ -n "$BADFILES" ]; then
+  bad "含非 ASCII 又没 BOM（PS 5.1 会读坏，命令会静默失效）：$BADFILES"
+else
+  ok "远端脚本要么纯 ASCII、要么带 BOM"
+fi
+if grep -q 'Set-Location \$Root' packages/windows/build.ps1 2>/dev/null; then
+  ok "build.ps1 会先切到仓库根（PyInstaller 不在 System32 里跑）"
+else
+  bad "build.ps1 没有 Set-Location，远端后台构建会直接失败"
+fi
+
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then say "全部通过，可以提交。"; else say "有失败项，修完再来。"; fi
 exit "$FAIL"

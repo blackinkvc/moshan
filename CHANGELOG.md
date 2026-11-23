@@ -10,6 +10,27 @@
 - 应用内托盘图标与「退出」菜单
 - 真正的原子更新（versions/ + current 符号链接，替换正在运行的程序）
 
+## [0.2.5] - 2026-11-23
+
+**更新权交给主机：程序包由主机推过来，被更新的机器不需要 GitHub。**
+
+`nucbox` 那台办公室电脑连不上 github.com（实测 8 秒超时），它也不该为了一次更新
+去外网拉包。现在主机（mac / 虫巢中台）把程序包推过去，落盘、校验、切换、重启
+一条链走完，不需要人到机器前 —— 和接入程序的 `self_update` 是同一个思路。
+
+- 新增 `POST /api/update/push`：`{version, sha256, b64, restart}`，sha256 不符就
+  **整包丢弃**，不落半成品；解包只认程序文件白名单，拒绝绝对路径与 `..`。
+- 新增 `GET /api/update/status` 与 `POST /api/update/rollback`（回到上一版）。
+- 新增 `scripts/host_push_update.py`：两种送法 —— `--http` 直连；
+  `--fleet <device>` 走虫巢（分片 put + 目标机回环 POST），入站全封的机器也能更新。
+- **修**：交付版「逐轮工作」永远是空。`hostwork._rounds_parser()` 只认
+  `~/Documents/cuntu/dash.py`，安装版没有 cuntu 就直接返回 None —— 作者本机
+  永远复现不了。现在回退到包内 `dash` 模块。
+- 构建脚本加固（两条都是真踩过的）：`build.ps1` 强制 `Set-Location` 到仓库根
+  （远端后台构建的 CWD 是 `C:\Windows\System32`，PyInstaller 会拒绝运行）；
+  `.ps1`/`.cmd` 一律纯 ASCII —— PS 5.1 把无 BOM 的 UTF-8 当 GBK 读，末尾汉字会
+  吞掉换行、把下一行并进注释，命令静默失效。`scripts/check.sh` 新增第 8 节专查。
+
 ## [0.2.4] - 2026-11-23
 
 **把「本机工作」的采集层收进交付包：别人机器上的 Moshan 不再是空壳。**

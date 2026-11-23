@@ -82,10 +82,27 @@ def _auto_enabled() -> bool:
         return True
 
 
+def _push_mode() -> bool:
+    """更新模式：默认查 GitHub Release；`update.mode = "push"` 表示只认主机推送。
+
+    办公室电脑那类机器连不上 github.com（实测 8 秒超时），对它们来说「检查更新」
+    是个必然失败的按钮。改成 push 后：不查、不下载、不跑安装包，等着主机把包推来。
+    每次都重读配置文件 —— 改完开关不用重启服务。
+    """
+    try:
+        import json
+        d = json.loads(paths.config_file().read_text(encoding="utf-8"))
+        return str((d.get("update") or {}).get("mode") or "").strip().lower() == "push"
+    except Exception:                                   # noqa: BLE001
+        return False
+
+
 def _auto_check_loop() -> None:
     time.sleep(FIRST_DELAY)
     while True:
-        if _auto_enabled():
+        if _push_mode():
+            time.sleep(1800)                            # 主机推送模式：不查 Release
+        elif _auto_enabled():
             try:
                 _do_check()
             except Exception:                           # noqa: BLE001  线程不许死
@@ -395,6 +412,11 @@ def register(app: FastAPI, cfg: dict, token: str) -> None:
     def update_check(request: Request):
         if not _token_ok(request):
             return _deny()
+        if _push_mode():
+            # 这台机器的更新由主机推过来（nucbox 那种连不上 github.com 的），
+            # 去 Release 查只会白等 8 秒超时，还把按钮做成「永远失败」。
+            return {"ok": True, "has_update": False, "mode": "push",
+                    "note": "本机更新由主机推送（update.mode=push），不走 GitHub"}
         return _do_check()
 
     @app.get("/api/update/state")
@@ -465,6 +487,12 @@ def register(app: FastAPI, cfg: dict, token: str) -> None:
     def update_apply(request: Request):
         if not _token_ok(request):
             return _deny()
+        if _push_mode():
+            return JSONResponse(
+                {"ok": False, "mode": "push",
+                 "error": "本机更新由主机推送（update.mode=push）：主机推完会自动重启，"
+                          "不需要在本机跑安装包"},
+                status_code=400)
         with _LOCK:
             p = STATE["path"]
         path = Path(p) if p else _existing_package()
