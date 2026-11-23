@@ -84,6 +84,10 @@ def _safe_name(name: str) -> Optional[str]:
         return None
     if any(x in SKIP_DIRS for x in parts):
         return None
+    # VERSION 没有后缀，按下面那条规则会被丢掉；但它是 check.sh 核对版本号的依据，
+    # 从 GitHub 源码包更新时漏掉它，源码部署就和仓库对不上号了。
+    if parts[-1] == "VERSION":
+        return "/".join(parts)
     if Path(parts[-1]).suffix.lower() not in ALLOW_SUFFIX:
         return None
     return "/".join(parts)

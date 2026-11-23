@@ -82,3 +82,63 @@ Windows 上「本机工作」的进程卡、CPU 曲线原本是**全空**的 —
   语义模拟不了（`sips -Z` 的等比缩放规则、EXIF 方向处理都不一样）。
 - 不要在启动时探测 PowerToys / ffmpeg 并据此改 UI —— 用户随时会装/卸，
   探测结果只会变成「昨天能用的按钮今天灰了」。
+
+---
+
+## 调研补记（2026-11-24）
+
+上一节是按「有没有等价能力」排的。这一节是查过实际体积与可行性之后的结论，
+数字都来自 PyPI 与 GitHub 的实时查询，不是估的。
+
+### ① 缩略图：三个方案，选 Pillow
+
+| 方案 | 成本 | 机型/格式覆盖 | 问题 |
+|---|---|---|---|
+| **Pillow**（`python-pillow/Pillow` ★14k） | win wheel **7.0 MB** | jpg/png/webp/gif/bmp/tiff | 不认 HEIC（要再加 `pillow-heif` 6.3 MB） |
+| .NET `System.Drawing`（PowerShell 调） | 系统自带 | 同上 | **每张图约 200 ms**，大头是启动 PowerShell 进程，不是解码 |
+| Shell `IShellItemImageFactory` | 系统自带 | 连视频/PDF/Office 都能出图，走资源管理器缓存 | 要写 C# 互操作；拿到位图还得再编码成 PNG |
+
+结论：**选 Pillow**。`sips` 在 mac 上之所以好用，是因为它一次进程干一批活；
+换成 PowerShell 就是每张图起一次进程，列表页滚出 50 张就是 10 秒白屏。缓存
+仍然要做（键 = 路径 + mtime + 尺寸），那是为了不重复解码，不是为了绕过启动开销。
+
+顺带一处：`packages/moshan.spec` 的 `EXCLUDES` 里现在有 `"PIL"` —— 真要上 Pillow，
+得先把这行去掉，否则打进去也会被排除掉。
+
+### ② OCR：TRAE 侧栏不该用 OCR
+
+这一条原来的假设是错的。查完 TRAE 的本地数据后确认：
+
+- `ModularData/ai-agent/database.db` 是**加密库**（文件头不是 SQLite 的 `SQLite format 3`，
+  是随机字节），读不出用量；`state.vscdb` 里也没有 token 字段；
+- renderer 日志里能搜到 `token`，但全是 JWT / ByteCloudToken 这类鉴权串，**没有用量**。
+
+所以「OCR 侧栏」不是偷懒，是当时唯一能拿到那个数字的本地途径。真要替换，
+按性价比排：
+
+| 方案 | 成本 | 准确性 |
+|---|---|---|
+| **UI Automation（`pywinauto` ★6.5k / `uiautomation` ★3.6k）** | 一个 pip 包 | 读控件文本，**精确**、无需识别 |
+| 自述账 `/api/trae/note`（已建好） | 零 | 精确，但依赖 TRAE 主动调用 |
+| WinRT `Windows.Media.Ocr` | 系统自带（要中文 OCR 语言包） | 图像识别，有错字风险 |
+| RapidOCR（`RapidAI/RapidOCR` ★8.6k） | 14.2 MB + onnxruntime 16.3 MB | 同上 |
+
+结论：**TRAE 侧栏改走 UIA 读控件，OCR 只留给真正的图像**（扫描件、图里的字）。
+UIA 读的是 Electron 的 accessibility tree，Chromium 在检测到 UIA 客户端时会打开它。
+
+### ③ 视频封面：`imageio-ffmpeg`，不是静态 ffmpeg
+
+静态 ffmpeg.exe 约 80 MB。`imageio/imageio-ffmpeg`（★306）的 Windows wheel
+**37.1 MB**，里面就是那个二进制，**pip 装得下来**，不用让用户自己去官网找。
+
+结论：媒体墙本来就在用 ffmpeg（mac 上也是，`media.frame_thumb` 直接调 `FFMPEG`），
+所以这不是「Windows 多一个依赖」，是「媒体墙的依赖在 Windows 上要单独铺」。
+按需装：媒体墙不装，就不下这 37 MB。
+
+Shell 缩略图对 **mkv** 无效（Windows 没有 mkv 的缩略图处理器，装了 Icaros 之类才有），
+而 mkv 恰恰是这类媒体库的主格式 —— 所以视频封面没法靠系统 API 糊过去。
+
+### ④ 证书：0.3.1 已落地，openssl.exe 不再是前提
+
+`cryptography` 在进程内签证书，生成 0.03 s（openssl 子进程约 0.3 s）。0.3.1 起
+Windows 上没有 openssl 也有 HTTPS；`vendor/openssl/` 只作为可选钩子留着。
