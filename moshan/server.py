@@ -3302,13 +3302,21 @@ def main() -> int:
     #   plain_port → Tailscale 100.x，给手机（安卓不信任自签证书，会连带拒绝
     #                fetch/上传）。只绑隧道地址，根本不监听局域网。
     plain_binds: list[tuple[str, int]] = []
+
+    # 本机明文端口必须无条件绑上：launcher 打开的就是 127.0.0.1:{local_port}，
+    # 而 127.0.0.1 在 https 模式下本来也得靠这条明文口（自签证书会被 Safari/Chrome
+    # 直接拦死，不给「继续」入口）。
+    # 这段以前写在 `if scheme == "https"` 里面 —— 于是 TLS 建不起来的机器（Windows
+    # 没有 openssl 就是这样）退化成 http 之后，local_port 一个都没绑：浏览器被领到
+    # 没人监听的端口，用户只看到「无法连接」。0.2.1 的 Windows 冒烟就是这么挂的。
+    local_port = int(CFG.get("local_port", 8323))
+    if local_port and local_port != port:
+        if _can_bind("127.0.0.1", local_port):
+            plain_binds.append(("127.0.0.1", local_port))
+        else:
+            print(f"[警告] 本机明文端口 127.0.0.1:{local_port} 绑定失败（可能被占用）")
+
     if scheme == "https":
-        local_port = int(CFG.get("local_port", 8323))
-        if local_port:
-            if _can_bind("127.0.0.1", local_port):
-                plain_binds.append(("127.0.0.1", local_port))
-            else:
-                print(f"[警告] 本机明文端口 127.0.0.1:{local_port} 绑定失败（可能被占用）")
         plain_port = int(CFG.get("plain_port", 8322))
         if ts_ip and plain_port:
             if _can_bind(ts_ip, plain_port):

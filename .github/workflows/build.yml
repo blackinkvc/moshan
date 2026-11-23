@@ -152,25 +152,56 @@ jobs:
           $exe = Get-ChildItem dist -Recurse -Filter Moshan.exe | Select-Object -First 1
           if (-not $exe) { Write-Error "找不到 Moshan.exe"; exit 1 }
           Write-Host "启动 $($exe.FullName)"
+
           $env:HOME = $home2.FullName
           $env:MOSHAN_HOME = $state.FullName
           $env:MOSHAN_NO_BROWSER = "1"
           $p = Start-Process -FilePath $exe.FullName -PassThru -WindowStyle Hidden
 
           $cfg = Join-Path $state.FullName "state\config.json"
-          for ($i = 0; $i -lt 40 -and -not (Test-Path $cfg); $i++) { Start-Sleep 1 }
           $log = Join-Path $state.FullName "state\logs\moshan.log"
-          if (Test-Path $log) { Get-Content $log }
 
-          if (-not (Test-Path $log) -or -not (Select-String -Path $log -Pattern "CA 证书：." -Quiet)) {
-            if (Test-Path $log) { Get-Content $log }
+          function Show-Diag {
+            Write-Host "===== 启动日志（全量） ====="
+            if (Test-Path $log) { Get-Content $log } else { Write-Host "(日志文件不存在：$log)" }
+            Write-Host "===== config.json ====="
+            if (Test-Path $cfg) { Get-Content $cfg -Raw } else { Write-Host "(不存在)" }
+            Write-Host "===== 本进程监听端口 ====="
+            netstat -ano | Select-String "LISTENING" | Select-String "\s$($p.Id)$"
+            Write-Host "===== 进程状态 ====="
+            $p.Refresh()
+            if ($p.HasExited) { Write-Host "已退出，ExitCode=$($p.ExitCode)" } else { Write-Host "仍在运行 PID=$($p.Id)" }
+          }
+
+          # 判据：以「程序自己打印出来的那个本机地址」为准。launcher 就是把用户领到
+          # 这个地址的，它不会响就等于用户装完打不开 —— 比猜某个固定端口可靠。
+          $lport = $null
+          for ($i = 0; $i -lt 60; $i++) {
+            if (Test-Path $log) {
+              $m = Select-String -Path $log -Pattern "口袋服务 http://127\.0\.0\.1:(\d+)" | Select-Object -First 1
+              if ($m) { $lport = $m.Matches[0].Groups[1].Value; break }
+            }
+            $p.Refresh(); if ($p.HasExited) { break }
+            Start-Sleep 1
+          }
+
+          if (-not $lport) {
+            Show-Diag
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            Write-Error "安装版没起来（六十秒内没打印出本机访问地址）"
+            exit 1
+          }
+          Write-Host "程序自报本机端口：$lport"
+
+          if (-not (Select-String -Path $log -Pattern "CA 证书：." -Quiet)) {
+            Show-Diag
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
             Write-Error "安装版没找到 CA 证书，https 会 CERTIFICATE_VERIFY_FAILED"
             exit 1
           }
 
           $j = Get-Content $cfg -Raw | ConvertFrom-Json
-          $url = "http://127.0.0.1:$($j.local_port)/api/about"
+          $url = "http://127.0.0.1:$lport/api/about"
           $code = "000"
           for ($i = 0; $i -lt 20; $i++) {
             try {
@@ -179,9 +210,14 @@ jobs:
             } catch { $code = "err" }
             Start-Sleep 1
           }
+          Write-Host "GET $url -> $code"
+          if ($code -ne "200") {
+            Show-Diag
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            Write-Error "安装版启动后接口不可用"
+            exit 1
+          }
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-          Write-Host "GET /api/about -> $code"
-          if ($code -ne "200") { Write-Error "安装版启动后接口不可用"; exit 1 }
           Write-Host "安装版冒烟通过"
 
       - name: 输出校验值
