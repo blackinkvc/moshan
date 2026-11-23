@@ -206,6 +206,8 @@ _工作台/       工作台页面
 后台每 6 小时自己查一次 GitHub Release，**有新版本时这个入口会直接变成橙色的
 「新版本 x.y.z」**，不用你主动去点。
 
+> 被主机钉成 `update.mode = push` 的机器不查 GitHub（见下节），这条自动检查会让位给主机推送。
+
 更新流程：
 
 1. 有新版本 → 显示版本号、更新说明、安装包体积
@@ -218,7 +220,7 @@ _工作台/       工作台页面
 > `sha256`，与 GitHub API 资产 `digest` 同值。所以附件里不会再单独放一个 `.sha256`。
 >
 > ```bash
-> shasum -a 256 Moshan-0.2.2-macos-arm64.dmg    # 与 release.json 里的值对比
+> shasum -a 256 Moshan-<版本>-macos-arm64.dmg    # 与 release.json 里的值对比
 > ```
 
 <img src="docs/images/03-about-update.png" width="100%" alt="关于页：版本、数据目录、检查更新">
@@ -232,9 +234,38 @@ python moshan/updater.py --download   # 下载并校验，不安装
 python moshan/updater.py --apply      # 下载、校验、打开安装包
 ```
 
-**为什么不做「热替换运行中的程序」**：macOS 上 `.app` 运行时无法安全替换自身，
+### 主机推送（连不上 GitHub 的机器）
+
+有些机器根本连不上 github.com（内网、机房、办公室那台），让它们自己去 Release 拉包，
+界面上就是一个**必然失败**的按钮。这类机器改成由主机推：主机把包推过去，落盘、校验、
+备份、替换、重启一条链走完，不用人到机器前。
+
+```bash
+# 直连：目标机端口可达
+python scripts/host_push_update.py --http http://192.168.0.103:8321 --token <令牌>
+
+# 走虫巢：目标机没有入站端口（只能往外轮询）也能更新
+python scripts/host_push_update.py --fleet evox2 --fleet-token <虫巢令牌> --token <令牌>
+
+# 把这台机器钉成「只认主机推送」，以后它不再查 GitHub（8 秒超时那种白等）
+python scripts/host_push_update.py --http http://<地址>:8321 --token <令牌> --set-mode push
+
+# 看当前是哪个版本、上次谁推的、备份在哪
+curl -H "X-Token: <令牌>" http://<地址>:8321/api/update/status
+```
+
+推送过程的安全边界：分片上传 → 落地算 sha256 → **不符就整包丢弃**（不落半成品）→
+解包只认程序文件白名单、拒绝绝对路径与 `..` → 备份当前程序目录 → 原地替换 →
+重启 → 出问题 `POST /api/update/rollback` 退回上一版。
+
+**为什么 GitHub 那条路不做「热替换运行中的程序」**：macOS 上 `.app` 运行时无法安全替换自身，
 Windows 上运行中的 exe 被锁。强行做要「拉新进程 → 旧进程自杀 → 失败回滚」三段式，
-任一段出错就是半个坏软件。首版选择「下载 → 校验 → 交给系统安装器」，失败也破坏不了现有安装。
+任一段出错就是半个坏软件。所以走 GitHub 的机器仍然是「下载 → 校验 → 交给系统安装器」，
+失败也破坏不了现有安装。
+
+主机推送那条路确实是原地替换（源码部署没有安装包可交给系统），但它把这套风险显式兜住了：
+替换前先整目录备份、sha256 不符整包丢弃、解包只认白名单、重启脚本把环境变量显式带上
+（不然重启后服务会以空 profile 起来，读不到自己的配置）、失败可一键 rollback。
 
 ---
 

@@ -42,6 +42,11 @@
   （远端后台构建的 CWD 是 `C:\Windows\System32`，PyInstaller 会拒绝运行）；
   `.ps1`/`.cmd` 一律纯 ASCII —— PS 5.1 把无 BOM 的 UTF-8 当 GBK 读，末尾汉字会
   吞掉换行、把下一行并进注释，命令静默失效。`scripts/check.sh` 新增第 8 节专查。
+- 发版流程：Release 正文改由 CI 从本文件的对应版本段落抽出，不再手工往 GitHub 上贴
+  （手贴一定会漏，且漏了没人发现）。`docs/ARCHITECTURE.md` 的「更新流程」按两条路重写，
+  跨平台差异表补上 TRAE 数据目录、侧栏 OCR、Cherry 账本在 Windows 上的实际状态。
+- `scripts/check.sh` 的解释器可用 `MOSHAN_PY` 指定；缺 fastapi / certifi 时明确说
+  「这是环境问题」，不再伪装成代码失败。
 
 ## [0.2.4] - 2026-11-23
 

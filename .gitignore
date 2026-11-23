@@ -28,6 +28,13 @@ welcome.done
 
 # 系统垃圾
 .DS_Store
+# 仓库放在 exFAT / 网络盘上时 macOS 会生成 AppleDouble（._xxx）元数据文件，
+# 它们是二进制、含 null 字节，compileall 与 grep 都会被它们绊到。
+._*
+.pytest_cache/
 ._*
 Thumbs.db
 desktop.ini
+
+# 发版时由 CI 生成（.github/workflows/build.yml）
+notes.md

@@ -70,6 +70,10 @@ launcher.main()
 
 ## 五、更新流程
 
+两条路，按「这台机器能不能连上 GitHub」分：
+
+**A. 自己查 GitHub（默认）**
+
 ```
 检查  GET /repos/{repo}/releases/latest  → 取 tag_name 与 assets
 比对  version.is_newer(latest, current)
@@ -78,13 +82,33 @@ launcher.main()
 安装  用系统默认程序打开 dmg / exe，交给系统安装流程覆盖程序目录
 ```
 
-**为什么不做「自我热替换」**：macOS 上 `.app` 运行中无法安全替换自身，Windows 上
-运行中的 exe 被锁。真要做必须「拉起新进程 → 旧进程自杀 → 失败回滚」三段式，
-任一段出错就是一个半个坏软件。首版选择让系统安装流程负责替换 ——
+**B. 主机推送（`update.mode = push`，给连不上 github.com 的机器）**
+
+```
+分片   主机把程序目录打成 zip，按 1.5 MB 切片（虫巢 put 单请求 4 MB 上限）
+投递   --http 直连目标机 / --fleet 走虫巢（目标机 proc_start 回环 POST）
+校验   POST /api/update/push 先算 sha256，不符整包丢弃，不落半成品
+解包   只认程序文件后缀白名单，拒绝绝对路径与 ..，不写白名单外的任何文件
+备份   cp 当前程序目录 → state/updates/pkgs/<ver>-bak-<时间戳>
+替换   frozen 安装落 pkgs/<ver>；源码部署原地替换
+重启   写 restart.ps1 + restart.cmd，**把 USERPROFILE / APPDATA / TEMP 等显式写进去**
+回退   POST /api/update/rollback 把备份拷回去
+```
+
+重启链为什么要显式带环境变量：以 SYSTEM 身份（计划任务）拉起的新进程默认没有
+`USERPROFILE`，于是 `Path.home()` 落到 `systemprofile`，服务会把状态目录认成
+「另一个用户的家」，表现为「重启后变成第一次启动、配置和令牌全丢」。
+这个坑只有在真机上重启过一次才看得见，源码态本机复现不了。
+
+**为什么 GitHub 那条路不做热替换**：macOS 上 `.app` 运行中无法安全替换自身，
+Windows 上运行中的 exe 被锁。真要做必须「拉起新进程 → 旧进程自杀 → 失败回滚」三段式，
+任一段出错就是一个半个坏软件。所以走 GitHub 的机器交给系统安装流程 ——
 失败也不会破坏现有安装。
 
-要上真正的原子更新，前提是把程序拆成 `versions/1.4.2/` + `current` 符号链接，
-那是下一个大版本的事。
+主机推送那条路没法交给安装器（源码部署没有安装包），所以它把上面那套风险逐条兜住：
+备份、校验、白名单解包、环境变量钉死、rollback。它仍然不是「原子」更新
+（替换过程中进程是停的，替换中途断电会留下半个目录）—— 真正的原子更新仍需
+`versions/1.4.2/` + `current` 符号链接，那是下一个大版本的事。
 
 **资产命名与匹配必须同步**：`updater._asset_pattern()` 按名字找包。
 改产物命名时务必同步改它，否则客户端会认为「该版本没有可下载的安装包」。
@@ -96,6 +120,9 @@ launcher.main()
 | 缩略图 | `sips` | 无 | Windows 直接返回 None，前端显示原图 |
 | 通知 | 无 | 无 | 暂未实现 |
 | 路径 | `/` | `\` | 一律用 `pathlib.Path`，不拼字符串 |
+| TRAE 数据目录 | `~/Library/Application Support/Trae CN` | `%APPDATA%\Trae CN` | `trae_work._trae_cn_dir()` 按平台取，内部结构一致 |
+| 侧栏 OCR（TRAE 任务名） | Vision 框架（`bin/trae_ocr.swift`） | 无 | Windows 上该源为空，逐轮改由「会话记忆」独占 |
+| Cherry Studio 账本 | `~/Library/Application Support/CherryStudio` | 未接 | Windows 上取不到就采空，不报错 |
 
 `sips` 是 macOS 系统自带，不引入 Pillow（省 5 MB 依赖）。
 Windows 上缩略图降级是首版的已知限制，已写进 README 与 CHANGELOG。
@@ -104,5 +131,6 @@ Windows 上缩略图降级是首版的已知限制，已写进 README 与 CHANGE
 
 - macOS 包只做 ad-hoc 签名，未公证，首次打开需右键「打开」
 - 无系统托盘，退出靠 Dock 右键或结束进程
-- 更新为「下载 + 引导安装」，不是静默自动更新
+- 更新为「下载 + 引导安装」或「主机推送 + 重启」，都不是静默自动更新
+- 主机推送是原地替换，不是原子更新：替换途中断电会留下半个程序目录（有备份可回退）
 - 只构建 Apple Silicon 包；Intel 需自行构建

@@ -291,6 +291,52 @@ jobs:
         env:
           VERSION: ${{ github.ref_name }}
 
+      - name: 从 CHANGELOG 生出这份 Release 的正文
+        # 以前 Release 正文只有一套固定的「安装」模板，更新内容靠 GitHub 从
+        # commit 里自动生成 —— 读者看到的是一串「fix(push): ...」，不是人话。
+        # 现在改成把 CHANGELOG.md 里对应版本那一节直接搬到正文顶部：
+        # 写代码的人写一次，发版时不用再手工贴一遍，也不会漏。
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, re
+          ver = os.environ["VERSION"].strip().lstrip("vV")
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          # 认 `## [0.2.5] - 2026-11-23` 这种标题，取到下一个 `## ` 之前
+          pat = re.compile(r"^##\s*\[" + re.escape(ver) + r"\][^\n]*\n(.*?)(?=^##\s)",
+                           re.M | re.S)
+          m = pat.search(text)
+          notes = (m.group(1).strip() if m
+                   else "> CHANGELOG.md 里没有 `" + ver + "` 这一节，请补上。")
+          install = """
+          ---
+
+          ## 安装
+
+          下载与你的系统对应的文件：
+
+          | 系统 | 文件 |
+          |---|---|
+          | macOS（Apple 芯片 M1/M2/M3/M4） | `Moshan-*-macos-arm64.dmg` |
+          | macOS（Intel） | `Moshan-*-macos-x64.dmg` |
+          | Windows 10/11 64 位 | `Moshan-*-windows-x64-Setup.exe` |
+
+          **macOS 首次打开**：安装包没有 Apple 开发者签名，双击若提示「无法验证开发者」，
+          请在「访达」里**右键点 Moshan → 打开**，或到「系统设置 → 隐私与安全性」点「仍要打开」。
+          这是未签名应用的系统行为，不是安装包损坏。
+
+          **更新不会丢数据**：程序装在应用目录，你的配置在
+          `~/Library/Application Support/Moshan`（Windows 在 `%APPDATA%\\Moshan`），
+          文件在 `~/Documents/Moshan`。覆盖安装只替换程序，另两个目录不动。
+
+          ### 校验
+          `release.json` 里有每个包的 sha256，可用 `shasum -a 256 <文件>` 核对。
+          """
+          pathlib.Path("notes.md").write_text(notes + "\n" + install, encoding="utf-8")
+          print(notes)
+          PY
+        env:
+          VERSION: ${{ github.ref_name }}
+
       - name: 发布
         uses: softprops/action-gh-release@v2
         with:
@@ -299,25 +345,7 @@ jobs:
             artifacts/*.exe
             artifacts/release.json
           draft: false
+          # generate_release_notes 会在正文后面再补一段「提交清单 + Full Changelog」
+          # 对比链接。清单本身没什么可读性，但那条对比链接是查证用的，留着。
           generate_release_notes: true
-          body: |
-            ## 安装
-
-            下载与你的系统对应的文件：
-
-            | 系统 | 文件 |
-            |---|---|
-            | macOS（Apple 芯片 M1/M2/M3/M4） | `Moshan-*-macos-arm64.dmg` |
-            | macOS（Intel） | `Moshan-*-macos-x64.dmg` |
-            | Windows 10/11 64 位 | `Moshan-*-windows-x64-Setup.exe` |
-
-            **macOS 首次打开**：安装包没有 Apple 开发者签名，双击若提示「无法验证开发者」，
-            请在「访达」里**右键点 Moshan → 打开**，或到「系统设置 → 隐私与安全性」点「仍要打开」。
-            这是未签名应用的系统行为，不是安装包损坏。
-
-            **更新不会丢数据**：程序装在应用目录，你的配置在
-            `~/Library/Application Support/Moshan`，文件在 `~/Documents/Moshan`。
-            覆盖安装只替换程序，另两个目录不动。
-
-            ### 校验
-            `release.json` 里有每个包的 sha256，可用 `shasum -a 256 <文件>` 核对。
+          body_path: notes.md

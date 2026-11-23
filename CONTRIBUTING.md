@@ -94,7 +94,12 @@ git push origin main --tags
 
 1. 构建 macOS（当前只出 arm64）与 Windows（x64）安装包
 2. 计算每个包的 sha256，并生成一份 `release.json` 作为人读的清单
-3. 创建 Release 并上传 dmg / exe / release.json
+3. 从 `CHANGELOG.md` 里抽出**本版那一节**当 Release 正文，后面接固定的「安装」说明
+4. 创建 Release 并上传 dmg / exe / release.json
+
+**所以「写更新日志」= 写 `CHANGELOG.md`。** Release 正文由 CI 从那里取，
+不再手工往 GitHub 页面上贴 —— 手贴的东西一定会漏，而且是漏了没人发现的那种。
+`scripts/bump-version.sh` 会顺手在 CHANGELOG 里开好新版本的空段落。
 
 构建失败不会产生 Release，所以不会出现「版本号已经宣布但包不存在」的情况。
 
