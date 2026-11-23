@@ -528,11 +528,12 @@ JS = r"""
         + '<div class="d">当前 ' + esc(cur) + ' → <b>' + esc(lat) + '</b>'
         + (s.platform ? ' · ' + esc(s.platform) : '') + '</div></div>';
     } else {
-      // 开发版没有 version.py，current 是空串 —— 别写成「已是最新」，
-      // 那是没查过，不是查过没新版。
-      var txt = !curRaw ? '这个版本没有版本号（开发版），比不了新版。'
+      // 开发版没有 about.py（更新页那个模块），所以 latest 一定是空的 ——
+      // 这时候说「已是最新」是撒谎：没查过不等于查过没新版。
+      var txt = !curRaw ? '这个版本没有版本号，比不了新版。'
         : (s.error ? '检查失败：' + esc(s.error)
-          : (s.mode === 'push' ? '这台机器由主机推送更新' : '已是最新'));
+          : (s.mode === 'push' ? '这台机器由主机推送更新'
+            : (!lat ? '这个版本没有更新检查（开发版：直接 git pull）' : '已是最新')));
       box.innerHTML = '<div class="mpk-card"><div class="t">墨山中台'
         + '<span class="sp"></span><span class="tag">' + esc(curRaw || '开发版') + '</span></div>'
         + '<div class="d">' + txt + '</div></div>';
