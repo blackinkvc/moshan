@@ -419,6 +419,55 @@ def register(app: FastAPI, cfg: dict, token: str) -> None:
                     "note": "本机更新由主机推送（update.mode=push），不走 GitHub"}
         return _do_check()
 
+    @app.post("/api/update/mode")
+    async def update_mode(request: Request):
+        """把「本机怎么更新」钉死 —— 主机用这个替远端机器做决定。
+
+        为什么需要它：nucbox 那台没有入站端口、也连不上 github.com，它的更新只能
+        由主机推。但「它该走推」这个判断在主机这边，不在它自己身上。让人跑到那台
+        机器上手改 config.json 是最容易漏的一步，漏了它就会一直去 GitHub 白等 8 秒
+        超时，界面上的「检查更新」永远是一个必然失败的按钮。
+
+        所以留一个开关接口：主机一次调用就能把它钉成 push，之后 /api/update/check
+        直接返回「由主机推送」，不再碰网络。改完立即生效（_push_mode 每次重读文件）。
+        """
+        if not _token_ok(request):
+            return _deny()
+        try:
+            body = await request.json()
+        except Exception:                               # noqa: BLE001
+            body = {}
+        mode = str((body or {}).get("mode") or "").strip().lower()
+        if mode not in ("push", "github"):
+            return JSONResponse(
+                {"ok": False, "error": "mode 只能是 push（只认主机推送）或 github（自己查 Release）"},
+                status_code=400)
+        p = paths.config_file()
+        try:
+            cur = json.loads(p.read_text(encoding="utf-8"))
+            if not isinstance(cur, dict):
+                cur = {}
+        except (OSError, ValueError):
+            cur = {}
+        upd = cur.get("update")
+        if not isinstance(upd, dict):
+            upd = {}
+        before = str(upd.get("mode") or "github")
+        upd["mode"] = mode
+        cur["update"] = upd
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(json.dumps(cur, ensure_ascii=False, indent=1), encoding="utf-8")
+            tmp.replace(p)
+        except OSError as exc:
+            return JSONResponse({"ok": False, "error": f"写不了配置文件：{exc}"[:200]},
+                                status_code=500)
+        _CFG["update"] = upd                            # 内存里那份也跟上，/api/about 立刻准
+        return {"ok": True, "mode": mode, "before": before, "config": str(p),
+                "note": ("之后只认主机推送，不再查 GitHub" if mode == "push"
+                         else "恢复自己查 GitHub Release")}
+
     @app.get("/api/update/state")
     def update_state(request: Request):
         if not _token_ok(request):

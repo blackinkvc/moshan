@@ -3498,6 +3498,13 @@ _SOURCE_SPECS = [
     ("TRAE 项目快照", lambda: getattr(trae_work, "SNAP_ROOT", Path("/nonexistent")), "*"),
     ("TRAE 命令记录", lambda: trae_work.CMD_ROOT, "*"),
     ("TRAE 侧栏 OCR", lambda: trae_work.SEED_PATH, ""),
+    # 「逐轮」这份账在 Windows 上只有一个源活着：TRAE 自己写的会话记忆。
+    # 不列出来的话，自检页面会显示 TRAE 全线没数据，而实际上逐轮是好的
+    # —— 缺的只是深挖（命令/快照）。少列一行，误导一整轮排查。
+    ("TRAE 会话记忆", lambda: getattr(trae_work, "MEM_ROOT", Path("/nonexistent")),
+     "*/*/*.jsonl"),
+    ("TRAE 窗口采样", lambda: getattr(trae_work, "WIN_PATH", Path("/nonexistent")), ""),
+    ("TRAE 自述账", lambda: getattr(trae_work, "NOTE_PATH", Path("/nonexistent")), ""),
     ("Claude Code", lambda: HOME / ".claude" / "projects", "*/*.jsonl"),
     # 同一个库，两件事：这个库以前只被当成「有没有装 Cherry」，现在里面的
     # ai_usage_record 还供着花费账（cherry_usage），所以名字写全一点。

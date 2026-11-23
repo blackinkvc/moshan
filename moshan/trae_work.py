@@ -40,8 +40,31 @@ try:                                   # 数据根跟着 paths.py 走（别人�
     OWN_DIR = paths.ensure(paths.data_root() / "_本机工作")
 except Exception:                      # noqa: BLE001
     OWN_DIR = HOME / "Documents" / "AI项目" / "_本机工作"
-CMD_ROOT = (HOME / "Library" / "Application Support" / "Trae CN"
-            / "ModularData" / "ai-agent" / "command-execution")
+def _trae_cn_dir() -> Path:
+    """TRAE CN 的用户数据目录 —— 两个平台叫法不同，里面的结构一模一样。
+
+    macOS  ~/Library/Application Support/Trae CN
+    Windows  %APPDATA%\\Trae CN     实测 C:\\Users\\<u>\\AppData\\Roaming\\Trae CN
+             （User\\globalStorage\\state.vscdb 与 ModularData\\ai-agent\\ 都在）
+
+    0.2.5 之前这里写死成 Library/...，结果 Windows 那台机器上「会话索引 / 项目快照 /
+    命令记录 / 侧栏 OCR」四个源全被判成「没找到」—— 不是没装 TRAE，是路径找错了。
+    """
+    if os.name == "nt":
+        env = (os.environ.get("APPDATA") or "").strip()
+        cand = Path(env) / "Trae CN" if env else None
+        # 以 SYSTEM 身份跑时 %APPDATA% 指向 systemprofile，那台机器上真正的目录
+        # 在普通用户下 —— 有就用它，没有才退回环境变量那条。
+        alt = HOME / "AppData" / "Roaming" / "Trae CN"
+        for p in (cand, alt):
+            if p and p.is_dir():
+                return p
+        return cand or alt
+    return HOME / "Library" / "Application Support" / "Trae CN"
+
+
+TRAE_DIR = _trae_cn_dir()
+CMD_ROOT = TRAE_DIR / "ModularData" / "ai-agent" / "command-execution"
 PROC_PATH = OWN_DIR / "进程.jsonl"
 WIN_PATH = OWN_DIR / "TRAE窗口.jsonl"
 SEED_PATH = OWN_DIR / "TRAE任务.jsonl"
@@ -662,10 +685,8 @@ def seed_items(since_ms: float) -> list[dict]:
     return out
 
 
-STATE_DB = (HOME / "Library" / "Application Support" / "Trae CN"
-            / "User" / "globalStorage" / "state.vscdb")
-SNAP_ROOT = (HOME / "Library" / "Application Support" / "Trae CN"
-             / "ModularData" / "ai-agent" / "snapshot")
+STATE_DB = TRAE_DIR / "User" / "globalStorage" / "state.vscdb"
+SNAP_ROOT = TRAE_DIR / "ModularData" / "ai-agent" / "snapshot"
 _SESS_CACHE: dict[str, object] = {"at": 0.0, "rows": []}
 
 

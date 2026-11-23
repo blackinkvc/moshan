@@ -103,6 +103,70 @@ def push_http(zip_path: Path, sha: str, ver: str, url: str, token: str,
 # --------------------------------------------------------------------------- 虫巢
 
 
+def set_mode_http(mode: str, url: str, token: str, insecure: bool) -> dict:
+    return _request(url.rstrip("/") + "/api/update/mode", {"mode": mode}, token,
+                    timeout=30, insecure=insecure)
+
+
+MODE_PS = r'''
+$ErrorActionPreference = "Continue"
+$res = @{ mode = "__MODE__" }
+$body = @{ mode = "__MODE__" } | ConvertTo-Json -Compress
+try {
+    $r = Invoke-RestMethod -Uri ("http://127.0.0.1:__PORT__/api/update/mode?k=__TOKEN__") -Method Post -Body $body -ContentType "application/json" -TimeoutSec 20
+    $res.ok = $true
+    $res.body = $r
+} catch {
+    $res.ok = $false
+    $res.error = $_.Exception.Message
+}
+($res | ConvertTo-Json -Compress -Depth 6) | Out-File (Join-Path "__PDIR__" "mode-result.json") -Encoding utf8
+'''
+
+
+def set_mode_fleet(mode: str, args) -> dict:
+    """走虫巢把远端机器的更新模式钉死。
+
+    nucbox 那台没有入站端口（只能往外轮询），所以「从主机连过去改配置」这条路
+    根本不存在。虫巢的 proc_start 是在**那台机器本地**拉起进程，借它就能落地。
+    """
+    post, wait, files = _fleet(args)
+    pdir = args.remote_dir
+    ps1 = pdir + "\\setmode.ps1"
+    cmd = pdir + "\\setmode.cmd"
+    dp = (MODE_PS.replace("__MODE__", mode)
+                 .replace("__PORT__", str(args.port))
+                 .replace("__TOKEN__", args.token)
+                 .replace("__PDIR__", pdir))
+    for path, text, enc in ((ps1, dp, "utf-8-sig"),
+                            (cmd, '@echo off\r\npowershell.exe -NoProfile '
+                                  '-ExecutionPolicy Bypass -File "' + ps1 + '"\r\n', "ascii")):
+        r = post("/api/fleet/task", {"device_id": args.device, "kind": "put",
+                                     "args": {"path": path,
+                                              "b64": base64.b64encode(text.encode(enc)).decode()}})
+        tid = r.get("id")
+        print(f"[put] {path} -> {wait(tid) if tid else r}")
+    r = post("/api/fleet/task", {"device_id": args.device, "kind": "proc_start",
+                                 "args": {"path": cmd}})
+    tid = r.get("id")
+    print(f"[start] {wait(tid) if tid else r}")
+    out = pdir + "\\mode-result.json"
+    for _ in range(12):
+        time.sleep(4)
+        try:
+            g = post("/api/fleet/task", {"device_id": args.device, "kind": "get",
+                                         "args": {"path": out}})
+            tid = g.get("id")
+            wait(tid) if tid else None
+            f = os.path.join(files, tid + ".bin") if tid else ""
+            if f and os.path.exists(f):
+                return json.loads(Path(f).read_text(encoding="utf-8-sig"))
+        except Exception:                              # noqa: BLE001  还没写出来就再等
+            pass
+    return {"ok": False, "error": "没有取回 mode-result.json（那台机器可能不在线）"}
+
+
+
 def _fleet(args):
     """返回 (post, wait) 两个函数；没有虫巢库依赖，直接走它的 HTTP + sqlite。"""
     base = args.fleet_base
@@ -262,7 +326,20 @@ def main(argv=None) -> int:
     ap.add_argument("--no-restart", action="store_true", help="只落盘，不重启")
     ap.add_argument("--keep", action="store_true", help="保留本地打好的包")
     ap.add_argument("--dry-run", action="store_true", help="只打包报大小与 sha，不发送")
+    ap.add_argument("--set-mode", choices=("push", "github"),
+                    help="只改目标机的更新模式，不推包：push=以后只认主机推送 / github=恢复自查")
     args = ap.parse_args(argv)
+
+    if args.set_mode:                       # 开关这条路不发包，先办完就走
+        if args.device:
+            res = set_mode_fleet(args.set_mode, args)
+        elif args.http:
+            res = set_mode_http(args.set_mode, args.http, args.token, args.insecure)
+        else:
+            print("要给一个目标：--http URL 或 --fleet device", file=sys.stderr)
+            return 3
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0 if res.get("ok") else 1
 
     zip_path, sha, ver = make_package()
     print(f"版本 {ver}  包 {zip_path.name}  {zip_path.stat().st_size} B")

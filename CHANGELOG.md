@@ -21,6 +21,18 @@
 - 新增 `POST /api/update/push`：`{version, sha256, b64, restart}`，sha256 不符就
   **整包丢弃**，不落半成品；解包只认程序文件白名单，拒绝绝对路径与 `..`。
 - 新增 `GET /api/update/status` 与 `POST /api/update/rollback`（回到上一版）。
+- 新增 `POST /api/update/mode`：**由主机决定这台机器怎么更新**，把 `update.mode`
+  钉成 `push` 之后 `/api/update/check` 直接返回「由主机推送」，不再去外网白等超时。
+  配套 `host_push_update.py --set-mode push|github`（`--http` 直连 / `--fleet` 走虫巢）——
+  nucbox 没有入站端口，只能借虫巢的 `proc_start` 在那台机器本地落地，人不用过去。
+- **修**：TRAE 数据目录写死成 macOS 的 `~/Library/Application Support/Trae CN`，
+  Windows 上「会话索引 / 项目快照 / 命令记录」三个源全被判定为「这台机器上没找到」。
+  现在按平台取 `%APPDATA%\Trae CN`（结构一模一样：`User\globalStorage\state.vscdb`
+  与 `ModularData\ai-agent\`），以 SYSTEM 身份跑时 `%APPDATA%` 指向 systemprofile
+  会自动退到普通用户目录。
+- 数据源自检补三行：`TRAE 会话记忆`（Windows 上唯一活着的逐轮来源）、`TRAE 窗口采样`、
+  `TRAE 自述账`。以前这三条不列，页面显示「TRAE 全线没数据」而逐轮其实是好的 ——
+  少列一行会误导一整轮排查。
 - 新增 `scripts/host_push_update.py`：两种送法 —— `--http` 直连；
   `--fleet <device>` 走虫巢（分片 put + 目标机回环 POST），入站全封的机器也能更新。
 - **修**：交付版「逐轮工作」永远是空。`hostwork._rounds_parser()` 只认

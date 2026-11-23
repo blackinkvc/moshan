@@ -6,6 +6,13 @@ cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 FAIL=0
 
+# 用哪个解释器跑检查。默认 python3，但 2、3 两节要 fastapi / certifi ——
+# 系统 python 没装就会一片「No module named 'fastapi'」，看起来像代码坏了，
+# 其实是解释器不对。所以允许外部指定：MOSHAN_PY=/path/to/venv/bin/python scripts/check.sh
+PY="${MOSHAN_PY:-python3}"
+DEPS_OK=1
+"${PY}" -c "import fastapi, certifi" >/dev/null 2>&1 || DEPS_OK=0
+
 say() { printf '%s\n' "$*"; }
 ok()  { printf '  [通过] %s\n' "$*"; }
 bad() { printf '  [失败] %s\n' "$*"; FAIL=1; }
@@ -13,7 +20,7 @@ bad() { printf '  [失败] %s\n' "$*"; FAIL=1; }
 say "== 1. 语法 =="
 # -x 排除 ._xxxx.py：仓库放在 exFAT/网络盘上时，macOS 会生成 AppleDouble 元数据文件，
 # 它们是二进制、含 null 字节，compileall 会误报「source code cannot contain null bytes」。
-if python3 -m compileall -q -x '(^|/)\._' moshan >/dev/null 2>&1; then
+if "${PY}" -m compileall -q -x '(^|/)\._' moshan >/dev/null 2>&1; then
   ok "所有 .py 语法正确"
 else
   bad "存在语法错误"
@@ -31,7 +38,7 @@ say "== 2. 导入冒烟（模拟全新用户）=="
 SMOKE_HOME="${TMPDIR:-/tmp}/moshan-smoke"
 rm -rf "${SMOKE_HOME}"; mkdir -p "${SMOKE_HOME}"
 MODN=$(ls moshan/*.py | wc -l | tr -d ' ')
-if ( cd moshan && HOME="${SMOKE_HOME}" MOSHAN_HOME="${SMOKE_HOME}/Moshan" PYTHONPATH=. python3 - <<'PY'
+if ( cd moshan && HOME="${SMOKE_HOME}" MOSHAN_HOME="${SMOKE_HOME}/Moshan" PYTHONPATH=. "${PY}" - <<'PY'
 import importlib, pathlib, sys
 bad = []
 for p in sorted(pathlib.Path(".").glob("*.py")):
@@ -65,7 +72,7 @@ else bad "有模块导入失败（依赖了仓库外的文件？见上）"; fi
 
 # 更新器的资产名匹配：曾经把 (?i) 写在正则中间，Python 直接抛 PatternError，
 # 「检查更新」对所有人都是 500，而单元测试没覆盖到。这里钉死一条断言。
-if ( cd moshan && PYTHONPATH=. python3 - <<'PY' >/dev/null 2>&1
+if ( cd moshan && PYTHONPATH=. "${PY}" - <<'PY' >/dev/null 2>&1
 import updater
 arm = updater._asset_pattern("macos-arm64")
 win = updater._asset_pattern("windows-x64")
@@ -82,7 +89,7 @@ say "== 3. 网络信任链（安装版能不能联网的前提）=="
 # /etc/ssl/cert.pem 而完全看不出问题。所以断言两件事——
 #   1) certifi 真的装上了（它会被打进包）；
 #   2) netca.install() 选中它，且默认上下文里真的装进了根证书。
-if ( cd moshan && PYTHONPATH=. python3 - <<'PY' >/dev/null 2>&1
+if ( cd moshan && PYTHONPATH=. "${PY}" - <<'PY' >/dev/null 2>&1
 import pathlib
 import certifi
 
@@ -140,7 +147,7 @@ say "== 7. TRAE 自述通道 =="
 #   写（POST /api/trae/note）→ 存（_本机工作/TRAE自述.jsonl）→ 读（dash 折成卡片行）
 # 说明书里的接口写错端点（曾经写成 /api/agent/event，那条进总线、卡片读不到），
 # 装到用户机器上表现就是「Trae 明明报了，工作台却空着」—— 只能用断言钉住。
-if ( cd moshan && python3 - <<'PY'
+if ( cd moshan && "${PY}" - <<'PY'
 import sys
 import agent_link
 t = agent_link.prompt("trae", "http://127.0.0.1:8323")
@@ -169,7 +176,7 @@ say "== 8. 远端脚本编码与工作目录 =="
 # 把**下一行**并进注释。踩过一次：Set-Location 静默失效，PyInstaller 在
 # C:\Windows\System32 里拒绝运行，日志里只少一行。所以这类文件只允许
 # 「纯 ASCII」或「带 UTF-8 BOM」，中间态一律判失败。
-BADFILES=$(python3 - <<'PY'
+BADFILES=$("${PY}" - <<'PY'
 import pathlib
 bad = []
 for p in pathlib.Path('.').rglob('*'):
@@ -199,5 +206,10 @@ else
 fi
 
 printf '\n'
+if [ "${DEPS_OK}" -eq 0 ]; then
+  say "提示：当前解释器（${PY}）缺 fastapi / certifi，第 2、3 节的失败是环境问题不是代码问题。"
+  say "      换一个装好依赖的解释器再跑：MOSHAN_PY=/path/to/venv/bin/python scripts/check.sh"
+  printf '\n'
+fi
 if [ "$FAIL" -eq 0 ]; then say "全部通过，可以提交。"; else say "有失败项，修完再来。"; fi
 exit "$FAIL"
