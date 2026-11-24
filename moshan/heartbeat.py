@@ -42,6 +42,8 @@ BASE = Path(__file__).resolve().parent
 HOME = Path.home()
 import paths  # noqa: E402  （交付版：数据根走 paths，不再写死 ~/Documents/AI项目）
 
+DATA = paths.base_dir()   # 配置在可写目录：打包后读不到 .app 内部
+
 OPENCLAW = HOME / ".openclaw"
 LOCK_DIR = OPENCLAW / "tmp" / "openclaw-501"
 SERVE_SH = OPENCLAW / "serve-gateway.sh"
@@ -141,7 +143,7 @@ STATE: dict = {
 # --------------------------------------------------------------------------
 def load_config() -> dict:
     try:
-        return json.loads((BASE / "config.json").read_text(encoding="utf-8"))
+        return json.loads((DATA / "config.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
 

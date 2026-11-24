@@ -38,6 +38,25 @@ def resource(*parts: str) -> Path:
     return app_dir().joinpath(*parts)
 
 
+def base_dir() -> Path:
+    """老代码里 `BASE = Path(__file__).resolve().parent` 的**可写**等价物。
+
+    历史包袱：账本（pocket.jsonl）、config.json、certs/ 这些一直是「跟着代码走」，
+    源码运行时就是 moshan/ 目录。打包后 `__file__` 指向 `Contents/Frameworks`，
+    而那是 .app 内部、签名覆盖的范围 —— 运行时往里面写一个字节，macOS 的
+    Gatekeeper 就判定 seal 失效，双击报「已损坏，移到废纸篓」。
+
+    0.3.4 装不上就是这个：`Contents/Frameworks/pocket.jsonl` 被运行期写了出来，
+    而 CI 的冒烟测试恰好跑在签名之后，于是发出去的每一个 dmg 都带着坏签名。
+
+    所以：源码运行保持原样（开发机数据一点不动），打包后落到状态目录。
+    只读资源别走这里，用 `resource()`。
+    """
+    if getattr(sys, "frozen", False):
+        return state_dir()
+    return Path(__file__).resolve().parent
+
+
 def state_dir() -> Path:
     """状态目录：配置、证书、日志、版本缓存。"""
     override = os.environ.get(ENV_HOME)

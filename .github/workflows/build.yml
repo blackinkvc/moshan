@@ -49,11 +49,9 @@ jobs:
       - name: PyInstaller 打包
         run: |
           pyinstaller --noconfirm --clean --distpath dist --workpath build packages/moshan.spec
-
-      - name: ad-hoc 签名
-        run: |
-          codesign --force --deep --sign - dist/Moshan.app || true
-          codesign --verify --deep --strict --verbose=2 dist/Moshan.app || true
+          # 打包瞬间的文件清单。冒烟跑完拿它 diff，凡是新增的都算「运行期写进了 bundle」——
+          # 这类文件会让代码签名 seal 失效，用户下载后就是「已损坏，移到废纸篓」。
+          find dist/Moshan.app -type f -not -path "*/_CodeSignature/*" | sort > "$RUNNER_TEMP/bundle-before.txt"
 
       # 这一步是本仓库唯一能验证「装到别人机器上到底能不能用」的地方。
       # 0.2.0 就是因为 CI 只构建、从不运行才发出去的：包里自带 OpenSSL 找不到
@@ -95,6 +93,36 @@ jobs:
           fi
           echo "安装版冒烟通过：证书在位、服务可响应"
 
+      - name: 检查冒烟没把数据写进 bundle
+        run: |
+          find dist/Moshan.app -type f -not -path "*/_CodeSignature/*" | sort > "$RUNNER_TEMP/bundle-after.txt"
+          NEW=$(comm -13 "$RUNNER_TEMP/bundle-before.txt" "$RUNNER_TEMP/bundle-after.txt")
+          if [ -n "${NEW}" ]; then
+            echo "::error::运行时往 .app 内部写了文件，代码签名 seal 必然失效（0.3.4 装不上就是这个）："
+            echo "${NEW}"
+            echo "修法：写数据一律走 paths.base_dir()，不要用 Path(__file__).parent 拼路径"
+            exit 1
+          fi
+          echo "bundle 未被运行期污染"
+
+      - name: 清理 exFAT 元数据
+        run: |
+          # macOS 在 exFAT/网络卷上会往文件旁边撒 ._xxx，codesign 会把它当子组件
+          # 去签，然后报 Operation not permitted 整包失败。GitHub runner 是 APFS，
+          # 这里纯属兜底（本地在移动硬盘上构建时一定会遇到）。
+          n=$(find dist/Moshan.app -name "._*" | wc -l | tr -d ' ')
+          if [ "${n}" -gt 0 ]; then
+            find dist/Moshan.app -name "._*" -delete
+            echo "清掉 ${n} 个 ._ 元数据文件"
+          fi
+
+      - name: ad-hoc 签名（失败即红）
+        run: |
+          # 不能带 `|| true`：签名失败还照发的话，用户双击看到的是
+          # 「Moshan.app 已损坏，你应该将它移到废纸篓」—— 0.3.4 就是这么翻车的。
+          codesign --force --deep --sign - dist/Moshan.app
+          codesign --verify --deep --strict --verbose=2 dist/Moshan.app
+
       - name: 读取版本
         id: ver
         run: |
@@ -105,13 +133,25 @@ jobs:
         run: |
           V="${{ steps.ver.outputs.version }}"
           STAGE=$(mktemp -d)
-          cp -R dist/Moshan.app "$STAGE/"
+          # 必须用 ditto：cp -R 会跟随符号链接（这个 bundle 里有十几个）、丢扩展属性，
+          # 复制出来的 app 签名当场失效。ditto 是 macOS 上复制 bundle 的正确方式。
+          ditto dist/Moshan.app "$STAGE/Moshan.app"
           ln -s /Applications "$STAGE/Applications"
           hdiutil create -volname "Moshan ${V}" -srcfolder "$STAGE" -ov -format UDZO \
             "dist/Moshan-${V}-macos-${{ matrix.arch }}.dmg"
           rm -rf "$STAGE"
           shasum -a 256 "dist/Moshan-${V}-macos-${{ matrix.arch }}.dmg" | awk '{print $1}' > "dist/dmg.sha256"
           cat "dist/dmg.sha256"
+
+      - name: 从 dmg 里反向校验签名（用户拿到的就是这个）
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          DMG="dist/Moshan-${V}-macos-${{ matrix.arch }}.dmg"
+          MNT=$(mktemp -d)
+          hdiutil attach -nobrowse -readonly -mountpoint "$MNT" "$DMG"
+          codesign --verify --deep --strict --verbose=2 "$MNT/Moshan.app"
+          echo "dmg 里的 app 签名完好"
+          hdiutil detach "$MNT" >/dev/null 2>&1 || true
 
       - name: 上传产物
         uses: actions/upload-artifact@v4

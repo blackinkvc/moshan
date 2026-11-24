@@ -35,6 +35,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import paths   # 配置在可写目录：打包后读不到 .app 内部
+
 try:
     import fcntl
 except ImportError:                                    # 非 POSIX（理论上用不到）
@@ -55,7 +57,7 @@ STATUS = ("active", "paused", "done")
 
 def default_root() -> Path:
     """没有 cfg 时（MCP / 命令行）自己找数据根：config.json 的 allowed_roots[0]。"""
-    here = Path(__file__).resolve().parent
+    here = paths.base_dir()
     try:
         cfg = json.loads((here / "config.json").read_text(encoding="utf-8"))
         roots = cfg.get("allowed_roots") or []

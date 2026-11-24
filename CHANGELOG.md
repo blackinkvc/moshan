@@ -3,6 +3,39 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.5] - 2026-11-25
+
+**0.3.4 的 dmg 双击报「已损坏，移到废纸篓」，装不上；图标也不见了。两个都是打包链路的病。**
+
+### 修复
+- **安装包双击「Moshan.app 已损坏，你应该将它移到废纸篓」**（0.3.4 所有 macOS 包）。
+  三个原因叠在一起：
+  1. **运行期把数据写进了 .app 内部**。`transfer.py` 的账本路径写成
+     `Path(__file__).parent / "pocket.jsonl"`，打包后 `__file__` 指向
+     `Contents/Frameworks`，app 一跑就往自己肚子里写文件 —— 而那是代码签名覆盖的范围，
+     写一个字节 seal 就失效。CI 又把「冒烟测试」放在签名之后，于是发出去的每个 dmg
+     都带着坏签名。现在可写路径统一走 `paths.base_dir()`（源码运行 = `moshan/`，
+     打包后 = 状态目录），只读资源走 `paths.resource()`。
+  2. **`codesign … || true`**：签名失败也照发。现在失败即红。
+  3. **dmg 用 `cp -R` 复制 app**：macOS 的 `cp -R` 会跟随符号链接（bundle 里有十几个）、
+     丢扩展属性，复制出来的 app 签名当场失效。改用 `ditto`。
+- **图标不见了**（Dock / 访达 / 安装器都显示通用 Mac 图标）：`spec` 里两处 `icon=None`，
+  PyInstaller 就退回自己的默认图标。现在仓库里带 `packages/moshan.icns`（macOS）与
+  `packages/moshan.ico`（Windows），由 `docs/images/logo.svg` 生成。
+
+### 新增（CI 把关，防止同类问题再发出去）
+- 打包后记录 bundle 文件清单，冒烟跑完 diff：**有新增文件就失败**，并直接提示
+  「写数据要走 `paths.base_dir()`」。
+- 签名后 `codesign --verify --deep --strict` 必须过；做完 dmg 再挂载回来验一次
+  —— 验的就是用户拿到手的那份文件。
+- 签名前清掉 `.app` 里的 `._*`（exFAT/网络卷上 macOS 会撒这些，codesign 会把它们
+  当子组件去签，然后报 `Operation not permitted` 整包失败）。
+
+### 注意
+- 安装版的数据位置变了：`pocket.jsonl`、`config.json`、`certs/` 从「app 内部」挪到
+  状态目录（macOS 是 `~/Library/Application Support/Moshan/`）。旧版写在 app 里的那份
+  账本随旧 app 一起删掉即可 —— 它是两分钟一条的心跳流水，不是业务数据。
+
 ## [0.3.4] - 2026-11-25
 
 **Windows 上「这台是什么机器」终于答得出来了：机型、芯片、应用清单、常驻服务不再是空的。**

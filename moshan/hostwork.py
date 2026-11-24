@@ -60,12 +60,12 @@ import billing                        # 计费账号：直接问供应商要余�
 
 BASE = Path(__file__).resolve().parent
 HOME = Path.home()
-UI_FILE = BASE / "hostwork_ui.html"
 
 DEFAULT_PORT = 8775
 # 数据根不再写死：CUNTU_ROOT 环境变量 → ~/.cuntu/config.json → ~/Documents/AI项目。
 # 换台电脑装（或把数据放外置盘）只需改一处，见 paths.py。
 import paths                                                  # noqa: E402
+UI_FILE = paths.resource("hostwork_ui.html")   # 只读页面：打包后在 _MEIPASS，不能跟着数据根走
 AI_ROOT = paths.data_root()
 SYS_DIR = AI_ROOT / "10-系统记录"
 SNAP_PATH = SYS_DIR / "机器" / "快照.jsonl"

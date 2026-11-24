@@ -29,10 +29,12 @@ import urllib.request
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
+import paths  # noqa: E402  （账本与状态在可写目录：写 .app 内部会破坏签名）
+DATA = paths.base_dir()
 REF_DB = Path.home() / ".openclaw" / "openclaw-weixin" / "ref-messages.sqlite"
 OUTBOUND_DIR = Path.home() / ".openclaw" / "media" / "outbound"
-LOG_PATH = BASE / "pocket.jsonl"
-STATE_PATH = BASE / "_守卫状态.json"
+LOG_PATH = DATA / "pocket.jsonl"
+STATE_PATH = DATA / "_守卫状态.json"
 
 INTERVAL = 60          # 多久扫一次
 MIN_AGE = 90           # 消息至少这么老才判「漏了」
@@ -315,7 +317,7 @@ def scheduler_loop(cfg: dict, log=None) -> None:
 
 
 def _main() -> int:
-    cfg = json.loads((BASE / "config.json").read_text(encoding="utf-8"))
+    cfg = json.loads((DATA / "config.json").read_text(encoding="utf-8"))
     got = sweep(cfg, log=lambda r: print(json.dumps(r, ensure_ascii=False)))
     print(f"补了 {len(got)} 条" if got else "没有漏的")
     return 0

@@ -36,6 +36,9 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent
 if str(BASE) not in sys.path:
     sys.path.insert(0, str(BASE))
+import paths  # noqa: E402  （配置在可写目录：打包后读不到 .app 内部）
+
+DATA = paths.base_dir()
 
 # hostwork（本机工作的采集层）在 ~/Documents/cuntu，跟 dash.py 里同一个走法。
 _CUNTU = Path.home() / "Documents" / "cuntu"
@@ -815,7 +818,7 @@ def _cfg() -> dict:
     """脚本自己跑时用的配置（手动补跑 / 排错，没有 server 的 CFG）。"""
     cfg = {"allowed_roots": [str(Path.home() / "Documents/AI项目")],
            "inbox_dir": str(Path.home() / "Documents/AI项目/07-收件箱")}
-    cfg.update(_load(BASE / "config.json", {}) or {})
+    cfg.update(_load(DATA / "config.json", {}) or {})
     return cfg
 
 

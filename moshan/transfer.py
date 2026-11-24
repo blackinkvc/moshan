@@ -33,7 +33,8 @@ from pathlib import Path
 DIR_NAME = "14-传输"
 PUSH_LOG = "推送失败.jsonl"     # 「网页 → 手机微信」每次推送的成败账本，一行一次尝试
 PUSH_KEEP = 500                 # 只留最近 500 行：这是排障用的，不是业务数据
-JOURNAL = Path(__file__).resolve().parent / "pocket.jsonl"   # 工作台「任务」页的账
+import paths  # noqa: E402  （账本必须落可写目录：写进 .app 内部会让签名 seal 失效）
+JOURNAL = paths.base_dir() / "pocket.jsonl"   # 工作台「任务」页的账
 
 IMG_EXT = {"jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "bmp", "tiff", "tif"}
 VID_EXT = {"mp4", "mov", "m4v", "webm", "avi", "mkv"}

@@ -39,6 +39,11 @@ sys.path.insert(0, str(BASE))  # 保证 launchd 用任意 cwd 启动时也能 im
 import paths  # 目录约定：程序目录 / 状态目录 / 资料库分开，更新不碰用户数据
 import netca  # 交付版：把 CA 证书指到 certifi，否则打包后所有 https 都失败
 
+# 可写数据目录：源码运行 = moshan/（与历史完全一致），打包后 = 状态目录。
+# 绝不能写 .app 内部 —— 那是签名覆盖的范围，写一个字节就 seal 失效，
+# 安装版双击报「已损坏，移到纸篓」（0.3.4 装不上就是这个）。
+DATA = paths.base_dir()
+
 netca.install()
 
 from fastapi import (Depends, FastAPI, File, Form, Header, HTTPException, Query,
@@ -113,8 +118,8 @@ except Exception:                                      # noqa: BLE001
     twmod = None
 
 CFG_PATH = paths.config_file()
-UI_PATH = BASE / "ui.html"
-LOG_PATH = BASE / "pocket.jsonl"
+UI_PATH = paths.resource("ui.html")   # 只读资源：打包后在 _MEIPASS 里
+LOG_PATH = DATA / "pocket.jsonl"      # 运行账本：可写目录，不能落在 .app 内部
 
 
 SORTED_DIRNAME = "_已分类"
@@ -2534,7 +2539,7 @@ def hostwork_page() -> HTMLResponse:
     点进去只会看到 404，而作者本机永远复现不了。
     """
     p = None
-    for cand in (CUNTU_DIR / "hostwork_ui.html", BASE / "hostwork_ui.html"):
+    for cand in (CUNTU_DIR / "hostwork_ui.html", paths.resource("hostwork_ui.html")):
         if cand.exists():
             p = cand
             break
