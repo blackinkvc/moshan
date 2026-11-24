@@ -37,6 +37,7 @@ import hashlib
 import json
 import math
 import os
+import platform
 import plistlib
 import re
 import shutil
@@ -426,10 +427,117 @@ def _profiler() -> dict:
     return out
 
 
+# ---------------------------------------------------------------- Windows 探针
+#
+# macOS 那套 sysctl / system_profiler / launchd 在 Windows 上一条都不存在，
+# 于是「机器规格」整张卡是空的：型号「未知机型」、芯片「—」、0 个应用、
+# 0 个常驻服务（2026-11-25 在 EVO 上实测）。这不是能力差，是取值没写。
+#
+# 只用系统自带的东西，不引第三方：
+#   · 机型 / 芯片 / 显卡 / 系统  ← PowerShell Get-CimInstance（Win32_* 那套 WMI）
+#   · 已装软件                    ← 注册表 Uninstall 三处（无需子进程，毫秒级）
+#   · 常驻服务                    ← psutil.win_service_iter（本来就为进程采样装了）
+#
+# 每样都进 15 分钟缓存：这些数据一天变不了一次，不该跟着 10 秒的采样循环跑。
+
+_WIN_INFO = {"at": 0.0, "data": None}
+_WIN_INFO_TTL = 900
+
+# 一次取全：CIM 查询本身 0.2 秒，起进程 0.6 秒，分四次问就是四次启动开销。
+_WIN_CIM_PS = (
+    "$ErrorActionPreference='SilentlyContinue';"
+    "$cs=Get-CimInstance Win32_ComputerSystem;"
+    "$cp=Get-CimInstance Win32_Processor|Select-Object -First 1;"
+    "$os=Get-CimInstance Win32_OperatingSystem;"
+    "$gp=Get-CimInstance Win32_VideoController|Select-Object -First 1;"
+    "$bios=Get-CimInstance Win32_BIOS;"
+    "@{model=$cs.Model;vendor=$cs.Manufacturer;family=$cs.SystemFamily;"
+    "cpu=$cp.Name;cores=$cp.NumberOfCores;threads=$cp.NumberOfLogicalProcessors;"
+    "l2=$cp.L2CacheSize;l3=$cp.L3CacheSize;osname=$os.Caption;osver=$os.Version;"
+    "osbuild=$os.BuildNumber;gpu=$gp.Name;bios=$bios.SMBIOSBIOSVersion}"
+    "|ConvertTo-Json -Compress"
+)
+
+
+def _win_info() -> dict:
+    """Windows 的机型/芯片/系统事实。取不到就回空 dict，调用方各自兜底。"""
+    now = time.time()
+    if _WIN_INFO["data"] is not None and now - _WIN_INFO["at"] < _WIN_INFO_TTL:
+        return _WIN_INFO["data"]
+    raw = _run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                _WIN_CIM_PS], timeout=25)
+    d: dict = {}
+    s = (raw or "").strip()
+    if s.startswith("{"):
+        try:
+            got = json.loads(s)
+            d = got if isinstance(got, dict) else {}
+        except ValueError:
+            d = {}
+    _WIN_INFO.update(at=now, data=d)
+    return d
+
+
+def _specs_win(now: float) -> dict:
+    """把 WMI 的事实翻成 macOS 那份 spec 的形状 —— 前端一行都不用改。"""
+    info = _win_info()
+    arch = platform.machine() or ""
+    isa = {"AMD64": "x64", "X86_64": "x64", "ARM64": "ARM64"}.get(arch.upper(), arch or "—")
+    mem_b = 0
+    try:
+        import psutil
+        mem_b = int(psutil.virtual_memory().total)
+    except Exception:                                  # noqa: BLE001
+        # 没 psutil 时别报 0 GB —— 那看着像真值。sysinfo 在 Windows 走
+        # GlobalMemoryStatusEx（系统自带），这条兜底不依赖任何第三方包。
+        try:
+            import sysinfo
+            mem_b = int(float((sysinfo.sample().get("mem") or {}).get("total_gb") or 0) * GB)
+        except Exception:                              # noqa: BLE001
+            mem_b = 0
+    cores = int(info.get("cores") or 0)
+    threads = int(info.get("threads") or 0) or (os.cpu_count() or 0)
+    l2 = int(info.get("l2") or 0)
+    l3 = int(info.get("l3") or 0)
+    cpu_name = str(info.get("cpu") or "").strip()
+    if not cpu_name:
+        cpu_name = os.environ.get("PROCESSOR_IDENTIFIER") or "—"
+    os_name = str(info.get("osname") or "Windows").strip()
+    # Caption 形如「Microsoft Windows 11 专业版」；前端会拼成「系统 Windows 11 …」，
+    # 所以把「Microsoft 」和系统名重复的部分削掉
+    os_name = re.sub(r"^Microsoft\s+", "", os_name)
+    for pref in ("Windows 11", "Windows 10", "Windows Server"):
+        if os_name.startswith(pref):
+            os_name = "Windows"
+            break
+    disk = _disk()
+    return {
+        "at": round(now, 1),
+        "os": {"name": os_name, "ver": str(info.get("osver") or ""),
+               "build": str(info.get("osbuild") or ""), "kernel": "NT"},
+        "model": {"id": str(info.get("model") or ""),
+                  "name": str(info.get("family") or info.get("model") or ""),
+                  "number": str(info.get("vendor") or ""),
+                  "board": "", "soc": "", "fw": str(info.get("bios") or "")},
+        "chip": {"name": cpu_name, "arch": arch or "—", "isa": isa},
+        "cpu": {"cores": threads, "perf": cores or None, "eff": None,
+                "l2_mb": round((l3 or l2) / 1024) or None},
+        "gpu": {"cores": None, "metal": str(info.get("gpu") or "")},
+        "mem": {"total_gb": round(mem_b / GB, 1) if mem_b else 0, "type": "内存"},
+        "disk": {"total_gb": disk.get("total_gb"), "free_gb": disk.get("free_gb"),
+                 "ssd": ""},
+        "displays": [],
+    }
+
+
 def specs(fresh: bool = False) -> dict:
     now = time.time()
     if not fresh and _SPEC["data"] and now - _SPEC["at"] < _SPEC_TTL:
         return _SPEC["data"]
+    if os.name == "nt":
+        data = _specs_win(now)
+        _SPEC.update(at=now, data=data)
+        return data
     prof = _profiler()
     chip = _sysctl("machdep.cpu.brand_string") or "—"
     arch = _sysctl("hw.machine") or "—"
@@ -492,6 +600,86 @@ def _brew_bin() -> str:
     return ""
 
 
+def _software_win(now: float) -> dict:
+    """Windows 装了哪些软件：注册表三处 Uninstall 键 + scoop / choco 的包目录。
+
+    为什么读注册表而不是 `Get-Package`：后者要起 PowerShell、还要加载包管理模块，
+    实测 3–8 秒；注册表是毫秒级，而且「设置 → 应用」列表就是从这里来的，口径一致。
+    三处都要读：64 位、WOW6432Node（32 位程序）、当前用户（免安装的小工具）。
+    """
+    apps: list[dict] = []
+    seen: set[str] = set()
+    roots = [
+        ("HKLM", r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall", False),
+        ("HKLM", r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall", False),
+        ("HKCU", r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall", True),
+    ]
+    try:
+        import winreg
+    except Exception:                                  # noqa: BLE001
+        winreg = None                            # 非 Windows 或裁剪版 Python
+    if winreg is not None:
+        for hive, path, user in roots:
+            base = winreg.HKEY_LOCAL_MACHINE if hive == "HKLM" else winreg.HKEY_CURRENT_USER
+            try:
+                k = winreg.OpenKey(base, path)
+            except OSError:
+                continue
+            i = 0
+            while True:
+                try:
+                    sub = winreg.EnumKey(k, i)
+                except OSError:
+                    break
+                i += 1
+                try:
+                    sk = winreg.OpenKey(k, sub)
+
+                    def gv(name, _sk=sk):
+                        try:
+                            return winreg.QueryValueEx(_sk, name)[0]
+                        except OSError:
+                            return ""
+                    name = str(gv("DisplayName") or "").strip()
+                    # 没有 DisplayName 的是补丁/驱动残留；SystemComponent=1 的是
+                    # VC++ 运行库这类「不是用户装的东西」，混进来会淹掉真软件
+                    if not name or int(gv("SystemComponent") or 0) == 1:
+                        continue
+                    if str(gv("ReleaseType") or "") in ("Update", "Hotfix", "Security Update"):
+                        continue
+                    if str(gv("ParentKeyName") or ""):
+                        continue
+                    key = name.lower()
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    apps.append({"name": name, "ver": str(gv("DisplayVersion") or ""),
+                                 "user": bool(user)})
+                except OSError:
+                    continue
+        try:
+            winreg.CloseKey(k)
+        except Exception:                              # noqa: BLE001
+            pass
+    apps.sort(key=lambda x: x["name"].lower())
+
+    # 「命令」这一栏在 mac 上是 brew leaves。Windows 上等价物是 scoop / choco 装的
+    # 命令行工具 —— 没有包管理器就空着，不硬凑。
+    pkgs: list[str] = []
+    for d in (HOME / "scoop" / "apps", Path("C:/ProgramData/chocolatey/lib")):
+        try:
+            pkgs += [p.name for p in sorted(d.iterdir()) if p.is_dir()]
+        except OSError:
+            continue
+    mgr = ""
+    if (HOME / "scoop" / "apps").exists():
+        mgr = "scoop"
+    elif Path("C:/ProgramData/chocolatey/lib").exists():
+        mgr = "choco"
+    return {"at": round(now, 1), "apps": apps, "formula": [],
+            "leaves": sorted(set(pkgs)), "cask": [], "brew": mgr}
+
+
 def software(fresh: bool = False) -> dict:
     """装了哪些软件：两个 Applications 目录（读 Info.plist 拿版本）+ Homebrew 两张表。
 
@@ -501,6 +689,10 @@ def software(fresh: bool = False) -> dict:
     now = time.time()
     if not fresh and _SW["data"] and now - _SW["at"] < _SW_TTL:
         return _SW["data"]
+    if os.name == "nt":
+        data = _software_win(now)
+        _SW.update(at=now, data=data)
+        return data
     env = {"HOMEBREW_NO_AUTO_UPDATE": "1", "HOMEBREW_NO_ANALYTICS": "1",
            "HOMEBREW_NO_ENV_HINTS": "1"}
     apps = []
@@ -580,10 +772,32 @@ def units(fresh: bool = False) -> dict:
     if not fresh and _UNITS["data"] and now - _UNITS["at"] < _UNITS_TTL:
         return _UNITS["data"]
     if os.name == "nt":
-        # launchd / brew services 是 macOS 的机制，Windows 上不存在对应概念
-        # （常驻服务由计划任务管，归巡检那边看）。这里给空表 —— 不为一张卡
-        # 把整份 overview 拖进降级；os.getuid() 在 Windows 上也没有，硬算会抛。
-        data = {"at": round(now, 1), "user": [], "global": [], "daemon": [],
+        # Windows 没有 launchd，但「有哪些东西常驻着」这件事同样该答得上来。
+        # 等价物是服务控制管理器：psutil.win_service_iter 一次给全（名字 / 显示名 /
+        # 状态 / 启动类型 / pid），跟 mac 那份 plist 清单叠出来的行同形。
+        # 只列「在跑」或「开机自启」的：Windows 光驱动就有两三百条 disabled，
+        # 全摊上去这张卡就没法看了。
+        rows = []
+        try:
+            import psutil
+            for s in psutil.win_service_iter():
+                try:
+                    d = s.as_dict()
+                except Exception:                      # noqa: BLE001
+                    continue
+                st = str(d.get("status") or "")
+                start = str(d.get("start_type") or "")
+                if st != "running" and start not in ("automatic", "auto"):
+                    continue
+                nm = str(d.get("name") or "")
+                rows.append({"label": nm, "short": str(d.get("display_name") or nm),
+                             "prog": start or "—", "pid": int(d.get("pid") or 0),
+                             "running": st == "running", "brew": "", "scope": "win",
+                             "file": ""})
+        except Exception:                              # noqa: BLE001
+            rows = []
+        rows.sort(key=lambda x: (not x["running"], x["label"].lower()))
+        data = {"at": round(now, 1), "user": rows, "global": [], "daemon": [],
                 "brew_services": []}
         _UNITS.update(at=now, data=data)
         return data
