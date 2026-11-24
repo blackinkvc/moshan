@@ -1,15 +1,28 @@
-"""更新器 —— 检查、下载、引导安装。
+"""更新器 —— 检查、下载、安装。
 
 设计取舍（重要）：
   程序、状态、资料库三者物理分离（见 paths.py），所以安装包覆盖程序目录时，
   用户的配置 / 收件箱 / 工作台页面一律不受影响。这是「更新后设置和文件不丢」
   的实现方式 —— 不靠代码小心，靠目录结构保证。
 
-为什么不尝试热替换运行中的程序：
-  macOS 上 .app 正在运行时无法安全替换自身，Windows 上运行中的 exe 被锁。
-  强行做需要「拉起新进程→旧进程自杀→回滚」三段式，任一段失败就是半个坏软件。
-  首版采用「下载 → 校验 → 打开安装包」，由系统安装流程负责替换，失败也不会破坏
-  现有安装；等程序拆成 onedir + current 符号链接后再上原子切换。
+安装怎么落地（0.3.8 起）：
+  macOS 走**原地替换**，不再弹 dmg 让人拖图标 —— 那个动作每更新一次就要做一遍，
+  跟「软件自己更新」是两回事。做法是三段式，而不是热替换运行中的程序：
+    1. 下载 zip（CI 除了 dmg 还产一份 zip，签名在里面）；
+    2. `ditto -xk` 解到状态目录，`codesign --verify` 校验通过才继续；
+    3. 起一个脱离会话的 helper 脚本，它等本进程真的退出之后，把 `.app` 挪到
+       `.moshan-old`、`ditto` 新的过去、清 quarantine、重新打开；复制失败就把
+       旧的挪回来。任一段失败都不会留下半个坏软件。
+
+  为什么必须等进程退出：运行中的 .app 被系统锁着一部分文件，替换一半就崩。
+  为什么必须清 quarantine：下载来的 zip 带隔离属性，不清的话新包进来照样被
+  Gatekeeper 拦成「已损坏」，白更新一次。
+
+  不能原地更新的情况（从 dmg 里直接运行、被 Gatekeeper 挂到 AppTranslocation、
+  目录不可写、源码部署）：如实说明原因，退回「打开安装包」，不假装成功。
+
+  Windows 仍然是 exe 安装器：运行中的 exe 被系统锁着，换不掉自己；但安装器
+  本身就是覆盖安装，点两下即可，不需要重新下载一遍。
 """
 from __future__ import annotations
 
@@ -18,6 +31,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -113,17 +127,22 @@ def check(repo: str = "", *, timeout: float = 10) -> dict:
     assets = data.get("assets") or []
 
     pat = _asset_pattern(platform_key())
-    picked: Optional[dict] = None
+    key = platform_key()
+    seen: list[dict] = []
     for a in assets:
         name = str(a.get("name") or "")
         if pat.search(name):
-            picked = {
+            seen.append({
                 "name": name,
                 "url": a.get("browser_download_url"),
                 "size": int(a.get("size") or 0),
                 "digest": a.get("digest") or "",  # GitHub 可能给 sha256:xxx
-            }
-            break
+            })
+    # macOS 上 zip 优先：zip 能原地替换，dmg 只能弹出来让人拖。
+    # 同一版本两种资产都在时，选错就等于「永远只能手动装」。
+    if key.startswith("macos"):
+        seen.sort(key=lambda c: 0 if c["name"].lower().endswith(".zip") else 1)
+    picked: Optional[dict] = seen[0] if seen else None
 
     return {
         "has_update": version.is_newer(latest),
@@ -219,6 +238,133 @@ def download(asset: dict, *, on_progress: Optional[Callable[[int, int], None]] =
 
 # ---------------------------------------------------------------- 安装
 
+# helper 脚本：app 自己起它，然后自杀；它等旧进程真的没了再动手。
+# 每一段失败都往 apply.log 写一句，出事能查；复制失败必须把旧的挪回来。
+_HELPER = r"""#!/bin/bash
+set -u
+PID="$1"; APP="$2"; NEW="$3"; WORK="$4"
+log() { printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$WORK/apply.log"; }
+log "helper 起：pid=$PID app=$APP new=$NEW"
+for _ in $(seq 1 240); do
+  kill -0 "$PID" 2>/dev/null || break
+  sleep 0.25
+done
+sleep 1
+if kill -0 "$PID" 2>/dev/null; then
+  log "旧进程 60 秒仍未退出，放弃替换（不冒险做半个）"
+  exit 2
+fi
+BAK="$APP.moshan-old"
+rm -rf "$BAK"
+if ! mv "$APP" "$BAK" 2>>"$WORK/apply.log"; then
+  log "挪走旧 app 失败，放弃"
+  exit 3
+fi
+if ! ditto "$NEW" "$APP" 2>>"$WORK/apply.log"; then
+  log "复制新 app 失败，回滚"
+  rm -rf "$APP"
+  mv "$BAK" "$APP"
+  open "$APP"
+  exit 4
+fi
+xattr -dr com.apple.quarantine "$APP" 2>/dev/null
+rm -rf "$BAK"
+if open "$APP" 2>>"$WORK/apply.log"; then
+  log "替换完成，已重新打开"
+else
+  log "替换完成，但 open 没成功 —— 让用户自己双击一次"
+fi
+exit 0
+"""
+
+
+def app_bundle() -> Optional[Path]:
+    """当前进程所在的 .app；不是打包运行就 None。"""
+    if sys.platform != "darwin" or not getattr(sys, "frozen", False):
+        return None
+    try:
+        exe = Path(sys.executable).resolve()
+    except OSError:
+        return None
+    for p in exe.parents:
+        if p.suffix == ".app":
+            return p
+    return None
+
+
+def in_place_blocked() -> str:
+    """不能原地更新的原因；返回空串表示可以。"""
+    if sys.platform != "darwin":
+        return "这个平台走安装程序"
+    if not getattr(sys, "frozen", False):
+        return "源码运行，没有 .app 可以替换"
+    app = app_bundle()
+    if app is None:
+        return "找不到 .app 本体（可能被改名或挪出了 bundle）"
+    s = str(app)
+    if "/AppTranslocation/" in s:
+        return ("这个 app 正从下载目录 / dmg 里直接运行，系统给了临时路径。"
+                "先把 Moshan 拖进「应用程序」，之后就能一键更新。")
+    if s.startswith("/Volumes/"):
+        return "这个 app 在 dmg 里运行。先拖进「应用程序」，之后就能一键更新。"
+    if not os.access(str(app.parent), os.W_OK):
+        return f"{app.parent} 不可写（可能装成了别人的）。重装到自己的应用程序目录再更新。"
+    return ""
+
+
+def apply_in_place(path: Path) -> dict:
+    """把下载好的 zip 装回去：解压 → 验签 → 起 helper → 等自己退出。"""
+    reason = in_place_blocked()
+    if reason:
+        raise UpdateError(reason)
+    app = app_bundle()
+    if app is None:
+        raise UpdateError("找不到 .app 本体")
+    if path.suffix.lower() != ".zip":
+        raise UpdateError("这个包不是 zip，没法原地替换（退回打开安装包）")
+
+    work = paths.state_dir() / "updates" / f"apply-{int(time.time())}"
+    work.mkdir(parents=True, exist_ok=True)
+    new_root = work / "new"
+    try:
+        subprocess.run(["ditto", "-xk", str(path), str(new_root)],
+                       check=True, capture_output=True, timeout=240)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+        raise UpdateError(f"解压失败：{exc}") from exc
+
+    cands = list(new_root.glob("*.app")) or list(new_root.rglob("*.app"))
+    if not cands:
+        raise UpdateError("包里没有 .app，像是下错了资产")
+    new_app = cands[0]
+
+    # 签名自检：签坏的包换上去，用户下次双击就是「已损坏」，比不更新更糟。
+    try:
+        v = subprocess.run(["codesign", "--verify", "--deep", "--strict", str(new_app)],
+                           capture_output=True, timeout=180)
+    except (OSError, subprocess.TimeoutExpired):
+        v = None
+    if v is not None and v.returncode != 0:
+        msg = (v.stderr or b"").decode("utf-8", "replace").strip().splitlines()
+        raise UpdateError("新包的签名验不过，已放弃更新：" + (msg[0] if msg else "未知原因"))
+
+    script = work / "apply.sh"
+    script.write_text(_HELPER, encoding="utf-8")
+    os.chmod(script, 0o755)
+    try:
+        subprocess.Popen(
+            ["/bin/bash", str(script), str(os.getpid()), str(app), str(new_app), str(work)],
+            start_new_session=True,          # 脱离本会话：服务退了它也活着
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        raise UpdateError(f"启动更新程序失败：{exc}") from exc
+    return {
+        "app": str(app),
+        "work": str(work),
+        "hint": "正在更新：程序会自己关掉再打开，约 3 秒。设置和文件都不会动。",
+    }
+
+
 def launch_installer(path: Path) -> str:
     """用系统默认方式打开安装包，返回一句给用户看的说明。"""
     p = str(path)
@@ -236,17 +382,27 @@ def launch_installer(path: Path) -> str:
 
 
 def cleanup(keep: int = 2) -> int:
-    """清掉旧的下载包，只留最近 keep 个。返回删除数量。"""
+    """清掉旧的下载包与解压目录，只留最近 keep 份。返回删除数量。"""
     d = paths.state_dir() / "updates"
     if not d.is_dir():
         return 0
+    removed = 0
     files = sorted((f for f in d.iterdir() if f.suffix in {".dmg", ".exe", ".zip", ".gz"}),
                    key=lambda f: f.stat().st_mtime, reverse=True)
-    removed = 0
     for f in files[keep:]:
         try:
             f.unlink()
             f.with_suffix(f.suffix + ".meta").unlink(missing_ok=True)
+            removed += 1
+        except OSError:
+            pass
+    # 原地更新会在 updates/ 下留 apply-<时间戳>/（解压出来的整个 .app，几十 MB）。
+    # 日志要留着能查最后一次，所以同样是「留最近 keep 份」。
+    dirs = sorted((x for x in d.iterdir() if x.is_dir() and x.name.startswith("apply-")),
+                  key=lambda x: x.stat().st_mtime, reverse=True)
+    for x in dirs[keep:]:
+        try:
+            shutil.rmtree(x, ignore_errors=True)
             removed += 1
         except OSError:
             pass
@@ -318,6 +474,19 @@ def main(argv: Optional[list] = None) -> int:
     print(f"\n已下载并校验通过：{path}")
 
     if args.apply:
+        reason = in_place_blocked()
+        if not reason and path.suffix.lower() == ".zip":
+            try:
+                res = apply_in_place(path)
+            except UpdateError as exc:
+                print(f"原地更新不可用：{exc}")
+                print(launch_installer(path))
+                return 1
+            print(res["hint"])
+            print(f"日志：{res['work']}/apply.log")
+            return 0
+        if reason:
+            print(f"（本机没法原地更新：{reason}）")
         print(launch_installer(path))
     else:
         print("要安装就把这个文件打开，或加 --apply 让脚本代劳。")
