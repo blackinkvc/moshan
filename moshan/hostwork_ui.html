@@ -528,6 +528,42 @@ html[data-theme="dark"] .rwwho span.mdl{color:var(--mcd,var(--pri))}
 .gtc.bs.be{border-radius:3px}
 .gtc.now{box-shadow:inset 0 0 0 1.5px var(--pri)}
 
+/* ---------- 每日工作总结（一张卡四个分页） ----------
+   配色沿用全站：AI = 主色，人 = 成功色的浅一档。两张图放一起时
+   只靠颜色区分，所以除了色相还差一层「实心 / 描边」，色弱也分得开。 */
+.wstabs{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:10px 0 12px}
+.wstabs .sp{flex:1;min-width:8px}
+.wsday{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--tx3)}
+.wsday input{height:26px;border:1px solid var(--line);background:var(--card);color:var(--tx);
+  border-radius:8px;padding:0 8px;font-size:11.5px;font-family:inherit}
+.wskpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(126px,1fr));gap:9px;margin-bottom:14px}
+.wskpi .k{background:var(--card2);border:1px solid var(--line2);border-radius:10px;padding:8px 10px;min-width:0}
+.wskpi .k b{display:block;font-size:17px;font-weight:660;letter-spacing:-.015em;line-height:1.3}
+.wskpi .k b small{font-size:11px;font-weight:500;color:var(--tx3);margin-left:3px}
+.wskpi .k span{display:block;font-size:11px;color:var(--tx3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wsgrid{display:grid;grid-template-columns:1.12fr .88fr;gap:18px;align-items:start}
+@media (max-width:920px){.wsgrid{grid-template-columns:1fr}}
+.wsh{font-size:12px;color:var(--tx2);margin:0 0 7px;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.wsh em{font-style:normal;color:var(--tx3);font-size:11px}
+.wsnote{font-size:11.5px;color:var(--warn);background:var(--warn-soft);border-radius:8px;padding:6px 9px;margin:8px 0}
+.wsrow{display:grid;grid-template-columns:92px 1fr 62px;gap:8px;align-items:center;font-size:12px;padding:2.5px 0}
+.wsrow .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--tx2)}
+.wsrow .vl{text-align:right;color:var(--tx3);font-size:11.5px;font-variant-numeric:tabular-nums}
+.wsbar{height:6px;border-radius:3px;background:var(--bar-soft);overflow:hidden}
+.wsbar i{display:block;height:100%;border-radius:3px;background:var(--pri)}
+.wsbar i.ok{background:var(--ok)}
+.wssvg{width:100%;display:block;color:var(--tx3)}
+.wstbl{width:100%;border-collapse:collapse;font-size:12px}
+.wstbl th{text-align:left;font-weight:560;color:var(--tx3);font-size:11px;padding:4px 6px;border-bottom:1px solid var(--line2);white-space:nowrap}
+.wstbl td{padding:4px 6px;border-bottom:1px solid var(--line2);color:var(--tx2);white-space:nowrap}
+.wstbl td.n{text-align:right;font-variant-numeric:tabular-nums}
+.wstbl tr:last-child td{border-bottom:0}
+.wstbl td.nm{max-width:220px;overflow:hidden;text-overflow:ellipsis}
+.wsempty{color:var(--tx3);font-size:12px;padding:12px 0}
+.wsleg{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--tx3);margin-top:4px}
+.wsleg span{display:inline-flex;align-items:center;gap:5px}
+.wsleg i{width:9px;height:9px;border-radius:2px;display:inline-block}
+
 </style>
 </head>
 <body data-density="normal">
@@ -561,6 +597,32 @@ html[data-theme="dark"] .rwwho span.mdl{color:var(--mcd,var(--pri))}
   </div>
 
   <div class="kpis mt" id="kpis"></div>
+
+  <!-- 每日工作总结：一张卡四个分页（时长 / Token / 提示词 / 效率）。
+       数据是同一批账的另一种切法 —— 会话流水给 token 和提示词，
+       系统屏幕使用库（没授权就用本服务自采的前台样本）给「人」的那一半。 -->
+  <div class="hwrow mt" data-row="dailysum">
+  <div class="card" data-card="dailysum" data-title="每日工作总结" id="wsCard">
+    <h3>每日工作总结 <span class="n" id="wsN"></span></h3>
+    <p class="hint">按天 / 按小时重算：AI 在跑多久、人在屏幕前多久、烧了多少 token、发了几条提示词、每条摊到多少时间与 token。分页都能切，日期也能往回翻。</p>
+    <div class="wstabs">
+      <div class="chips" id="wsTabs">
+        <button class="chip" data-wsv="time" aria-pressed="true">时长</button>
+        <button class="chip" data-wsv="token" aria-pressed="false">Token</button>
+        <button class="chip" data-wsv="prompt" aria-pressed="false">提示词</button>
+        <button class="chip" data-wsv="eff" aria-pressed="false">效率</button>
+      </div>
+      <span class="sp"></span>
+      <div class="chips" id="wsRange">
+        <button class="chip" data-wsr="7" aria-pressed="false">7 天</button>
+        <button class="chip" data-wsr="30" aria-pressed="true">30 天</button>
+        <button class="chip" data-wsr="90" aria-pressed="false">90 天</button>
+      </div>
+      <span class="wsday"><input type="date" id="wsDay" aria-label="选日期"></span>
+    </div>
+    <div id="wsBody"><div class="wsempty">正在统计…</div></div>
+  </div>
+  </div>
 
   <!-- 第一行：左树右账 —— 左栏那棵树很高，右栏拿「钱 + 进程」两张矮卡去配平，
        不然会剩一大片空白（实测 921 vs 453，差近 500px） -->
@@ -2325,6 +2387,439 @@ $('#ebHidden').addEventListener('click', function () {
   });
   window.addEventListener('pageshow', function (ev) {
     if (ev.persisted && Date.now() - _lastOk > 20000) load(true);   // 从往返缓存里翻出来
+  });
+})();
+</script>
+
+<script>
+/* ============================================================
+   每日工作总结：一张卡四个分页
+     时长 —— 活跃度格子 / 分小时 AI·人 / 屏幕使用时间
+     Token —— 分小时 / 分 agent / 分基础模型
+     提示词 —— 每天·每小时条数 / 字数分布 / 链接与图片
+     效率 —— 每条提示词摊到多少 token、多少时间（分 agent / 专家 / 插件）
+   数据一次取全（服务端 70ms，现算），切分页只在本地重画；
+   只有换时间范围 / 换日期才重新请求 —— 那两样会改变聚合口径。
+   ============================================================ */
+(function () {
+  var WSK = { d: null, range: 30, day: '', view: 'time', heatKey: 'ai',
+              busy: false, err: '', at: 0 };
+  var $ = function (s) { return document.querySelector(s); };
+  var HOURS = [];
+  for (var i = 0; i < 24; i++) HOURS.push((i < 10 ? '0' : '') + i);
+
+  function wsH(sec) {                       // 3660 → 1.0h，90 → 1m
+    var s = Number(sec || 0);
+    if (s < 60) return Math.round(s) + 's';
+    var m = s / 60;
+    if (m < 60) return Math.round(m) + 'm';
+    return (m / 60).toFixed(m / 60 >= 10 ? 0 : 1) + 'h';
+  }
+  function wsInt(n) { return Math.round(Number(n || 0)).toLocaleString('zh-CN'); }
+  function wsTok(n) {
+    var v = Number(n || 0);
+    if (v >= 1e8) return (v / 1e8).toFixed(2) + '<small>亿</small>';
+    if (v >= 1e4) return (v / 1e4).toFixed(0) + '<small>万</small>';
+    return wsInt(v);
+  }
+
+  /* ---------- 小部件 ---------- */
+  function kpi(list) {
+    /* x[1] 是主数字（允许 <small>），x[2] 是副标题（纯文本，一律转义）。
+       两边混着来最容易出错：副标题里带 HTML 会被转义成字面量，反过来主数字
+       纯文本又会让「62.67亿」这种缩写成了一长串。 */
+    return '<div class="wskpi">' + list.map(function (x) {
+      return '<div class="k"><b>' + x[1] + '</b><span title="' + esc(x[2] || '') + '">'
+        + esc(x[0]) + (x[2] ? ' · ' + esc(x[2]) : '') + '</span></div>';
+    }).join('') + '</div>';
+  }
+  /* 副标题专用的纯文本 token 格式 */
+  function wsTokT(n) {
+    var v = Number(n || 0);
+    if (v >= 1e8) return (v / 1e8).toFixed(2) + '亿';
+    if (v >= 1e4) return (v / 1e4).toFixed(0) + '万';
+    return wsInt(v);
+  }
+
+  /* 活跃度格子：7 行（周一→周日）× N 列（一周一列）。
+     深浅按分位数定档 —— 某一天烧了 2 亿 token，线性映射会把别的天全压成空格。 */
+  function heatSvg(cells, key) {
+    if (!cells || !cells.length) return '<div class="wsempty">没有数据</div>';
+    /* 前面一大片空格子看着像坏了：从「第一周有记录」开始画，最少留 13 周。
+       只按 AI/提示词判断 —— 「人」那半边本来就只在最近几周有数。 */
+    var first = 0;
+    for (var i0 = 0; i0 < cells.length; i0++) {
+      if ((Number(cells[i0].ai) || 0) > 0 || (Number(cells[i0].prompts) || 0) > 0) { first = i0; break; }
+    }
+    var keep = Math.max(13 * 7, cells.length - (first - (first % 7)));
+    if (keep < cells.length) cells = cells.slice(cells.length - keep);
+    WSK.heatN = cells.length;
+    var vals = cells.map(function (c) { return Number(c[key]) || 0; });
+    var sorted = vals.slice().sort(function (a, b) { return a - b; });
+    var p95 = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.94))] || 0;
+    var max = Math.max(p95, 1);
+    var cell = 13, gap = 3.6, left = 20, top = 15;
+    var weeks = Math.ceil(cells.length / 7);
+    var W = left + weeks * (cell + gap), H = top + 7 * (cell + gap) + 2;
+    var col = (key === 'human') ? 'var(--ok)' : 'var(--pri)';
+    var out = [], lastM = -1;
+    cells.forEach(function (c, i) {
+      var cx = i % 7, wk = Math.floor(i / 7);
+      var v = Number(c[key]) || 0;
+      var lv = v <= 0 ? 0 : (v >= max ? 4 : (v >= max * 0.5 ? 3 : (v >= max * 0.22 ? 2 : 1)));
+      var x = left + wk * (cell + gap), y = top + cx * (cell + gap);
+      var tip = c.d + (key === 'human'
+        ? ' · 人 ' + wsH(v) + (c.has ? '' : '（当天没有屏幕记录）')
+        : (key === 'tok' ? ' · ' + fmtN(v) + ' token' : (key === 'prompts' ? ' · ' + v + ' 条提示词' : ' · AI ' + wsH(v))));
+      out.push('<rect x="' + x + '" y="' + y + '" width="' + cell + '" height="' + cell
+        + '" rx="2.6" fill="' + (lv ? col : 'var(--line2)') + '"'
+        + (lv ? ' fill-opacity="' + [0, .28, .46, .7, 1][lv] + '"' : '')
+        + '><title>' + esc(tip) + '</title></rect>');
+      // 每个月的第一天标一下月份，省得去数格子
+      if (c.d.slice(8) === '01') {
+        var m = parseInt(c.d.slice(5, 7), 10);
+        if (m !== lastM) { lastM = m; out.push('<text x="' + x + '" y="' + (top - 5) + '" font-size="9.5" fill="currentColor" fill-opacity=".5">' + m + '月</text>'); }
+      }
+    });
+    // 周一 / 周四 / 周日 三个参照行，别七行都标
+    [[0, '一'], [3, '四'], [6, '日']].forEach(function (r) {
+      out.push('<text x="' + (left - 6) + '" y="' + (top + r[0] * (cell + gap) + cell - 3)
+        + '" text-anchor="end" font-size="9.5" fill="currentColor" fill-opacity=".45">' + r[1] + '</text>');
+    });
+    return '<svg class="wssvg" viewBox="0 0 ' + W + ' ' + H + '" height="' + H
+      + '" style="max-width:' + W + 'px" role="img">' + out.join('') + '</svg>';
+  }
+
+  /* 24 根柱子：给了 v2 就每组两根（AI 实心、人描边） */
+  function barsSvg(items, o) {
+    o = o || {};
+    var H = o.h || 132, padL = 30, padB = 16, padT = 8, padR = 6;
+    var W = 620;
+    var max = 1;
+    items.forEach(function (it) {
+      max = Math.max(max, Number(it.v) || 0, Number(it.v2) || 0);
+    });
+    var step = (W - padL - padR) / items.length;
+    var bw = Math.max(3, step * (items[0] && items[0].v2 != null ? 0.32 : 0.5));
+    var grid = '';
+    [0, .5, 1].forEach(function (f) {
+      var y = padT + (H - padT - padB) * (1 - f);
+      grid += '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y
+        + '" stroke="currentColor" stroke-opacity=".1"/>'
+        + '<text x="' + (padL - 5) + '" y="' + (y + 3.4) + '" text-anchor="end" font-size="9" '
+        + 'fill="currentColor" fill-opacity=".45">' + (o.axis ? o.axis(max * f) : Math.round(max * f)) + '</text>';
+    });
+    var bars = '';
+    items.forEach(function (it, i) {
+      var x0 = padL + step * i + (step - bw * (it.v2 != null ? 2 : 1)) / 2;
+      var v = Number(it.v) || 0;
+      var h = (H - padT - padB) * (v / max);
+      bars += '<rect x="' + x0.toFixed(1) + '" y="' + (H - padB - h).toFixed(1) + '" width="' + bw.toFixed(1)
+        + '" height="' + Math.max(0, h).toFixed(1) + '" rx="2" fill="' + (o.c1 || 'var(--pri)')
+        + '"><title>' + esc(it.tip || (it.k + ' ' + (o.fmt ? o.fmt(v) : v))) + '</title></rect>';
+      if (it.v2 != null) {
+        var v2 = Number(it.v2) || 0, h2 = (H - padT - padB) * (v2 / max);
+        bars += '<rect x="' + (x0 + bw + 1).toFixed(1) + '" y="' + (H - padB - h2).toFixed(1) + '" width="' + bw.toFixed(1)
+          + '" height="' + Math.max(0, h2).toFixed(1) + '" rx="2" fill="' + (o.c2 || 'var(--ok)') + '" fill-opacity=".72"'
+          + '><title>' + esc((it.tip2 || (it.k + ' ' + (o.fmt ? o.fmt(v2) : v2)))) + '</title></rect>';
+      }
+      if (items.length <= 26 || i % Math.ceil(items.length / 12) === 0) {
+        bars += '<text x="' + (x0 + bw / 2).toFixed(1) + '" y="' + (H - 4) + '" text-anchor="middle" font-size="9" '
+          + 'fill="currentColor" fill-opacity=".45">' + esc(it.k) + '</text>';
+      }
+    });
+    return '<svg class="wssvg" viewBox="0 0 ' + W + ' ' + H + '" height="' + H + '" role="img">'
+      + '<g>' + grid + bars + '</g></svg>';
+  }
+
+  function hbars(rows, o) {
+    o = o || {};
+    if (!rows.length) return '<div class="wsempty">没有数据</div>';
+    var max = 1;
+    rows.forEach(function (r) { max = Math.max(max, Number(r.v) || 0); });
+    return rows.map(function (r) {
+      var pc = Math.max(1.5, (Number(r.v) || 0) / max * 100);
+      return '<div class="wsrow"><div class="nm" title="' + esc(r.name) + '">' + esc(r.name) + '</div>'
+        + '<div class="wsbar"><i class="' + (o.ok ? 'ok' : '') + '" style="width:' + pc.toFixed(1) + '%"></i></div>'
+        + '<div class="vl">' + (o.fmt ? o.fmt(r.v) : wsInt(r.v)) + '</div></div>';
+    }).join('');
+  }
+
+  function table(cols, rows) {
+    if (!rows.length) return '<div class="wsempty">没有数据</div>';
+    var head = '<tr>' + cols.map(function (c) {
+      return '<th' + (c.n ? ' style="text-align:right"' : '') + '>' + esc(c.t) + '</th>';
+    }).join('') + '</tr>';
+    var body = rows.map(function (r) {
+      return '<tr>' + r.map(function (v, i) {
+        var c = cols[i] || {};
+        return '<td class="' + (c.n ? 'n' : (i === 0 ? 'nm' : '')) + '">' + v + '</td>';
+      }).join('') + '</tr>';
+    }).join('');
+    return '<table class="wstbl">' + head + body + '</table>';
+  }
+
+  function panel(title, note, body) {
+    return '<div><div class="wsh">' + esc(title) + (note ? '<em>' + esc(note) + '</em>' : '') + '</div>' + body + '</div>';
+  }
+
+  /* ---------- 四个分页 ---------- */
+  function viewTime() {
+    var d = WSK.d, t = d.tot, rows = d.rows || [];
+    var act = rows.filter(function (r) { return r.ai > 0 || r.prompts > 0; }).length;
+    var k = WSK.heatKey;
+    var hv = { ai: 'AI', human: '人', prompts: '提示词' };
+    var html = kpi([
+      ['AI 在跑', wsH(t.ai), '日均 ' + wsH(t.ai / Math.max(1, act))],
+      ['人在屏幕前', wsH(t.human), d.screen.ok
+        ? (d.screen.src === 'sampler' ? '本机采样 · 从今天起' : '系统使用时间')
+        : '未授权'],
+      ['提示词', fmtN(t.prompts) + ' 条', '日均 ' + (t.prompts / Math.max(1, WSK.range)).toFixed(1)],
+      ['活跃天数', act + ' 天', '窗口 ' + WSK.range + ' 天']
+    ]);
+    var tabs = ['ai', 'human', 'prompts'].map(function (x) {
+      return '<button class="chip" data-wshk="' + x + '" aria-pressed="' + (k === x) + '">' + hv[x] + '</button>';
+    }).join('');
+    html += '<div class="wsgrid">'
+      + '<div><div class="wsh">活跃度 <em>一个格子一天，越深越久</em>'
+      + '<span class="chips" style="margin-left:auto">' + tabs + '</span></div>'
+      + heatSvg(d.heat.cells, k)
+      + '<div class="wsleg"><span><i style="background:var(--line2)"></i>没有</span>'
+      + '<span><i style="background:var(--pri);opacity:.28"></i>少</span>'
+      + '<span><i style="background:var(--pri)"></i>多</span>'
+      + '<span>' + (WSK.heatN || (d.heat.cells || []).length) + ' 天</span></div></div>'
+      + '<div>'
+      + panel('分小时 · ' + d.day, 'AI（实心）/ 人（浅）', hoursBars())
+      + '<div style="height:14px"></div>'
+      + panel('屏幕使用时间 · ' + d.day,
+        d.screen.src === 'sampler'
+          ? (d.day === d.screen.span[1] || d.day === d.today ? '本机前台采样' : '本机采样从今天才开始，往前没有')
+          : '', screenList())
+      + '</div></div>';
+    if (d.screen.why) {
+      html += '<div class="wsnote">' + esc(d.screen.why) + '</div>';
+    }
+    return html;
+  }
+
+  function hoursBars() {
+    var hs = WSK.d.hours || [];
+    var items = hs.map(function (h, i) {
+      return { k: HOURS[i], v: Math.round((h.ai || 0) / 60), v2: Math.round((h.human || 0) / 60),
+               tip: HOURS[i] + ' 时 · AI ' + Math.round((h.ai || 0) / 60) + ' 分',
+               tip2: HOURS[i] + ' 时 · 人 ' + Math.round((h.human || 0) / 60) + ' 分' };
+    });
+    if (!items.some(function (x) { return x.v || x.v2; })) return '<div class="wsempty">这一天还没有记录</div>';
+    return barsSvg(items, { h: 128, c1: 'var(--pri)', c2: 'var(--ok)', fmt: function (v) { return v + 'm'; },
+      axis: function (v) { return Math.round(v) + 'm'; } })
+      + '<div class="wsleg"><span><i style="background:var(--pri)"></i>AI 在跑</span>'
+      + '<span><i style="background:var(--ok);opacity:.72"></i>人在屏幕前</span></div>';
+  }
+
+  function screenList() {
+    var apps = (WSK.d.screen || {}).apps || [];
+    if (!apps.length) {
+      return '<div class="wsempty">' + (WSK.d.screen.ok ? '这一天没有屏幕记录' : '系统屏幕使用库没读到') + '</div>';
+    }
+    var rows = apps.slice(0, 8);
+    var max = rows[0][1] || 1;
+    var total = apps.reduce(function (a, b) { return a + b[1]; }, 0);
+    var top = rows.reduce(function (a, b) { return a + b[1]; }, 0);
+    return hbars(rows.map(function (x) { return { name: x[0], v: x[1] }; }),
+      { ok: true, fmt: function (v) { return wsH(v); } })
+      + '<div class="wsleg"><span>这一天合计 ' + wsH(total) + ' · 前 ' + rows.length
+      + ' 个占 ' + Math.round(top / Math.max(1, total) * 100) + '%</span></div>';
+  }
+
+  function viewToken() {
+    var d = WSK.d, t = d.tot;
+    var html = kpi([
+      ['消耗 token', wsTok(t.tok), '含缓存读入'],
+      ['输出 token', wsTok(t.tout), '日均 ' + wsTokT(t.tout / Math.max(1, WSK.range))],
+      ['日均', wsTok(t.tok / Math.max(1, WSK.range)), WSK.range + ' 天合计 ' + wsTokT(t.tok)],
+      ['每次请求', wsTok(d.avg.tok_per_call || 0), (t.reqs || 0) + ' 次请求']
+    ]);
+    var hs = d.hours || [];
+    var items = hs.map(function (h, i) {
+      return { k: HOURS[i], v: Math.round((h.tin || 0) / 1e6 * 10) / 10, tip: HOURS[i] + ' 时 · ' + wsInt(h.tok) + ' token' };
+    });
+    var hasTok = items.some(function (x) { return x.v; });
+    html += '<div class="wsgrid">'
+      + panel('分小时 · ' + d.day, '单位：百万 token', hasTok
+        ? barsSvg(items, { h: 128, c1: 'var(--pri)', fmt: function (v) { return v + 'M'; },
+                          axis: function (v) { return Math.round(v) + 'M'; } })
+        : '<div class="wsempty">这一天没有 token 记录</div>')
+      + '<div>'
+      + panel('分 agent', WSK.range + ' 天',
+        hbars((d.agents || []).filter(function (a) { return a.tok > 0; })
+          .map(function (a) { return { name: a.name, v: a.tok }; }), { fmt: wsTok }))
+      + '<div style="height:14px"></div>'
+      + panel('分基础模型', '按用量排', hbars((d.models || []).slice(0, 8)
+        .map(function (m) { return { name: shortModel(m.name) || m.name, v: m.tok }; }), { fmt: wsTok }))
+      + '</div></div>';
+    return html;
+  }
+
+  function viewPrompt() {
+    var d = WSK.d, t = d.tot, rows = d.rows || [];
+    var html = kpi([
+      ['提示词', fmtN(t.prompts) + ' 条', '日均 ' + (t.prompts / Math.max(1, WSK.range)).toFixed(1)],
+      ['平均每条', Math.round(d.avg.chars_per_prompt) + ' 字', '共 ' + fmtN(t.chars) + ' 字'],
+      ['带链接', wsInt(t.links), '带图片 ' + wsInt(t.imgs)],
+      ['有提示词的天', (rows.filter(function (r) { return r.prompts; }).length) + ' 天',
+       '那天平均 ' + d.avg.prompts_per_active_day + ' 条']
+    ]);
+    var dayItems = rows.map(function (r) {
+      return { k: r.d.slice(5), v: r.prompts, tip: r.d + ' · ' + r.prompts + ' 条' };
+    });
+    var hourItems = (d.hours || []).map(function (h, i) {
+      return { k: HOURS[i], v: h.prompts, tip: HOURS[i] + ' 时 · ' + h.prompts + ' 条 · 均 '
+        + (h.prompts ? Math.round((h.chars || 0) / h.prompts) : 0) + ' 字' };
+    });
+    var lens = (d.lens && d.lens.hist) || [];
+    var bounds = (d.lens && d.lens.bounds) || [];
+    var labels = lens.map(function (n, i) {
+      if (i === 0) return '<' + bounds[0];
+      if (i === lens.length - 1) return bounds[bounds.length - 1] + '+';
+      return bounds[i - 1] + '–' + bounds[i];
+    });
+    var histItems = lens.map(function (n, i) {
+      return { k: labels[i], v: n, tip: labels[i] + ' 字 · ' + n + ' 条' };
+    });
+    html += '<div class="wsgrid">'
+      + panel('每天条数', WSK.range + ' 天', barsSvg(dayItems, { h: 120, c1: 'var(--pri)', fmt: function (v) { return v + ' 条'; } }))
+      + '<div>'
+      + panel('分小时 · ' + d.day, '提示词条数', hourItems.some(function (x) { return x.v; })
+        ? barsSvg(hourItems, { h: 120, c1: 'var(--pri)', axis: function (v) { return Math.round(v); } })
+        : '<div class="wsempty">这一天还没发提示词</div>')
+      + '</div></div>'
+      + '<div class="wsgrid" style="margin-top:14px">'
+      + panel('字数分布', '共 ' + fmtN(t.prompts) + ' 条',
+        barsSvg(histItems, { h: 108, c1: 'var(--pri)', fmt: function (v) { return v + ' 条'; } }))
+      + panel('最近 7 天', '条数 / 平均字数 / 链接·图片',
+        table([{ t: '日期' }, { t: '条数', n: 1 }, { t: '平均字数', n: 1 }, { t: '链接', n: 1 }, { t: '图片', n: 1 }],
+          rows.slice(-7).reverse().map(function (r) {
+            return [r.d.slice(5), wsInt(r.prompts),
+                    r.prompts ? Math.round(r.chars / r.prompts) : '—',
+                    wsInt(r.links), wsInt(r.imgs)];
+          })))
+      + '</div>';
+    return html;
+  }
+
+  function viewEff() {
+    var d = WSK.d, t = d.tot;
+    var html = kpi([
+      ['每条摊到 token', wsTok(d.avg.tok_per_prompt), '含缓存读入'],
+      ['每条摊到输出', wsTok(d.avg.out_per_prompt), '只算模型写出来的'],
+      ['每条耗时', wsH(d.avg.sec_per_prompt), '按轮次首末跨度'],
+      ['每条字数', Math.round(d.avg.chars_per_prompt) + ' 字', '共 ' + wsInt(t.prompts) + ' 条']
+    ]);
+    var ag = (d.agents || []).map(function (a) {
+      return [esc(a.name), wsInt(a.prompts), wsTok(a.avg_tok),
+              a.avg_sec ? wsH(a.avg_sec) : '—', a.avg_chars ? Math.round(a.avg_chars) + ' 字' : '—'];
+    });
+    var ex = (d.experts || []).map(function (e) {
+      return [esc(e.label || e.name), wsInt(e.reqs), wsTok(e.avg_tok), e.avg_sec ? wsH(e.avg_sec) : '—'];
+    });
+    var mc = (d.mcps || []).map(function (m) {
+      return [esc(m.name), wsInt(m.reqs), wsTok(m.avg_tok), m.avg_sec ? wsH(m.avg_sec) : '—'];
+    });
+    html += '<div class="wsgrid">'
+      + panel('分 agent', '条数 · 平均 token · 平均耗时', table(
+        [{ t: 'agent' }, { t: '提示词', n: 1 }, { t: '平均 token', n: 1 }, { t: '平均耗时', n: 1 }, { t: '平均字数', n: 1 }], ag))
+      + '<div>'
+      + panel('分专家', '只有带专家的轮次才有分母', table(
+        [{ t: '专家' }, { t: '轮次', n: 1 }, { t: '平均 token', n: 1 }, { t: '平均耗时', n: 1 }], ex))
+      + '<div style="height:14px"></div>'
+      + panel('分插件（连接器）', '这一轮动过哪个 MCP', table(
+        [{ t: '连接器' }, { t: '轮次', n: 1 }, { t: '平均 token', n: 1 }, { t: '平均耗时', n: 1 }], mc))
+      + '</div></div>';
+    html += '<div class="wsnote">口径：平均 token 是「窗口内总量 ÷ 条数」，包含每次请求重发的缓存上下文；'
+      + '平均耗时是这一轮从提问到答完的跨度（超过 4 小时的按 4 小时算，那是窗口挂一夜没关的）。</div>';
+    return html;
+  }
+
+  /* ---------- 调度 ---------- */
+  function render() {
+    var body = $('#wsBody');
+    if (!body) return;
+    if (WSK.err) { body.innerHTML = '<div class="wsempty">取数失败：' + esc(WSK.err) + '</div>'; return; }
+    if (!WSK.d) { body.innerHTML = '<div class="wsempty">正在统计…</div>'; return; }
+    var d = WSK.d;
+    $('#wsN').textContent = (d.tot.prompts || 0) + ' 条 · ' + wsH(d.tot.ai);
+    body.innerHTML = WSK.view === 'token' ? viewToken()
+      : WSK.view === 'prompt' ? viewPrompt()
+      : WSK.view === 'eff' ? viewEff()
+      : viewTime();
+    var at = $('#wsAt');
+    if (at) at.textContent = d.at || '';
+  }
+
+  function load() {
+    if (WSK.busy) return;
+    WSK.busy = true;
+    var u = '/api/workstat?days=' + WSK.range + (WSK.day ? '&day=' + encodeURIComponent(WSK.day) : '');
+    hwFetch(u, 25000).then(function (d) {
+      WSK.busy = false;
+      if (!d || d.ok === false) { WSK.err = (d && d.error) || '接口没返回数据'; render(); return; }
+      WSK.d = d; WSK.err = ''; WSK.at = Date.now();
+      if (!WSK.day) {
+        /* 刚过零点打开时「今天」只有几十分钟，一根孤零零的柱子 —— 那不如先看昨天。
+           只在第一次进来时这么挑，之后跟着人选的日期走。 */
+        var todayMin = (d.hours || []).reduce(function (a, h) { return a + (h.ai || 0); }, 0) / 60;
+        var pick = d.day;
+        if (d.day === d.today && todayMin < 30) {
+          var y = new Date(d.today + 'T00:00:00');
+          y.setDate(y.getDate() - 1);
+          pick = y.getFullYear() + '-' + String(y.getMonth() + 1).padStart(2, '0')
+            + '-' + String(y.getDate()).padStart(2, '0');
+        }
+        WSK.day = pick;
+        var inp = $('#wsDay');
+        if (inp) { inp.value = pick; inp.max = d.today; }
+        if (pick !== d.day) { load(); return; }
+      }
+      render();
+    }, function (e) {
+      WSK.busy = false; WSK.err = (e && e.message) || '取数失败'; render();
+    });
+  }
+
+  function syncTabs() {
+    document.querySelectorAll('#wsTabs [data-wsv]').forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b.dataset.wsv === WSK.view));
+    });
+    document.querySelectorAll('#wsRange [data-wsr]').forEach(function (b) {
+      b.setAttribute('aria-pressed', String(Number(b.dataset.wsr) === WSK.range));
+    });
+  }
+
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    var v = t.closest('#wsTabs [data-wsv]');
+    if (v) { WSK.view = v.dataset.wsv; syncTabs(); render(); return; }
+    var r = t.closest('#wsRange [data-wsr]');
+    if (r) { WSK.range = Number(r.dataset.wsr); syncTabs(); load(); return; }
+    var h = t.closest('[data-wshk]');
+    if (h) { WSK.heatKey = h.dataset.wshk; render(); return; }
+  });
+  var dayInp = $('#wsDay');
+  if (dayInp) {
+    dayInp.addEventListener('change', function () {
+      if (!this.value) return;
+      WSK.day = this.value; load();
+    });
+  }
+
+  syncTabs();
+  load();
+  setInterval(function () {
+    if (!document.hidden && Date.now() - WSK.at > 90000) load();
+  }, 30000);
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && Date.now() - WSK.at > 90000) load();
   });
 })();
 </script>

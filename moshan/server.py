@@ -99,6 +99,14 @@ except Exception as _hw_err:                           # noqa: BLE001
 else:
     _HW_IMPORT_ERR = ""
 
+try:                                                   # 每日工作总结卡（时长/token/提示词）
+    import workstat as workstatmod
+except Exception as _ws_err:                           # noqa: BLE001
+    workstatmod = None
+    _WS_IMPORT_ERR = f"{type(_ws_err).__name__}: {_ws_err}"
+else:
+    _WS_IMPORT_ERR = ""
+
 try:                                                   # TRAE 自报一笔 → TRAE 卡
     import trae_work as twmod
 except Exception:                                      # noqa: BLE001
@@ -572,6 +580,13 @@ def _startup() -> None:
     _start_wechat_guard()
     _start_llmcost_scheduler()
     _start_hostwork()
+    # 前台 App 采样：系统屏幕使用库要「完全磁盘访问」，launchd 起的服务默认没有，
+    # 所以自己每分钟记一条（人不在就不记），「人的时长」不至于空着。
+    if workstatmod is not None:
+        try:
+            workstatmod.start_sampler()
+        except Exception:                              # noqa: BLE001
+            pass
     _start_pending()
     _start_brief()
     _start_trae_bridge()
@@ -2336,6 +2351,28 @@ def hourly_api(d: str = "", fresh: int = 0) -> dict:
         return hwmod.hourly_bundle(d, fresh=bool(fresh))
     except Exception as e:                             # noqa: BLE001
         return {"ok": False, "error": f"{type(e).__name__}: {e}", "hours": []}
+
+
+@app.get("/api/workstat", dependencies=[Depends(auth)])
+def workstat_api(days: int = 30, day: str = "", fresh: int = 0) -> dict:
+    """每日工作总结那张卡要的全部数据：时长 / Token / 提示词 / 效率。
+
+    一次给全，前端切分页、切日期都不再打接口 —— 那份聚合在服务里现算（1 秒内），
+    重新取一遍只会让人以为「点一下要转圈」。
+    `?fresh=1` 跳过 60 秒缓存重扫会话流水（手动刷卡片用）。
+    """
+    if workstatmod is None:
+        return {"ok": False, "error": f"统计模块没装上（{_WS_IMPORT_ERR}）",
+                "rows": [], "hours": [], "agents": [], "models": [],
+                "experts": [], "mcps": [], "heat": {"cells": []},
+                "screen": {"ok": False, "why": "统计模块没装上"}}
+    try:
+        return workstatmod.view(days, day, fresh=bool(fresh))
+    except Exception as e:                             # noqa: BLE001
+        return {"ok": False, "error": f"{type(e).__name__}: {e}",
+                "rows": [], "hours": [], "agents": [], "models": [],
+                "experts": [], "mcps": [], "heat": {"cells": []},
+                "screen": {"ok": False, "why": "统计层出错了"}}
 
 
 @app.get("/api/rounds", dependencies=[Depends(auth)])
