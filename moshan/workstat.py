@@ -51,6 +51,11 @@ WB_ROOT = Path.home() / ".workbuddy" / "projects"
 CACHE_DIR = paths.data_root() / "_本机工作" / "缓存"
 CACHE = CACHE_DIR / "工作统计.json"
 NAME_CACHE = CACHE_DIR / "应用名.json"
+# 永久存档：一天一条，落在数据根里（跟 Agent自述.jsonl / 进程.jsonl 同一个地方），
+# 缓存可以删，这个不能 —— 会话流水会被客户端清理、屏幕库只留四周，
+# 不存下来「上个月每天干了多久」过一阵就再也算不出来了。
+ARCHIVE = paths.data_root() / "_本机工作" / "工作日报.json"
+ARCHIVE_SAVE_S = 120.0   # 秒：别每来一次请求就写一遍（热力图/切页会连着打好几次）
 
 KEEP_DAYS = 200          # 每轮的账留多久（热力图最多看 26 周，留够余量）
 SCAN_TTL = 60.0          # 秒：页面轮询别每次都重扫
@@ -771,37 +776,47 @@ def _other_agents(since_ms: int) -> list[dict]:
 
 
 # ---------------------------------------------------------------- 汇总
-def _fold(state: dict, since_day: str, day: str, win_day: str = "") -> dict:
-    """把每轮的账折成「每天 / 每小时 / 每个维度」。
+HOUR_COLS = ("ai", "human", "tok", "tin", "tout", "prompts", "chars", "links", "imgs")
+# 一天一条记录的形状（存档文件里也是它，`cols` 那行记着每个小时桶的列序）
+DAY_COLS = ("ai", "human", "tok", "tin", "tout", "prompts", "chars", "links",
+            "imgs", "reqs")
 
-    since_day 是热力图要的跨度（比窗口长），win_day 是明细窗口（7/30/90 天）。
-    分维度的那几张榜只算窗口内的 —— 榜单和下面的「合计」必须是同一段时间，
-    否则会出现「各 agent 加起来 1400 条、合计写着 1112 条」。
+
+def _blank_day(d: str) -> dict:
+    return {
+        "d": d, "ai": 0.0, "human": 0.0, "tok": 0, "tin": 0, "tout": 0,
+        "prompts": 0, "chars": 0, "links": 0, "imgs": 0, "reqs": 0,
+        "has": 0,                       # 那天有没有屏幕记录
+        "hours": [[0] * len(HOUR_COLS) for _ in range(24)],
+        "apps": {},                     # App 名 → 秒
+        "agents": {}, "models": {}, "experts": {}, "mcps": {},
+        "hist": [0] * (len(LENS) + 1),
+    }
+
+
+def _fold(state: dict, since_day: str) -> dict:
+    """把每轮的账**按天**折好，返回 {"days": {日期: 明细}}。
+
+    维度（agent / 模型 / 专家 / 插件 / 字数直方图）也挂在当天头上，所以
+    7/30/90 天的合计一律由「那几天相加」得到 —— 好处有两条：每天能被永久存档
+    （会话流水会被客户端清、屏幕库只留四周），而且榜单之和永远等于合计，
+    不会再出现「各 agent 加起来 1400 条、合计写着 1112 条」。
     """
-    today = date.today()
-    row = {}
+    days: dict = {}
 
-    def drow(d: str) -> dict:
-        return row.setdefault(d, {"d": d, "ai": 0.0, "human": 0.0, "tok": 0,
-                                  "tin": 0, "tout": 0, "prompts": 0, "chars": 0,
-                                  "links": 0, "imgs": 0, "reqs": 0})
+    def dayrec(d: str) -> dict:
+        r = days.get(d)
+        if r is None:
+            r = days[d] = _blank_day(d)
+        return r
 
-    hour_rows: dict = {}         # day → [24] 小字典（token/提示词）
-    agents: dict = {}
-    models: dict = {}
-    experts: dict = {}
-    mcps: dict = {}
+    def addh(d: str, h: int, col: str, v) -> None:
+        dayrec(d)["hours"][min(23, max(0, h))][HOUR_COLS.index(col)] += v
 
-    def hrow(d: str, h: int) -> dict:
-        hs = hour_rows.setdefault(d, [None] * 24)
-        if hs[h] is None:
-            hs[h] = {"ai": 0.0, "tok": 0, "tin": 0, "tout": 0, "prompts": 0,
-                     "chars": 0, "links": 0, "imgs": 0}
-        return hs[h]
-
-    def add_agent(name: str) -> dict:
-        return agents.setdefault(name, {"name": name, "prompts": 0, "reqs": 0,
-                                        "secs": 0.0, "tin": 0, "tout": 0, "chars": 0})
+    def add_agent(d: str, name: str) -> dict:
+        return dayrec(d)["agents"].setdefault(
+            name, {"prompts": 0, "reqs": 0, "secs": 0.0, "tin": 0, "tout": 0,
+                   "chars": 0})
 
     for f in (state.get("files") or {}).values():
         for rid, r in (f.get("reqs") or {}).items():
@@ -820,7 +835,7 @@ def _fold(state: dict, since_day: str, day: str, win_day: str = "") -> dict:
             d = _day_of(t0)
             if not d or d < since_day:
                 continue
-            rw = drow(d)
+            rw = dayrec(d)
             rw["reqs"] += 1
             rw["tin"] += tin
             rw["tout"] += tout
@@ -829,31 +844,29 @@ def _fold(state: dict, since_day: str, day: str, win_day: str = "") -> dict:
             # 但窗口挂一夜没关的那几条能写出 40 小时，不封顶会把「平均每条多久」
             # 整个带偏。
             dur = min(max(0, t1 - t0), TURN_CAP_MS) / 1000.0
-            win = (not win_day) or d >= win_day
-            if win:
-                a = add_agent("WorkBuddy")
-                a["reqs"] += 1
-                a["tin"] += tin
-                a["tout"] += tout
-                a["secs"] += dur
-            if model and win:
+            a = add_agent(d, "WorkBuddy")
+            a["reqs"] += 1
+            a["tin"] += tin
+            a["tout"] += tout
+            a["secs"] += dur
+            if model:
                 # 同一个模型在日志里有大小写两种写法（DeepSeek-V4.1-Flash /
                 # Deepseek-V4.1-Flash），按小写归并，榜上只留第一次见到的名字。
                 mk = model.strip().lower()
-                m = models.setdefault(mk, {"name": model.strip(), "calls": 0,
-                                           "tin": 0, "tout": 0})
+                m = rw["models"].setdefault(mk, {"name": model.strip(), "calls": 0,
+                                                 "tin": 0, "tout": 0})
                 m["calls"] += calls or 1
                 m["tin"] += tin
                 m["tout"] += tout
-            if expert and win:
-                e = experts.setdefault(expert, {"name": expert, "reqs": 0,
-                                                "secs": 0.0, "tok": 0})
+            if expert:
+                e = rw["experts"].setdefault(expert, {"name": expert, "reqs": 0,
+                                                      "secs": 0.0, "tok": 0})
                 e["reqs"] += 1
                 e["secs"] += dur
                 e["tok"] += tin + tout
-            for srv in ([x for x in mcp.split(",") if x][:4] if win else []):
-                q = mcps.setdefault(srv, {"name": srv, "reqs": 0, "secs": 0.0,
-                                          "tok": 0})
+            for srv in [x for x in mcp.split(",") if x][:4]:
+                q = rw["mcps"].setdefault(srv, {"name": srv, "reqs": 0, "secs": 0.0,
+                                                "tok": 0})
                 q["reqs"] += 1
                 q["secs"] += dur
                 q["tok"] += tin + tout
@@ -870,19 +883,17 @@ def _fold(state: dict, since_day: str, day: str, win_day: str = "") -> dict:
                     nxt = (hk + timedelta(hours=1)).timestamp() * 1000
                     seg = min(t1, nxt)
                     frac = max(0.0, (seg - cur)) / (span * 1000.0)
-                    hr = hrow(d, hk.hour)
-                    hr["tok"] += int((tin + tout) * frac)
-                    hr["tin"] += int(tin * frac)
-                    hr["tout"] += int(tout * frac)
+                    addh(d, hk.hour, "tok", int((tin + tout) * frac))
+                    addh(d, hk.hour, "tin", int(tin * frac))
+                    addh(d, hk.hour, "tout", int(tout * frac))
                     cur = seg
             else:
-                hr = hrow(d, datetime.fromtimestamp(t0 / 1000.0).hour)
-                hr["tok"] += tin + tout
-                hr["tin"] += tin
-                hr["tout"] += tout
+                hh = datetime.fromtimestamp(t0 / 1000.0).hour
+                addh(d, hh, "tok", tin + tout)
+                addh(d, hh, "tin", tin)
+                addh(d, hh, "tout", tout)
 
     # 提示词桶（WorkBuddy）：n / chars / links / imgs / 字数直方图
-    hist = [0] * (len(LENS) + 1)
     for f in (state.get("files") or {}).values():
         for key, b in (f.get("ph") or {}).items():
             d = str(key)[:10]
@@ -892,23 +903,21 @@ def _fold(state: dict, since_day: str, day: str, win_day: str = "") -> dict:
                 h = int(str(key)[11:13])
             except ValueError:
                 h = 0
-            rw = drow(d)
+            rw = dayrec(d)
             rw["prompts"] += int(b[0] or 0)
             rw["chars"] += int(b[1] or 0)
             rw["links"] += int(b[2] or 0)
             rw["imgs"] += int(b[3] or 0)
-            hr = hrow(d, min(23, max(0, h)))
-            hr["prompts"] += int(b[0] or 0)
-            hr["chars"] += int(b[1] or 0)
-            hr["links"] += int(b[2] or 0)
-            hr["imgs"] += int(b[3] or 0)
-            if not win_day or d >= win_day:
-                a = add_agent("WorkBuddy")
-                a["prompts"] += int(b[0] or 0)
-                a["chars"] += int(b[1] or 0)
-                for i in range(len(LENS) + 1):
-                    if 4 + i < len(b):
-                        hist[i] += int(b[4 + i] or 0)
+            addh(d, h, "prompts", int(b[0] or 0))
+            addh(d, h, "chars", int(b[1] or 0))
+            addh(d, h, "links", int(b[2] or 0))
+            addh(d, h, "imgs", int(b[3] or 0))
+            a = add_agent(d, "WorkBuddy")
+            a["prompts"] += int(b[0] or 0)
+            a["chars"] += int(b[1] or 0)
+            for i in range(len(LENS) + 1):
+                if 4 + i < len(b):
+                    rw["hist"][i] += int(b[4 + i] or 0)
 
     # 别家 agent：只有轮次（和偶尔有的耗时），没有 token
     marks = state.get("am")
@@ -923,7 +932,7 @@ def _fold(state: dict, since_day: str, day: str, win_day: str = "") -> dict:
         if not d or d < since_day:
             continue
         client = str(it.get("client") or "其他")
-        rw = drow(d)
+        rw = dayrec(d)
         rw["prompts"] += 1
         rw["reqs"] += 1
         tok = it.get("tokens") or {}
@@ -933,17 +942,17 @@ def _fold(state: dict, since_day: str, day: str, win_day: str = "") -> dict:
         rw["tout"] += tout
         rw["tok"] += tin + tout
         secs = float(it.get("secs") or 0)
-        win = (not win_day) or d >= win_day
-        if win:
-            a = add_agent(client)
-            a["prompts"] += 1
-            a["reqs"] += 1
-            a["secs"] += secs
-            a["tin"] += tin
-            a["tout"] += tout
-        hr = hrow(d, datetime.fromtimestamp(t0 / 1000.0).hour)
-        hr["prompts"] += 1
-        hr["tok"] += tin + tout
+        a = add_agent(d, client)
+        a["prompts"] += 1
+        a["reqs"] += 1
+        a["secs"] += secs
+        a["tin"] += tin
+        a["tout"] += tout
+        hh = datetime.fromtimestamp(t0 / 1000.0).hour
+        addh(d, hh, "prompts", 1)
+        addh(d, hh, "tok", tin + tout)
+        addh(d, hh, "tin", tin)
+        addh(d, hh, "tout", tout)
         # 这些客户端只有「这一轮的某一刻」，没有起止（TRAE 的会话记忆只写一个
         # message_summary_time）。给它在分钟格上点一笔 —— 至少「那天 AI 动过」
         # 能被看见，而不是和「一整天没开」画成同一个颜色。
@@ -953,10 +962,11 @@ def _fold(state: dict, since_day: str, day: str, win_day: str = "") -> dict:
                 _mark(marks, t0 + int(secs * 1000))
         except Exception:                    # noqa: BLE001
             pass
-        f = it.get("facets") or {} if win else {}
+        f = it.get("facets") or {}
         if f.get("expert"):
-            e = experts.setdefault(str(f["expert"]), {"name": str(f["expert"]),
-                                                      "reqs": 0, "secs": 0.0, "tok": 0})
+            e = rw["experts"].setdefault(str(f["expert"]),
+                                         {"name": str(f["expert"]), "reqs": 0,
+                                          "secs": 0.0, "tok": 0})
             e["reqs"] += 1
             e["secs"] += secs
             e["tok"] += tin + tout
@@ -964,7 +974,8 @@ def _fold(state: dict, since_day: str, day: str, win_day: str = "") -> dict:
             nm = str((c or {}).get("name") or "")
             if not nm:
                 continue
-            q = mcps.setdefault(nm, {"name": nm, "reqs": 0, "secs": 0.0, "tok": 0})
+            q = rw["mcps"].setdefault(nm, {"name": nm, "reqs": 0, "secs": 0.0,
+                                           "tok": 0})
             q["reqs"] += 1
             q["secs"] += secs
             q["tok"] += tin + tout
@@ -977,97 +988,84 @@ def _fold(state: dict, since_day: str, day: str, win_day: str = "") -> dict:
         secs = _bits_secs(hx)
         if secs <= 0:
             continue
-        drow(d)["ai"] += secs
+        dayrec(d)["ai"] += secs
         try:
             h = int(str(key)[11:13])
         except ValueError:
             h = 0
-        hrow(d, min(23, max(0, h)))["ai"] += secs
-
-    rows = []
-    d0 = datetime.strptime(since_day, "%Y-%m-%d").date()
-    n = (today - d0).days + 1
-    for i in range(n - 1, -1, -1):
-        d = (today - timedelta(days=i)).isoformat()
-        r = row.get(d) or {"d": d, "ai": 0.0, "human": 0.0, "tok": 0, "tin": 0,
-                           "tout": 0, "prompts": 0, "chars": 0, "links": 0,
-                           "imgs": 0, "reqs": 0}
-        r["ai"] = round(float(r["ai"]), 1)
-        rows.append(r)
-
-    hours = [None] * 24
-    for h in range(24):
-        hours[h] = (hour_rows.get(day) or [None] * 24)[h] or {
-            "ai": 0.0, "tok": 0, "tin": 0, "tout": 0, "prompts": 0,
-            "chars": 0, "links": 0, "imgs": 0}
+        addh(d, h, "ai", secs)
 
     # 专家名：dash 有一份「最近用过的几位」清单，查不到就留 id 尾 6 位
+    label_of: dict = {}
     try:
         import hostwork
         dash = hostwork._rounds_parser()
-        if dash is not None and hasattr(dash, "_expert_name"):
-            for e in experts.values():
-                nm = dash._expert_name(e["name"])
-                if nm:
-                    e["label"] = nm
     except Exception:                        # noqa: BLE001
-        pass
-    for e in experts.values():
-        e.setdefault("label", e["name"][-6:] if e["name"].startswith("ex_") else e["name"])
+        dash = None
+    for r in days.values():
+        for key, e in r["experts"].items():
+            if key not in label_of:
+                nm = ""
+                if dash is not None and hasattr(dash, "_expert_name"):
+                    try:
+                        nm = dash._expert_name(key) or ""
+                    except Exception:        # noqa: BLE001
+                        nm = ""
+                label_of[key] = nm or (key[-6:] if key.startswith("ex_") else key)
+            e["label"] = label_of[key]
 
-    return {"rows": rows, "hours": hours, "agents": list(agents.values()),
-            "models": list(models.values()), "experts": list(experts.values()),
-            "mcps": list(mcps.values()), "hist": hist,
-            # 轮次跨度之和：答「每条提示词花了多久」用它，不用 AI 分钟格 ——
-            # 格子是「几点在干活」，跨度是「这一轮从提问到答完」，两回事。
-            "turn_secs": sum(float(a["secs"]) for a in agents.values())}
+    return {"days": days}
 
 
-def _with_screen(bundle: dict, days: int, day: str) -> dict:
-    """把屏幕使用时间并进 rows / hours（人时长），并给热力图补「人」那一维。"""
-    sc = screen(days)
+def _with_screen(days_map: dict, sc: dict, since_day: str) -> dict:
+    """把屏幕使用时间并进每天：人时长、每小时的人时长、当天的分 App 秒数。
+
+    合并写到「天」这一层，因为存档就是按天存的 —— 记账和存盘必须是同一份数据。
+    """
     if not sc.get("ok"):
         return sc
     names = sc.get("names") or {}
-    for r in bundle["rows"]:
-        d = r["d"]
-        row = (sc["days"] or {}).get(d) or {}
-        r["human"] = round(float(row.get("total") or 0), 1)
-    hs = (sc.get("hours") or {}).get(day) or [0.0] * 24
-    for h in range(24):
-        bundle["hours"][h]["human"] = round(float(hs[h] or 0), 1)
-    # 那一页的「屏幕使用时间」榜：按 App 名合并（同一个 App 有时两个 bundle id）
-    apps: dict = {}
-    for b, secs in ((sc["days"].get(day) or {}).get("apps") or {}).items():
-        nm = names.get(b) or _NAME_FIX.get(b) or b
-        apps[nm] = apps.get(nm, 0.0) + float(secs or 0)
-    sc["day_apps"] = sorted(([k, round(v, 1)] for k, v in apps.items()),
-                            key=lambda kv: -kv[1])[:12]
+    for d, row in (sc.get("days") or {}).items():
+        if not d or d < since_day:
+            continue
+        # 那天可能一条提示词都没发，但人确实在电脑前 —— 也要留一条
+        rec = days_map.get(d) or days_map.setdefault(d, _blank_day(d))
+        rec["human"] = round(float(row.get("total") or 0), 1)
+        rec["has"] = 1
+        apps: dict = {}
+        for b, secs in (row.get("apps") or {}).items():
+            nm = names.get(b) or _NAME_FIX.get(b) or b
+            apps[nm] = apps.get(nm, 0.0) + float(secs or 0)
+        rec["apps"] = {k: round(v, 1) for k, v in apps.items()}
+    hi = HOUR_COLS.index("human")
+    for d, hs in (sc.get("hours") or {}).items():
+        if not d or d < since_day:
+            continue
+        rec = days_map.get(d) or days_map.setdefault(d, _blank_day(d))
+        for h in range(24):
+            rec["hours"][h][hi] = round(float(hs[h] or 0), 1)
     return sc
 
 
-def _heat(rows: list, sc: dict, weeks: int = 13) -> dict:
+def _heat(days_map: dict, weeks: int = 13) -> dict:
     """GitHub 那种格子：按周排，一列一周，从上到下周一→周日。
 
-    「人」只有系统库覆盖的那几天有数；没有记录的日子 `has:0`，
-    前端画成浅描边 —— 和「那天是 0」必须能分开，否则会以为自己没干活。
+    「人」在系统库还没覆盖到的日子 `has:0`，前端画成空描边 ——
+    和「那天真的是 0」必须能分开，否则会以为自己没干活。
     """
-    by = {r["d"]: r for r in rows}
     today = date.today()
     # 从今天所在周的周一开始，往前推 weeks 周
     start = today - timedelta(days=today.weekday()) - timedelta(weeks=weeks - 1)
-    scr = sc.get("days") or {} if sc.get("ok") else {}
     cells = []
     cur = start
     while cur <= today:
         ds = cur.isoformat()
-        r = by.get(ds) or {}
-        h = scr.get(ds) or {}
+        r = days_map.get(ds) or {}
         cells.append({
             "d": ds,
             "ai": round(float(r.get("ai") or 0), 1),
-            "human": round(float(h.get("total") or 0), 1) if h else 0.0,
-            "has": 1 if h else 0,
+            "human": round(float(r.get("human") or 0), 1),
+            "has": 1 if r.get("has") else 0,
             "tok": int(r.get("tok") or 0),
             "prompts": int(r.get("prompts") or 0),
         })
@@ -1076,7 +1074,105 @@ def _heat(rows: list, sc: dict, weeks: int = 13) -> dict:
             "cells": cells, "weeks": weeks}
 
 
-def view(days: int = 30, day: str = "", fresh: bool = False) -> dict:  # noqa: FBT001
+# ---------------------------------------------------------------- 永久存档
+# 为什么要它：会话流水会被客户端清理（换版本、清缓存），系统屏幕库只留四周。
+# 不落盘的话「上个月每天干了多久」过一阵就再也算不出来 —— 缓存目录可以随便删，
+# 这份不行。跟同目录的 Agent自述.jsonl / 进程.jsonl 一个待遇。
+_ARCH = {"days": {}, "at": 0.0, "loaded": False}
+_ARCH_LOCK = threading.Lock()
+
+
+def _max_merge(a, b):
+    """同一份账取两边的大者。
+
+    源数据只会变少（会话被清、屏幕库滚动），重算不该比存过的少：取大既能
+    把今天还在长的数接上，也不会因为源没了把历史抹成 0。真要按源重建，
+    用 `workstat.py --rebuild`（force）。
+    """
+    if isinstance(a, dict) and isinstance(b, dict):
+        out = dict(a)
+        for k, v in b.items():
+            out[k] = _max_merge(out[k], v) if k in out else v
+        return out
+    if isinstance(a, list) and isinstance(b, list):
+        n = max(len(a), len(b))
+        out = []
+        for i in range(n):
+            x = a[i] if i < len(a) else None
+            y = b[i] if i < len(b) else None
+            out.append(y if x is None else (x if y is None else _max_merge(x, y)))
+        return out
+    if isinstance(a, bool) or isinstance(b, bool):
+        return bool(a) or bool(b)
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return max(a, b)
+    if b is None or b == "":
+        return a
+    if a is None or a == "":
+        return b
+    return b
+
+
+def _load_archive() -> dict:
+    """读一次进内存。文件缺了/坏了就当没有，下次照常重写一份。"""
+    with _ARCH_LOCK:
+        if _ARCH["loaded"]:
+            return _ARCH["days"]
+        days: dict = {}
+        try:
+            raw = json.loads(ARCHIVE.read_text(encoding="utf-8"))
+            if isinstance(raw.get("days"), dict):
+                days = raw["days"]
+            _ARCH["at"] = float(raw.get("at") or 0)
+        except (OSError, ValueError, AttributeError):
+            days = {}
+        _ARCH["days"] = days
+        _ARCH["loaded"] = True
+        return days
+
+
+def _write_archive(days: dict) -> None:
+    try:
+        ARCHIVE.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"v": 1, "at": time.time(),
+                   "updated": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                   "cols": list(HOUR_COLS), "day_cols": list(DAY_COLS),
+                   "note": "每天一条，只增不减；workstat.py --rebuild 才按源重建",
+                   "days": days}
+        tmp = ARCHIVE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                       encoding="utf-8")
+        os.replace(tmp, ARCHIVE)
+    except OSError:
+        pass                      # 盘满/只读都别把接口弄挂，缓存还在
+
+
+def _absorb(new_days: dict, force: bool = False) -> dict:
+    """把刚算出来的几天并进存档，返回「存档 ∪ 新算」的全量。"""
+    days = _load_archive()
+    if not new_days and not force:
+        return days
+    with _ARCH_LOCK:
+        for d, rec in (new_days or {}).items():
+            old = days.get(d)
+            days[d] = rec if (force or old is None) else _max_merge(old, rec)
+        now = time.time()
+        if force or now - float(_ARCH["at"] or 0) >= ARCHIVE_SAVE_S:
+            _write_archive(days)
+            _ARCH["at"] = now
+    return days
+
+
+def _row_out(rec: dict, d: str) -> dict:
+    r = {"d": d, "ai": round(float(rec.get("ai") or 0), 1),
+         "human": round(float(rec.get("human") or 0), 1)}
+    for k in ("tok", "tin", "tout", "prompts", "chars", "links", "imgs", "reqs"):
+        r[k] = int(rec.get(k) or 0)
+    return r
+
+
+def view(days: int = 30, day: str = "", fresh: bool = False,  # noqa: FBT001
+         rebuild: bool = False) -> dict:  # noqa: FBT001
     """这一张卡要的全部数据。一次装好，切分页/切日期都不再打接口。
 
     `fresh=True` 跳过 60 秒缓存重扫会话流水（页面上的「刷新」按钮用）。
@@ -1112,14 +1208,18 @@ def view(days: int = 30, day: str = "", fresh: bool = False) -> dict:  # noqa: F
     win_from = (today - timedelta(days=days - 1)).isoformat()
     since_day = min(win_from, heat_from)
 
-    bundle = _fold(state, since_day, day, win_from)
-    sc = _with_screen(bundle, max(days, (today - datetime.strptime(
-        since_day, "%Y-%m-%d").date()).days + 1), day)
-    rows_all = bundle["rows"]
-    heat = _heat(rows_all, sc, heat_weeks)
+    bundle = _fold(state, since_day)
+    sc = screen(max(days, (today - datetime.strptime(
+        since_day, "%Y-%m-%d").date()).days + 1))
+    _with_screen(bundle["days"], sc, since_day)
+    # 并进永久存档：源数据过期了也还在（force 只有 CLI --rebuild 会用）
+    days_map = _absorb(bundle["days"], force=rebuild)
+    heat = _heat(days_map, heat_weeks)
 
-    rows = bundle["rows"]
-    rows = rows[-days:]
+    # 明细行：窗口内每一天都得有一行（0 也要），老的日子从存档里补
+    rows = [_row_out(days_map.get((today - timedelta(days=i)).isoformat()) or {},
+                     (today - timedelta(days=i)).isoformat())
+            for i in range(days - 1, -1, -1)]
     tot = {
         "ai": round(sum(r["ai"] for r in rows), 1),
         "human": round(sum(r["human"] for r in rows), 1),
@@ -1133,9 +1233,51 @@ def view(days: int = 30, day: str = "", fresh: bool = False) -> dict:  # noqa: F
         "reqs": sum(r["reqs"] for r in rows),
     }
     active_days = sum(1 for r in rows if r["prompts"] or r["reqs"])
+    human_days = sum(1 for r in rows if days_map.get(r["d"], {}).get("has"))
+
+    # 分维度：窗口内那几天相加（存档里的老日子也算进来）
+    ag_t: dict = {}
+    md_t: dict = {}
+    ex_t: dict = {}
+    mc_t: dict = {}
+    hist = [0] * (len(LENS) + 1)
+    for d, rec in sorted(days_map.items()):     # 按日期升序：同一天的账与顺序无关
+        if d < win_from:
+            continue
+        for nm, a in (rec.get("agents") or {}).items():
+            t = ag_t.setdefault(nm, {"name": nm, "prompts": 0, "reqs": 0,
+                                     "secs": 0.0, "tin": 0, "tout": 0, "chars": 0})
+            for k in ("prompts", "reqs", "tin", "tout", "chars"):
+                t[k] += int(a.get(k) or 0)
+            t["secs"] += float(a.get("secs") or 0)
+        for mk, m in (rec.get("models") or {}).items():
+            t = md_t.setdefault(mk, {"name": mk, "calls": 0, "tin": 0, "tout": 0})
+            # 名字只认最早那天的写法：同一个模型每天的拼写可能在大小写间跳
+            # （DeepSeek / Deepseek），按天覆盖会让榜上的名字跟着最后一天变。
+            if t["name"] == mk and m.get("name"):
+                t["name"] = m["name"]
+            for k in ("calls", "tin", "tout"):
+                t[k] += int(m.get(k) or 0)
+        for ek, e in (rec.get("experts") or {}).items():
+            t = ex_t.setdefault(ek, {"name": e.get("name") or ek,
+                                     "label": e.get("label") or ek,
+                                     "reqs": 0, "secs": 0.0, "tok": 0})
+            t["reqs"] += int(e.get("reqs") or 0)
+            t["secs"] += float(e.get("secs") or 0)
+            t["tok"] += int(e.get("tok") or 0)
+        for qk, q in (rec.get("mcps") or {}).items():
+            t = mc_t.setdefault(qk, {"name": qk, "reqs": 0, "secs": 0.0, "tok": 0})
+            t["reqs"] += int(q.get("reqs") or 0)
+            t["secs"] += float(q.get("secs") or 0)
+            t["tok"] += int(q.get("tok") or 0)
+        h = rec.get("hist") or []
+        for i in range(len(hist)):
+            if i < len(h):
+                hist[i] += int(h[i] or 0)
+
     # 各维度的「每条平均」：token 用请求级总量除提示词数，耗时用轮次跨度除轮次
     agents = []
-    for a in bundle["agents"]:
+    for a in ag_t.values():
         n = max(1, int(a["reqs"]))
         agents.append({
             "name": a["name"], "prompts": int(a["prompts"]), "reqs": int(a["reqs"]),
@@ -1148,26 +1290,38 @@ def view(days: int = 30, day: str = "", fresh: bool = False) -> dict:  # noqa: F
         })
     agents.sort(key=lambda x: (-(x["tok"] + x["reqs"] * 1000)))
 
-    models = sorted(bundle["models"], key=lambda x: -(int(x["tin"]) + int(x["tout"])))
+    models = sorted(md_t.values(), key=lambda x: -(int(x["tin"]) + int(x["tout"])))
     for m in models:
         m["tok"] = int(m["tin"]) + int(m["tout"])
         m["avg_tok"] = round(m["tok"] / max(1, int(m["calls"])), 1)
 
-    experts = sorted(bundle["experts"], key=lambda x: -int(x["reqs"]))[:12]
+    experts = sorted(ex_t.values(), key=lambda x: -int(x["reqs"]))[:12]
     for e in experts:
         e["secs"] = round(float(e["secs"]), 1)
         e["tok"] = int(e["tok"])
         e["avg_sec"] = round(float(e["secs"]) / max(1, int(e["reqs"])), 1)
         e["avg_tok"] = round(e["tok"] / max(1, int(e["reqs"])), 1)
-    mcps = sorted(bundle["mcps"], key=lambda x: -int(x["reqs"]))[:12]
+    mcps = sorted(mc_t.values(), key=lambda x: -int(x["reqs"]))[:12]
     for q in mcps:
         q["secs"] = round(float(q["secs"]), 1)
         q["tok"] = int(q["tok"])
         q["avg_sec"] = round(float(q["secs"]) / max(1, int(q["reqs"])), 1)
         q["avg_tok"] = round(q["tok"] / max(1, int(q["reqs"])), 1)
 
-    hist = bundle["hist"]
-    turn_secs = float(bundle.get("turn_secs") or 0)
+    turn_secs = sum(float(a["secs"]) for a in ag_t.values())
+    # 当天那 24 个小时桶：从并存的天记录里取，缺的补 0
+    drec = days_map.get(day) or {}
+    hs_day = drec.get("hours") or [[0] * len(HOUR_COLS) for _ in range(24)]
+    hours = [{c: hs_day[h][i] for i, c in enumerate(HOUR_COLS)} for h in range(24)]
+    day_apps = sorted(([k, round(float(v), 1)] for k, v in (drec.get("apps") or {}).items()),
+                      key=lambda kv: -kv[1])[:12]
+    # 存档本身的状态：卡片上要告诉用户「这些数存在哪、从哪天起」
+    try:
+        arch_n = len(days_map)
+        arch_from = min(days_map) if days_map else ""
+        arch_kb = int(ARCHIVE.stat().st_size / 1024) if ARCHIVE.exists() else 0
+    except (OSError, ValueError):
+        arch_n, arch_from, arch_kb = 0, "", 0
     return {
         "ok": True,
         "at": datetime.now().strftime("%H:%M:%S"),
@@ -1176,7 +1330,7 @@ def view(days: int = 30, day: str = "", fresh: bool = False) -> dict:  # noqa: F
         "days": days,
         "range": [since_day, date.today().isoformat()],
         "rows": rows,
-        "hours": bundle["hours"],
+        "hours": hours,
         "heat": heat,
         "screen": {
             "ok": bool(sc.get("ok")), "why": sc.get("why") or "",
@@ -1184,9 +1338,15 @@ def view(days: int = 30, day: str = "", fresh: bool = False) -> dict:  # noqa: F
             "n_days": int(sc.get("n_days") or 0),
             "span": sc.get("span") or ["", ""],
             "day": day,
-            "apps": sc.get("day_apps") or [],
+            "apps": day_apps,
             "names": sc.get("names") or {},
             "exe": sc.get("exe") or "",
+            "from_store": 0 if (sc.get("days") or {}).get(day) else 1 if day_apps else 0,
+        },
+        "store": {
+            "file": str(ARCHIVE), "days": arch_n, "from": arch_from,
+            "to": max(days_map) if days_map else "", "kb": arch_kb,
+            "day_has": 1 if day in days_map else 0,
         },
         "agents": agents,
         "models": models,
@@ -1204,10 +1364,10 @@ def view(days: int = 30, day: str = "", fresh: bool = False) -> dict:  # noqa: F
             "prompts_per_day": round(tot["prompts"] / max(1, days), 1),
             "prompts_per_active_day": round(tot["prompts"] / max(1, active_days), 1),
             "ai_hours_per_day": round(tot["ai"] / 3600.0 / max(1, active_days), 2),
-            # 「人」只按系统库真有记录的天数平摊 —— 那张库只留四周，
+            # 「人」只按「真有屏幕记录的天数」平摊 —— 系统库只留四周，
             # 除以 90 天会算出「每天 1 小时」这种假数字
             "human_hours_per_day": round(tot["human"] / 3600.0
-                                         / max(1, int(sc.get("n_days") or days)), 2),
+                                         / max(1, human_days or days), 2),
         },
         "active_days": active_days,
         "built": {
@@ -1227,12 +1387,14 @@ def main(argv=None) -> int:
     ap.add_argument("--day", default="")
     ap.add_argument("--screen", action="store_true", help="只看屏幕使用时间")
     ap.add_argument("--json", action="store_true", help="原样输出 JSON")
+    ap.add_argument("--rebuild", action="store_true",
+                    help="按数据源重建存档（默认只增不减，源被清了也不减）")
     a = ap.parse_args(argv)
     if a.screen:
         d = screen(a.days)
         print(json.dumps(d, ensure_ascii=False, indent=1)[:4000])
         return 0
-    v = view(a.days, a.day)
+    v = view(a.days, a.day, fresh=a.rebuild, rebuild=a.rebuild)
     if a.json:
         print(json.dumps(v, ensure_ascii=False, indent=1))
         return 0
@@ -1255,6 +1417,8 @@ def main(argv=None) -> int:
     print(f"\n屏幕：{v['screen']['ok']} {v['screen']['why']} span={v['screen']['span']}")
     for nm, secs in v["screen"]["apps"][:8]:
         print(f"  {nm:22s} {secs/60:6.1f} min")
+    print(f"\n存档：{v['store']['file']}  {v['store']['days']} 天 "
+          f"({v['store']['from']} ~ {v['store']['to']})  {v['store']['kb']} KB")
     return 0
 
 
