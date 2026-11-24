@@ -206,13 +206,20 @@ git fetch origin && git merge --ff-only origin/main
 
 ### 第 3 层：钩子 + 规约（治「Agent 自作主张」）
 
-`.git/hooks/pre-push` 拦四类：
+钩子放在版本库里的 **`.githooks/pre-push`**，用 `core.hooksPath` 指过去 —— 放进
+`.git/hooks` 的话 clone 下来是空的，闸门看着在其实没人守。新 clone / 换机器后跑一次：
+
+```bash
+bash scripts/install-hooks.sh
+```
+
+拦四类：
 
 | 情形 | 结果 |
 |---|---|
 | 非快进推送 / 改已有 tag / 删分支（任何分支） | 拒（`MOSHAN_FORCE=1` + 令牌才放，仅限用户排障） |
-| 推 `main` / `master` / 非 `agent/*` 分支 | 拒（`MOSHAN_PUSH=workbuddy` 放行） |
-| 推 `refs/heads/agent/*` | 放行 |
+| 推 `main` / `master` / 非 `agent/*` `workbuddy/*` 分支 | 拒（`MOSHAN_PUSH=workbuddy` 放行） |
+| 推 `refs/heads/agent/*`、`refs/heads/workbuddy/*` | 放行 |
 | 推 tag | 拒 |
 
 每次尝试记 `~/Documents/cuntu/push-guard.log`（谁、什么引用、是否强推）。
