@@ -549,6 +549,30 @@ def _pgrep_exact(name: str) -> bool:
     return rc == 0
 
 
+_SAFE_BUNDLE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,120}$")
+_SAFE_PROC = re.compile(r"^[A-Za-z0-9._/][A-Za-z0-9._/ +\-]{0,119}$")
+
+
+def _safe_app_id(v: str) -> str:
+    """bundle id 只允许字母数字点横线。
+
+    为什么必须校验：下面是用 f-string 拼 AppleScript 的，`"` 一旦进得去就能
+    闭掉字符串接 `do shell script` —— 而 bundle 可能来自第三方插件包的配方。
+    拼音符不符就返回空，退回按应用名退出的分支。
+    """
+    v = str(v or "").strip()
+    return v if _SAFE_BUNDLE.match(v) else ""
+
+
+def _safe_proc_pattern(v: str) -> str:
+    """pkill -f 的模式只收常规字符，且不许以 `-` 开头（会被当成选项）。
+
+    之前是直接拿配方里的 proc 去 `pkill -f`，写成 `.*` 就把无关进程一起杀了。
+    """
+    v = str(v or "").strip()
+    return v if _SAFE_PROC.match(v) else ""
+
+
 def _exe_name(r: dict) -> str:
     """进程名从哪来：装了的话直接读 .app 的 CFBundleExecutable（最准），
     其次配方里的 exe，最后 proc 的最后一段。
@@ -815,8 +839,9 @@ def stop(cfg: dict, rid: str) -> dict:
     told = False
     # 桌面程序优先走 AppleScript 正常退出 —— 直接 kill 会丢窗口状态，也可能不落盘。
     # bundle id 没有就按应用名退（装了的话 plist 里也能读到 id）。
-    bundle = _bundle_id(r)
-    appname = str(r.get("name") or "").replace('"', "")
+    bundle = _safe_app_id(_bundle_id(r))
+    # 应用名里不该有引号/反斜杠；去掉后再拼，避免闭引号逃逸
+    appname = str(r.get("name") or "").replace('"', "").replace("\\", "")
     script = ""
     if bundle:
         script = f'tell application id "{bundle}" to quit'
@@ -830,7 +855,7 @@ def stop(cfg: dict, rid: str) -> dict:
             told = False
     if not told:
         exe = _exe_name(r)
-        pat = str(r.get("proc") or "").strip()
+        pat = _safe_proc_pattern(r.get("proc"))
         try:
             if exe:
                 subprocess.run(["/usr/bin/pkill", "-x", exe], capture_output=True, timeout=5)

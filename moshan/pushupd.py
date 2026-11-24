@@ -39,6 +39,11 @@ import zipfile
 from pathlib import Path
 from typing import Optional
 
+# 上限不是摆设：这条路收的是 base64 JSON（整包在内存里）然后再解压落盘。
+# 没有上限时，一个压缩炸弹能把磁盘写满，一个超大的 b64 能把进程撑死。
+MAX_PKG_BYTES = 64 * 1048576        # 解码后的 zip 本体
+MAX_UNPACK_BYTES = 512 * 1048576    # 解压后落盘总量
+
 import paths
 
 # 程序文件白名单：多一个后缀就等于多一条「往用户磁盘写任意文件」的口子
@@ -93,6 +98,10 @@ def _safe_name(name: str) -> Optional[str]:
     return "/".join(parts)
 
 
+class PackTooBig(Exception):
+    """更新包解压后超过上限（压缩炸弹/异常大包）。"""
+
+
 def _unpack(raw: bytes, dest: Path) -> dict:
     """解包到 dest；返回 {files, bytes, skipped}。dest 必须已存在且为空。"""
     files = written = 0
@@ -114,6 +123,11 @@ def _unpack(raw: bytes, dest: Path) -> dict:
                         break
                     fd.write(chunk)
                     written += len(chunk)
+                    if written > MAX_UNPACK_BYTES:
+                        # 已经写出去的文件由调用方清目录；这里只负责立刻停手
+                        raise PackTooBig(
+                            f"解压后超过 {MAX_UNPACK_BYTES // 1048576}MB，"
+                            "疑似压缩炸弹，已中止")
             files += 1
     return {"files": files, "bytes": written, "skipped": skipped[:5],
             "skipped_n": len(skipped)}
@@ -272,6 +286,9 @@ def push(body: dict) -> dict:
         except Exception as exc:                       # noqa: BLE001
             return {"ok": False, "error": f"base64 解码失败：{exc}"}
 
+    if len(raw) > MAX_PKG_BYTES:
+        return {"ok": False,
+                "error": f"包体超过 {MAX_PKG_BYTES // 1048576}MB 上限，拒收"}
     got = hashlib.sha256(raw).hexdigest()
     if got != want:
         return {"ok": False, "error": "sha256 不匹配，整包丢弃",
@@ -305,6 +322,17 @@ def push(body: dict) -> dict:
 
     try:
         info = _unpack(raw, dest)
+    except PackTooBig:
+        # 已经写了一部分：安装版直接删空壳；源码部署是原地覆盖，得把备份盖回去，
+        # 否则程序会停在一个「新文件写了一半」的状态里起不来。
+        if frozen:
+            shutil.rmtree(dest, ignore_errors=True)
+        elif backup:
+            try:
+                shutil.copytree(backup, dest, dirs_exist_ok=True)
+            except OSError:
+                pass
+        raise
     except Exception as exc:                           # noqa: BLE001
         return {"ok": False, "error": f"解包失败：{exc}"}
     if not (dest / "server.py").exists():

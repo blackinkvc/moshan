@@ -72,6 +72,7 @@ import dedupe_runner
 import ai_trends_runner
 import heartbeat
 import ocr_runner
+import diskscan
 import wechat_guard
 import tls as tlsmod
 from agent import GatewayClient, GatewayError, SYSTEM_PROMPT
@@ -192,11 +193,20 @@ TOKEN = CFG["token"]
 INBOX_DIR = Path(CFG["inbox_dir"])
 ALLOWED_ROOTS = [Path(r) for r in CFG.get("allowed_roots", [])]
 MAX_UPLOAD = float(CFG.get("max_upload_mb", 500)) * 1048576
+# 账本导入（xlsx/csv）和产品图这种，几十 MB 已经很离谱了，单独给一档小上限；
+# 插件包要装整目录，给一档大一点但仍然有界 —— 以前这几处是 read() 全读，没上限。
+MIN_UPLOAD_LIMIT = 64 * 1048576
+PACK_UPLOAD_LIMIT = 256 * 1048576
+# 一次请求里所有文件加起来的上限：单文件限了但文件数不限，等于没限
+BATCH_UPLOAD_LIMIT = MAX_UPLOAD * 2
 DAV_ROOT = Path(CFG["dav_root"]).expanduser()
 TRASH_DIR = Path(CFG["trash_dir"]).expanduser()
 SHARES_PATH = paths.state_dir() / "shares.json"
 
 TLS_ENABLED = bool(CFG.get("tls", True))
+# 想要 https 但证书没生成出来 → 退化成明文。这个状态要能被页面读到，
+# 否则用户根本不知道自己的令牌是明文在局域网上跑的。
+TLS_DEGRADED = False
 TLS_DIR = Path(CFG.get("tls_dir", str(paths.certs_dir()))).expanduser()
 DAV_ENABLED = bool(CFG.get("dav_enabled", False))
 PRIVATE_ONLY = bool(CFG.get("allow_private_only", True))
@@ -424,8 +434,10 @@ pending.set_resolvers(
 )
 
 
-def auth(x_token: str | None = Header(None), k: str | None = Query(None)) -> None:
-    supplied = x_token or k or ""
+def auth(request: Request, x_token: str | None = Header(None),
+         k: str | None = Query(None)) -> None:
+    # 顺序：显式 header（前端 fetch 用）→ URL 参数（旧链接/首次进入）→ Cookie
+    supplied = x_token or k or request.cookies.get("moshan_k") or ""
     if not supplied or not hmac.compare_digest(supplied, TOKEN):
         raise HTTPException(401, "token 无效")
 
@@ -438,8 +450,35 @@ def _safe_path(raw: str) -> Path:
         raise HTTPException(e.code, str(e))
 
 
+def _inside(p: Path, root: Path) -> bool:
+    """p 是否在 root 之内（含 root 本身），按路径段比较而非字符串前缀。"""
+    try:
+        Path(p).relative_to(Path(root))
+        return True
+    except ValueError:
+        return False
+
+
 def _unique_path(directory: Path, name: str) -> Path:
     return storage.unique_path(directory, name)
+
+
+def _read_upload(f: UploadFile, limit: float, what: str = "这个文件") -> bytes:
+    """把上传整个读进内存，但**必须有上限**。
+
+    以前这里是 `f.file.read()`：一个请求就能让服务把几个 G 读进内存直接 OOM。
+    分块读、超限立刻停并删残件，报 413 —— 和 /api/upload 的流式写法口径一致。
+    """
+    buf = bytearray()
+    while True:
+        chunk = f.file.read(1 << 20)
+        if not chunk:
+            break
+        buf += chunk
+        if len(buf) > limit:
+            raise HTTPException(
+                413, f"{what}超过 {int(limit / 1048576)}MB 上限")
+    return bytes(buf)
 
 
 def _category(name: str) -> str:
@@ -450,8 +489,38 @@ def _human(n: int) -> str:
     return storage.human(n)
 
 
+# 页面统一带的安全头。CSP 里保留 'unsafe-inline' 是因为 ui.html 是单文件内联脚本，
+# 换成 nonce 要动整个前端；这样至少把「连到外部域名」这条路封死 —— XSS 想外传
+# 数据（token、文件内容）会被 connect-src/img-src 挡住，与同源读取 file:// 也断。
+_SEC_HEADERS = {
+    "Cache-Control": "no-store, max-age=0",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "img-src 'self' data: blob:; media-src 'self' blob:; "
+        "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
+        "connect-src 'self'; "
+        "frame-src 'self' http://127.0.0.1:* http://localhost:* "
+        "https://127.0.0.1:* https://localhost:*; "
+        "frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+    ),
+}
+
+
+# 退化成明文时挂在页面顶部的一条，避免用户不知道自己在明文传令牌
+_INSECURE_BANNER = (
+    "<style>#moshan-insecure{position:fixed;left:0;right:0;top:0;z-index:99999;"
+    "background:#c0392b;color:#fff;font:13px/1.6 -apple-system,sans-serif;"
+    "padding:6px 12px;text-align:center}</style>"
+    "<div id=\"moshan-insecure\">⚠ 证书没生成出来，当前是明文 HTTP："
+    "令牌与文件内容在传输中不加密。装 cryptography 后重启即可恢复 HTTPS。</div>"
+)
+
+
 @app.get("/", response_class=HTMLResponse)
-def index() -> HTMLResponse:
+def index(request: Request, response: Response) -> HTMLResponse:
     # no-store：手机上改完 ui.html 刷新就能拿到新版本，不会被 Safari 缓存糊住
     if UI_PATH.exists():
         html = UI_PATH.read_text(encoding="utf-8")
@@ -461,12 +530,23 @@ def index() -> HTMLResponse:
             html = html.replace("__TS_IP__", ts_ip)
         if aboutmod is not None:                       # 角落里的「关于 / 新版本」入口
             html = aboutmod.inject(html)
-        return HTMLResponse(html, headers={
-            "Cache-Control": "no-store, max-age=0",
-            "Referrer-Policy": "no-referrer",       # 别让 URL 里的路径/令牌随 Referer 外流
-            "X-Content-Type-Options": "nosniff",
-            "X-Frame-Options": "DENY",              # 防止被别的页面套进 iframe 点按
-        })
+        if TLS_DEGRADED:
+            if "</body>" in html:
+                html = html.replace("</body>", _INSECURE_BANNER + "</body>", 1)
+            else:
+                html += _INSECURE_BANNER
+        # ⑦ 首次用 ?k= 进来时换成 HttpOnly Cookie：之后浏览器发的每个请求都带它，
+        # 地址栏里的令牌可以不要了（历史记录/截图/代理日志里就不会留痕）。
+        k = request.query_params.get("k") or ""
+        if k and hmac.compare_digest(k, TOKEN):
+            response.set_cookie("moshan_k", TOKEN, max_age=180 * 86400,
+                                httponly=True, samesite="strict",
+                                secure=(request.url.scheme == "https"))
+        out = HTMLResponse(html, headers=dict(_SEC_HEADERS))
+        for kk, vv in response.headers.items():
+            if kk.lower() == "set-cookie":
+                out.headers.append(kk, vv)
+        return out
     return HTMLResponse("<h1>口袋服务</h1><p>ui.html 缺失</p>")
 
 
@@ -891,6 +971,45 @@ def sys_now() -> dict:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"[:160]}
 
 
+# —— 磁盘占用（2026-11-24，巡检页的「磁盘文件」卡）——
+#   为什么给三个口而不是一个：三种看法的成本差一个数量级。列一层目录是几十毫秒，
+#   递归汇总类型是几秒。分开之后页面切 tab 只问自己要的那一份，互不牵连。
+#   范围只认「挂载点」，别的路径一律拒 —— 这不是文件管理器，是看盘的。
+def _disk_roots() -> list[str]:
+    try:
+        return [v["mount"] for v in diskscan.volumes()]
+    except Exception:                          # noqa: BLE001
+        return ["/"]
+
+
+@app.get("/api/disk/volumes", dependencies=[Depends(auth)])
+def disk_volumes() -> dict:
+    try:
+        return {"ok": True, "vols": diskscan.volumes()}
+    except Exception as e:                     # noqa: BLE001
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"[:160], "vols": []}
+
+
+@app.get("/api/disk/list", dependencies=[Depends(auth)])
+def disk_list(path: str = "", mode: str = "struct") -> dict:
+    """mode=struct 列一层；apps 按应用算；types 按文件类型算。"""
+    roots = _disk_roots()
+    target = path or (roots[0] if roots else "/")
+    mode = (mode or "struct").strip().lower()
+    try:
+        if mode == "apps":
+            return diskscan.apps(target, roots)
+        if mode == "types":
+            return diskscan.types(target, roots)
+        if mode == "deep":
+            return diskscan.deep(target, roots)
+        if mode == "scan":
+            return diskscan.scan_layer(target, roots)
+        return diskscan.tree(target, roots)
+    except Exception as e:                     # noqa: BLE001
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"[:200]}
+
+
 @app.get("/api/status", dependencies=[Depends(auth)])
 def status() -> dict:
     try:
@@ -944,11 +1063,7 @@ def workbench() -> HTMLResponse:
         html = html.replace("</head>", boot + "</head>", 1)
     else:
         html = boot + html
-    return HTMLResponse(html, headers={
-        "Cache-Control": "no-store, max-age=0",
-        "Referrer-Policy": "no-referrer",
-        "X-Content-Type-Options": "nosniff",
-    })
+    return HTMLResponse(html, headers=dict(_SEC_HEADERS))
 
 
 # —— 外观（2026-11-22）——
@@ -1478,6 +1593,14 @@ async def update_push(request: Request) -> dict:
     单包：{version, sha256, b64}；大包分片：再加 {index, total, part}。
     frozen（安装版）只落盘不重启 —— 换 exe 得走安装包，这一点如实返回，不假装成功。
     """
+    # 先看长度再读：base64 的包整份进内存，没有这道门就是一个 OOM 的入口
+    clen = request.headers.get("content-length") or "0"
+    try:
+        if int(clen) > pushupd.MAX_PKG_BYTES * 2:
+            return JSONResponse({"ok": False, "error": "包太大（超过 128MB）"},
+                                status_code=413)
+    except ValueError:
+        pass
     try:
         body = await request.json()
     except ValueError:
@@ -1486,6 +1609,8 @@ async def update_push(request: Request) -> dict:
         return JSONResponse({"ok": False, "error": "body 要是对象"}, status_code=400)
     try:
         res = pushupd.push(body)
+    except pushupd.PackTooBig as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=413)
     except Exception as exc:                        # noqa: BLE001
         return JSONResponse({"ok": False, "error": f"收包异常：{exc}"}, status_code=500)
     return res if res.get("ok") else JSONResponse(res, status_code=400)
@@ -1683,9 +1808,10 @@ def ledger_upload(files: list[UploadFile] = File(...)) -> dict:
     ok, bad = [], []
     for f in files:
         try:
-            raw = f.file.read()
-        except OSError as e:
-            bad.append({"name": f.filename or "", "error": str(e)[:120]})
+            raw = _read_upload(f, MIN_UPLOAD_LIMIT)
+        except (OSError, HTTPException) as e:
+            bad.append({"name": f.filename or "",
+                        "error": str(getattr(e, "detail", e))[:120]})
             continue
         r = ledger.ingest(CFG, raw, f.filename or "")
         (ok if r.get("ok") else bad).append(r if r.get("ok") else
@@ -1707,7 +1833,7 @@ def ledger_remove(body: dict) -> dict:
 def ledger_image(file: UploadFile = File(...), id: str = "") -> dict:
     """换产品图：这张图直接当产品图用（不再自动裁）。"""
     try:
-        raw = file.file.read()
+        raw = _read_upload(file, MIN_UPLOAD_LIMIT, "这张图")
     except OSError as e:
         raise HTTPException(400, f"读不出这张图：{e}")
     return ledger.replace_image(CFG, id, raw, file.filename or "")
@@ -1842,9 +1968,10 @@ def transfer_upload(files: list[UploadFile] = File(...)) -> dict:
     ok, bad = [], []
     for f in files:
         try:
-            raw = f.file.read()
-        except OSError as e:
-            bad.append({"name": f.filename or "", "error": str(e)[:120]})
+            raw = _read_upload(f, MAX_UPLOAD, f.filename or "这个文件")
+        except (OSError, HTTPException) as e:
+            bad.append({"name": f.filename or "",
+                        "error": str(getattr(e, "detail", e))[:120]})
             continue
         tmp = Path(tempfile.mkdtemp(prefix="tf_")) / (f.filename or "未命名")
         try:
@@ -2323,10 +2450,7 @@ def docs_page(name: str) -> HTMLResponse:
             "<meta charset='utf-8'><body style='font:15px -apple-system;padding:40px'>"
             f"<h3>这份文档还没放到这台机器上</h3><p style='color:#666'>应当位于：{p}</p></body>",
             status_code=404)
-    return HTMLResponse(p.read_text(encoding="utf-8"), headers={
-        "Cache-Control": "no-store, max-age=0",
-        "X-Content-Type-Options": "nosniff",
-    })
+    return HTMLResponse(p.read_text(encoding="utf-8"), headers=dict(_SEC_HEADERS))
 
 
 @app.get("/hostwork", response_class=HTMLResponse)
@@ -2352,10 +2476,7 @@ def hostwork_page() -> HTMLResponse:
     html = p.read_text(encoding="utf-8")
     html = html.replace("</head>", _HOSTWORK_SHIM + "</head>") if "</head>" in html \
         else _HOSTWORK_SHIM + html
-    return HTMLResponse(html, headers={
-        "Cache-Control": "no-store, max-age=0",
-        "X-Content-Type-Options": "nosniff",
-    })
+    return HTMLResponse(html, headers=dict(_SEC_HEADERS))
 
 
 # 那一页的脚本是用相对路径 /api/xxx 取数的（它以前自己就是一个服务，没有令牌）。
@@ -2497,7 +2618,7 @@ def pack_preview(file: UploadFile = File(...)) -> dict:
     tmp = Path(tempfile.mkdtemp(prefix="mpk-prev-"))
     try:
         p = tmp / (file.filename or "pack.moshanplug")
-        p.write_bytes(file.file.read())
+        p.write_bytes(_read_upload(file, PACK_UPLOAD_LIMIT, "插件包"))
         return pluginpack.inspect_zip(p)
     except pluginpack.PackError as exc:
         return {"ok": False, "error": str(exc)}
@@ -2510,7 +2631,8 @@ def pack_preview(file: UploadFile = File(...)) -> dict:
 @app.post("/api/pack/install", dependencies=[Depends(auth)])
 def pack_install(file: UploadFile = File(...)) -> dict:
     try:
-        return pluginpack.install_raw(CFG, file.file.read(), file.filename or "")
+        return pluginpack.install_raw(CFG, _read_upload(file, PACK_UPLOAD_LIMIT, "插件包"),
+                                      file.filename or "")
     except pluginpack.PackError as exc:
         return {"ok": False, "error": str(exc)}
     except OSError as exc:
@@ -2530,10 +2652,17 @@ def pack_install_files(files: list[UploadFile] = File(...), paths: str = Form(""
     except json.JSONDecodeError:
         rel = []
     pairs = []
+    total = 0
     for i, f in enumerate(files):
         name = rel[i] if i < len(rel) and isinstance(rel[i], str) else (f.filename or "")
         try:
-            pairs.append((name, f.file.read()))
+            got = _read_upload(f, PACK_UPLOAD_LIMIT, f"文件 {name}")
+            total += len(got)
+            if total > PACK_UPLOAD_LIMIT:
+                raise HTTPException(413, "这一批文件超过插件包上限")
+            pairs.append((name, got))
+        except HTTPException as exc:
+            return {"ok": False, "error": str(exc.detail)}
         except OSError as exc:
             return {"ok": False, "error": f"读 {name} 失败：{exc}"}
     try:
@@ -2567,7 +2696,9 @@ def pack_install_path(body: dict) -> dict:
     except OSError:
         return {"ok": False, "error": f"路径不对：{raw}"}
     roots = [Path(x).expanduser().resolve() for x in (CFG.get("allowed_roots") or [])]
-    if roots and not any(str(p).startswith(str(r)) for r in roots):
+    # 必须按「路径段」判断，不能按字符串前缀：/data/AI项目-evil 是能通过
+    # startswith("/data/AI项目") 的，而这里的产物是要被执行的插件代码。
+    if roots and not any(_inside(p, r) for r in roots):
         return {"ok": False, "error": "只允许装数据根以内的目录"}
     try:
         return pluginpack.install_dir(CFG, p)
@@ -2818,7 +2949,7 @@ def _walk_inbox(limit: int = 800) -> list[Path]:
 
 
 @app.post("/api/upload", dependencies=[Depends(auth)])
-async def upload(files: list[UploadFile] = File(...), dir: str = "") -> dict:
+def upload(files: list[UploadFile] = File(...), dir: str = "") -> dict:
     """不指定 dir 时按日期落进收件箱（手机随手发的默认行为）；
     指定了就直达那个目录，跟 NAS 里"传到当前文件夹"一致。"""
     t0 = time.time()
@@ -2830,6 +2961,7 @@ async def upload(files: list[UploadFile] = File(...), dir: str = "") -> dict:
         day = INBOX_DIR / time.strftime("%Y-%m-%d")
     day.mkdir(parents=True, exist_ok=True)
     saved, failed = [], []
+    batch = 0                     # 这一批累计字节：单文件限了、文件数不限等于没限
     for f in files:
         name = f.filename or f"上传_{int(time.time())}"
         dest = _unique_path(day, name)
@@ -2837,13 +2969,16 @@ async def upload(files: list[UploadFile] = File(...), dir: str = "") -> dict:
         try:
             with dest.open("wb") as out:
                 while True:
-                    chunk = await f.read(1 << 20)
+                    chunk = f.file.read(1 << 20)
                     if not chunk:
                         break
                     written += len(chunk)
                     if written > MAX_UPLOAD:
                         raise ValueError(f"超过 {CFG.get('max_upload_mb', 500)}MB 上限")
+                    if batch + written > BATCH_UPLOAD_LIMIT:
+                        raise ValueError("这一批文件总量超过上限，剩下的文件请分批传")
                     out.write(chunk)
+            batch += written
             saved.append({"name": dest.name, "path": str(dest), "bytes": written,
                           "category": _category(dest.name),
                           "size": _human(written)})
@@ -3306,7 +3441,9 @@ def api_raw(path: str) -> FileResponse:
 
 
 THUMB_DIR = Path.home() / ".cache" / "pocket-thumbs"
-INLINE_THUMB_MAX = 40                   # 图比这还多就退回逐张请求，别把响应撑大
+INLINE_THUMB_MAX = 12                   # 图比这还多就退回逐张请求，别把响应撑大
+# 40 张时首次打开一个图文件夹要串起最多 40 次 sips 子进程（信号量只放 4 个），
+# 响应体还要 base64 再涨 33%。12 张 ≈ 一次能塞进首屏，其余前端并发拉（有磁盘缓存）。
 _THUMB_SLOTS = threading.Semaphore(4)   # sips 是子进程，限制并发别把机器压死
 
 
@@ -3620,6 +3757,8 @@ def main() -> int:
                 lacks.append("openssl 命令")
             if tlsmod._crypto() is None:
                 lacks.append("cryptography 库")
+            global TLS_DEGRADED
+            TLS_DEGRADED = True
             print(f"[警告] 证书生成不了（缺：{'、'.join(lacks) or '未知原因'}），"
                   f"退化为明文 HTTP —— 令牌会以明文经过局域网。"
                   f"装 cryptography 即可恢复 HTTPS。")
@@ -3682,6 +3821,12 @@ def main() -> int:
         print("WebDAV 已关闭（config.json 里 dav_enabled 改成 true 可恢复）")
 
     _host = CFG.get("host", "0.0.0.0")
+    if TLS_DEGRADED and _host in ("0.0.0.0", "::", ""):
+        # 明文还监听全网卡，等于把令牌送到整个局域网里。退化时只留本机，
+        # 真要继续在局域网用，把 config.json 的 host 显式写成那个网卡地址。
+        _host = "127.0.0.1"
+        print("[警告] 退化为明文 HTTP：主端口只监听 127.0.0.1，"
+              "局域网/手机会连不上（这是有意的）。修好证书或显式设置 host 后再放开。")
     if plain_binds:
         servers = [uvicorn.Server(uvicorn.Config(app, host=_host, port=port,
                                                 log_level="warning", **ssl_kw))]

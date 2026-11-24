@@ -56,7 +56,19 @@ if bad:
     sys.exit(1)
 
 import paths, server, version
-routes = {r.path for r in server.app.routes if getattr(r, "path", "")}
+def _paths(rs):
+    """路由枚举：新版 FastAPI 的 include_router 会包一层 _IncludedRouter（没有 .path），
+    这里递归取出来，免得依赖升级后自检假红。"""
+    for r in rs:
+        p = getattr(r, "path", "")
+        if p:
+            yield p
+        sub = getattr(r, "routes", None)
+        if sub:
+            yield from _paths(sub)
+
+
+routes = set(_paths(server.app.routes))
 for need in ("/welcome", "/welcome/status", "/welcome/pull", "/welcome/finish", "/about"):
     assert need in routes, f"缺少路由 {need}"
 d = paths.describe()

@@ -27,6 +27,7 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -69,6 +70,11 @@ def _human(n: float) -> str:
 
 def _pct(a: float, b: float) -> float:
     return round(a * 100.0 / b, 1) if b else 0.0
+
+
+_SVC_PROBE: dict[tuple, tuple] = {}          # (host, port) -> (up, 时间戳)
+_SVC_POOL: "object | None" = None
+_SVC_POOL_LOCK = threading.Lock()
 
 
 def _port(port: int, host: str = "127.0.0.1", timeout: float = 0.35) -> bool:
@@ -155,12 +161,34 @@ def _services(cfg: dict | None = None) -> list[dict]:
         if not _posix_ok(sid):
             continue
         items.append((sid, name, port, "", False, ""))
+    # 探活曾经是一条 for 循环串着做：本机端口被拒是毫秒级，但**远程 host**
+    # （被控机的 portproxy）不通时每条都要等满 0.35 秒超时，十几条就是好几秒，
+    # 而这块是跟着 /api/dash 一起算的。改成并发探 + 5 秒结果缓存。
+    def _probe(item):
+        sid, name, port, href, always, host = item
+        key = (host or "127.0.0.1", int(port))
+        if always:
+            return True
+        now = time.time()
+        hit = _SVC_PROBE.get(key)
+        if hit and now - hit[1] < 5.0:
+            return hit[0]
+        up = _port(int(port), host or "127.0.0.1")
+        _SVC_PROBE[key] = (up, now)
+        return up
+
+    global _SVC_POOL
+    with _SVC_POOL_LOCK:
+        pool = _SVC_POOL
+        if pool is None:
+            pool = _SVC_POOL = ThreadPoolExecutor(max_workers=8,
+                                                 thread_name_prefix="svc-probe")
+        ups = list(pool.map(_probe, items))
     out = []
-    for sid, name, port, href, always, host in items:
+    for (sid, name, port, href, always, host), up in zip(items, ups):
         out.append({
             "id": sid, "name": name, "port": port, "href": href,
-            "up": True if always else _port(port, host or "127.0.0.1"),
-            "lazy": sid in LAZY_SERVICES,
+            "up": bool(up), "lazy": sid in LAZY_SERVICES,
         })
     return out
 

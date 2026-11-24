@@ -146,6 +146,21 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def is_verified(path: Path) -> bool:
+    """这个下载包里是不是真的有校验值。
+
+    为什么必须单独问一句：GitHub 在某些情况下不回 `digest`（老资产、API 变更、
+    中间人改了响应），下载照样成功，但 sha256 根本没比过。安装包一旦被打开就是
+    执行代码，所以「有没有校验」必须是**执行前的硬门**，不能只在界面上写一行小字。
+    """
+    meta = Path(str(path) + ".meta")
+    try:
+        j = json.loads(meta.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return bool(j.get("verified")) and bool(j.get("sha256"))
+
+
 def download(asset: dict, *, on_progress: Optional[Callable[[int, int], None]] = None,
              timeout: float = 30) -> Path:
     """下载资产到 state/updates/，边下边算 sha256，完成后校验。"""

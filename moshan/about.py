@@ -355,7 +355,18 @@ $('btn-apply').onclick = async () => {
   try{
     const d = await j('/api/update/apply', {method: 'POST'});
     tag($('state'), d.hint || '已打开安装包', 'ok');
-  }catch(e){ tag($('state'), '打开失败：' + e.message, 'bad'); }
+  }catch(e){
+    // 没校验值的包要人再点一次（服务端 409），不做静默放行
+    const m = String(e.message || '');
+    if(m.indexOf('校验') >= 0 && confirm(m + '\n\n仍然要打开这个安装包吗？')) {
+      try{
+        const d = await j('/api/update/apply?force=1', {method: 'POST'});
+        tag($('state'), d.hint || '已打开安装包（未校验，已由你确认）', 'ok');
+      }catch(e2){ tag($('state'), '打开失败：' + e2.message, 'bad'); }
+      return;
+    }
+    tag($('state'), '打开失败：' + m, 'bad');
+  }
 };
 
 loadAbout();
@@ -614,6 +625,15 @@ def register(app: FastAPI, cfg: dict, token: str) -> None:
         with _LOCK:
             p = STATE["path"]
         path = Path(p) if p else _existing_package()
+        # 硬门：没校验过的包不执行。GitHub 不回 digest 时下载仍然"成功"，
+        # 但那就是一个没人核对过的可执行文件 —— 点一下就装了。
+        force = (request.query_params.get("force") or "") in ("1", "true", "yes")
+        if path and Path(path).exists() and not updater.is_verified(Path(path)) and not force:
+            return JSONResponse(
+                {"ok": False, "need_confirm": True,
+                 "error": "这个安装包没有校验值（GitHub 未提供 digest / 本地元数据缺失），"
+                          "无法确认未被篡改。要强制安装请再确认一次。"},
+                status_code=409)
         # 源码部署：安装包对它没用（装完要么起两个服务，要么自启还指着旧目录），
         # 改从 GitHub 取源码包原地替换 —— 和主机推送走的是同一套 pushupd。
         import sys as _sys
