@@ -165,6 +165,28 @@ bash scripts/fix-exfat.sh
   `du` 看到的 `.git` 体积会远超真实内容（例如真实 1 MB 显示 80 MB），这是块放大，
   不影响功能，也不用清。
 
+## 推送与合并（多窗口协作）
+
+本机只有**一份工作目录**，多个 Agent 窗口（TRAE / WorkBuddy 等）共用它。为了不互相
+踩工作区，规矩只有三条：
+
+1. **不切分支**。切了就会把别人的未提交改动带走。
+2. **除了主力窗口，谁都不要把提交推到 `main`**。做完自己的活，把当前 HEAD 推到自己的分支：
+
+   ```bash
+   git push origin HEAD:refs/heads/agent/trae      # 名字换成自己的
+   ```
+
+3. **`main` 的合并与推送、打 tag 只由主力窗口做**（需要 `MOSHAN_PUSH=workbuddy`）。
+   仓库里装了 `.git/hooks/pre-push` 强制这一点：推 `main` / tag 会被直接拒掉，
+   推 `agent/*` 随便推。闸门把每次尝试记在 `~/Documents/cuntu/push-guard.log`。
+
+主力窗口合并时做的事：`git fetch` → 看 `git log --oneline main..origin/agent/<名字>` 与
+`git diff` → `git merge --no-ff`（或 `cherry-pick`）→ `bash scripts/check.sh` 全绿 →
+`MOSHAN_PUSH=workbuddy git push origin main`。
+
+后续窗口拿到最新版：`git pull --ff-only`（本地没有自己的提交时就能直接快进）。
+
 ## 不要做的事
 
 - 不要把 `config.json`、`certs/`、`*.jsonl` 提交上去（`.gitignore` 已挡，别用 `-f` 绕过）
