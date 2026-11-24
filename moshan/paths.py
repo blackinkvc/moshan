@@ -9,8 +9,11 @@
 """
 from __future__ import annotations
 
+import json
 import os
+import socket
 import sys
+import time
 from pathlib import Path
 
 APP_NAME = "Moshan"
@@ -105,6 +108,57 @@ def workbench_dir() -> Path:
     return library_dir() / "_工作台"
 
 
+def machine_file() -> Path:
+    """数据根的「出生证」：这份资料库是哪台机器产生的。"""
+    return workbench_dir() / "machine.json"
+
+
+def _short_host(name: str) -> str:
+    """Windows 主机名常带域名后缀（EVO-X2.corp.local），比前缀就算同一台。"""
+    return str(name or "").split(".")[0].strip().lower()
+
+
+def stamp_machine() -> dict:
+    """给数据根盖来源章；已经有章就原样返回，绝不覆盖。
+
+    为什么要盖：2026-11-25 发现 EVO 的 /dash 里显示着 mac 那台 629 条工作流水
+    （含人名、行程）—— 部署时把 `09-个人工作台/流水` 整份拷过去，而程序本身
+    分不出「这份数据是本机攒的，还是别人那台搬来的」。盖了章，拷贝会连章一起
+    带走，换机器一读就知道来源不对。**有章不覆盖**是关键：覆盖等于把证据抹了。
+    """
+    p = machine_file()
+    try:
+        old = json.loads(p.read_text(encoding="utf-8"))
+        if isinstance(old, dict) and old.get("host"):
+            return old
+    except (OSError, ValueError):
+        pass
+    rec = {"host": socket.gethostname(), "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(rec, ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+    return rec
+
+
+def foreign_origin() -> str:
+    """数据根是不是别人那台搬来的：是就回原机器名，否则回空串。
+
+    只报不拦 —— 拷过来的人可能就是想看历史，得让用户自己决定要不要清。
+    真正做错的是一声不吭地把它当成自己的数据展示。
+    """
+    try:
+        d = json.loads(machine_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    host = str((d or {}).get("host") or "")
+    cur = socket.gethostname()
+    if not host or not cur:
+        return ""
+    return "" if _short_host(host) == _short_host(cur) else host
+
+
 def ensure_layout() -> None:
     """首次启动时把需要的目录建出来（幂等）。"""
     for d in (
@@ -115,6 +169,7 @@ def ensure_layout() -> None:
         library_dir() / ".回收站",
     ):
         d.mkdir(parents=True, exist_ok=True)
+    stamp_machine()
 
 
 def describe() -> dict:
