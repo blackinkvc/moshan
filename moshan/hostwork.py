@@ -3382,7 +3382,7 @@ def pulse(days: int = 75, scope: str = "") -> dict:
 # 2026-11-19：逐轮记录是「这一轮做了什么」，截图 OCR 识别出来的 TRAE 侧栏
 # 名字其实是「有哪些任务/项目」。两种东西分开：任务清单卡只看名字 + 日期，
 # 不冒充执行记录。数据从各 agent 现有采集层拿，不另起炉灶。
-_TASKS_CACHE: dict[str, object] = {"at": 0.0, "data": None}
+_TASKS_CACHE: dict[str, object] = {"at": 0.0, "key": "", "data": None}
 _TASK_GLYPH = {"TRAE": "◈", "WorkBuddy": "◉", "Cherry Studio": "❀",
                "Claude Code": "✦", "Cursor": "▸", "pocket": "◆"}
 
@@ -3514,14 +3514,19 @@ def tasks_view(range_key: str = "7d") -> dict:
     """
     now = time.time()
     cached = _TASKS_CACHE.get("data")
-    if cached is not None and now - float(_TASKS_CACHE.get("at") or 0) < 20:
+    # 2026-11-23：缓存从 20 秒压到 6 秒。首页那张 /api/dash 是实时的，这张卡
+    # 以前要叠 20 秒缓存 + 前端 25 秒 TTL，看上去永远慢一拍。增量扫描只要
+    # 十几毫秒，没必要省这点。
+    # key 必须带上 range：以前不分档，切了 7d/30d 还回上一档的内容。
+    if (cached is not None and _TASKS_CACHE.get("key") == range_key
+            and now - float(_TASKS_CACHE.get("at") or 0) < 6):
         return cached
 
     # 任务下面的「说了哪几句」来自会话扫描缓存。页面来要数据时顺手补扫一次，
     # 不然最新那几轮得等后台 2 分钟那一轮才出现 —— 旁边的逐轮记录是现解析的，
     # 两边一对就像这张卡滞后了。
     try:
-        scan_if_stale(20)
+        scan_if_stale(6)
         now = time.time()
     except Exception:                                  # noqa: BLE001
         pass
@@ -3638,7 +3643,7 @@ def tasks_view(range_key: str = "7d") -> dict:
             # 这个时间很久不动，就是采集侧卡住了，不是页面没刷。
             "scan_at": (datetime.fromtimestamp(float(_SCAN_AT.get("t") or 0))
                         .strftime("%Y-%m-%d %H:%M:%S") if _SCAN_AT.get("t") else "")}
-    _TASKS_CACHE.update(at=now, data=data)
+    _TASKS_CACHE.update(at=now, key=range_key, data=data)
     return data
 
 
