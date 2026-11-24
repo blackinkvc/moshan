@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -208,7 +209,7 @@ _PAGE = """<!DOCTYPE html>
   <div class="bar" id="bar"><i id="fill"></i></div>
   <div class="row">
     <button id="btn-check" disabled>检查更新</button>
-    <button id="btn-dl" class="ghost" style="display:none">下载安装包</button>
+    <button id="btn-dl" class="ghost" style="display:none">下载更新</button>
     <button id="btn-apply" style="display:none">打开安装包</button>
     <span class="tag" id="state"></span>
   </div>
@@ -285,6 +286,11 @@ async function loadAbout(){
 }
 
 function render(st){
+  // 能原地替换就叫「立即更新并重启」，否则老老实实叫「打开安装包」——
+  // 按钮上写的字就是用户对这台机器的期待，不能两处不一致。
+  if (st.in_place !== undefined){
+    $('btn-apply').textContent = st.in_place ? '立即更新并重启' : '打开安装包';
+  }
   if (st.info){
     const i = st.info;
     $('latest').textContent = i.latest || '—';
@@ -354,7 +360,13 @@ $('btn-dl').onclick = async () => {
 $('btn-apply').onclick = async () => {
   try{
     const d = await j('/api/update/apply', {method: 'POST'});
-    tag($('state'), d.hint || '已打开安装包', 'ok');
+    tag($('state'), d.hint || '已开始更新', 'ok');
+    if (d.in_place) {
+      // 服务 1.5 秒后就退出，这一句是页面上最后能看到的话
+      $('btn-apply').disabled = true;
+      $('btn-apply').textContent = '正在更新…';
+      tag($('state'), '正在更新，窗口会自己断开再重新打开（约 3 秒）', 'ok');
+    }
   }catch(e){
     // 没校验值的包要人再点一次（服务端 409），不做静默放行
     const m = String(e.message || '');
@@ -490,6 +502,13 @@ def register(app: FastAPI, cfg: dict, token: str) -> None:
             pkg = _existing_package()
             if pkg:
                 st["path"] = str(pkg)
+        # 「点一下就更新」还是「只能弹安装包」：前端据此换按钮文案，
+        # 免得给一个做不到的承诺（比如 app 还在 dmg 里跑着）。
+        reason = updater.in_place_blocked()
+        if not reason and st["path"] and not str(st["path"]).lower().endswith(".zip"):
+            reason = "这个版本只发了 dmg，没法原地替换（下一个版本会有 zip）"
+        st["in_place"] = not reason
+        st["in_place_reason"] = reason
         return st
 
     @app.post("/api/update/download")
@@ -649,12 +668,40 @@ def register(app: FastAPI, cfg: dict, token: str) -> None:
         if not path or not Path(path).exists():
             return JSONResponse({"ok": False, "error": "还没有下载好的安装包"},
                                 status_code=400)
+
+        # 能原地替换就原地（zip + 可写的 .app），做不到就如实退回「打开安装包」，
+        # 不把一个「我们会自动更新」的承诺摆在做不到的机器上。
+        pkg = Path(path)
+        reason = updater.in_place_blocked()
+        # 未校验的包不许原地替换：那是往自己的程序目录里写东西，比「打开一个包」
+        # 风险高一个量级。用户确认 force 也只给到「打开安装包」这一步。
+        if not reason and pkg.suffix.lower() == ".zip" and not updater.is_verified(pkg):
+            reason = "这个包没有校验值，只能手动安装"
+        if not reason and pkg.suffix.lower() == ".zip":
+            try:
+                res = updater.apply_in_place(pkg)
+            except updater.UpdateError as exc:
+                return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+            except Exception as exc:                    # noqa: BLE001
+                return JSONResponse({"ok": False,
+                                     "error": f"{type(exc).__name__}: {exc}"},
+                                    status_code=500)
+            # 先把这句提示发出去，再自我了断 —— helper 正等着这个 pid 消失才动手。
+            # 1.5 秒是给 HTTP 响应留的余量，不是给用户看的动画。
+            t = threading.Timer(1.5, lambda: os._exit(0))
+            t.daemon = True
+            t.start()
+            return {"ok": True, "in_place": True, "hint": res["hint"],
+                    "path": str(pkg), "log": res["work"] + "/apply.log"}
+
         try:
-            hint = updater.launch_installer(Path(path))
+            hint = updater.launch_installer(pkg)
         except Exception as exc:                        # noqa: BLE001
             return JSONResponse({"ok": False, "error": f"{type(exc).__name__}: {exc}"},
                                 status_code=500)
-        return {"ok": True, "hint": hint, "path": str(path)}
+        if reason:
+            hint = f"{hint}（本机没法自动更新：{reason}）"
+        return {"ok": True, "in_place": False, "hint": hint, "path": str(pkg)}
 
     threading.Thread(target=_auto_check_loop, daemon=True).start()
 

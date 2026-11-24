@@ -153,13 +153,39 @@ jobs:
           echo "dmg 里的 app 签名完好"
           hdiutil detach "$MNT" >/dev/null 2>&1 || true
 
+      - name: 制作 zip（应用内更新读的就是这一份）
+        # dmg 给人手动装；zip 给程序自己更新用。应用内更新拿到 zip 才能解压替换
+        # 自己的 .app，不必让人重新拖一次图标。`ditto -c -k --keepParent` 是唯一
+        # 能保住签名、符号链接与扩展属性的打法（zip(1) 会把符号链接存成普通文件，
+        # 解出来签名当场坏掉）。
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          ZIP="dist/Moshan-${V}-macos-${{ matrix.arch }}.zip"
+          ditto -c -k --keepParent dist/Moshan.app "$ZIP"
+          shasum -a 256 "$ZIP" | awk '{print $1}' > "dist/zip.sha256"
+          ls -lh "$ZIP"
+
+      - name: 从 zip 里反向校验签名（应用内更新装上去的就是这个）
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          ZIP="dist/Moshan-${V}-macos-${{ matrix.arch }}.zip"
+          T=$(mktemp -d)
+          ditto -xk "$ZIP" "$T"
+          codesign --verify --deep --strict --verbose=2 "$T/Moshan.app"
+          test -f "$T/Moshan.app/Contents/Resources/dash.html" \
+            || { echo "zip 里没有 dash.html，中台页面会 404"; exit 1; }
+          echo "zip 里的 app 签名完好，且带着中台页面"
+          rm -rf "$T"
+
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
           name: moshan-macos-${{ matrix.arch }}
           path: |
             dist/Moshan-*-macos-${{ matrix.arch }}.dmg
+            dist/Moshan-*-macos-${{ matrix.arch }}.zip
             dist/dmg.sha256
+            dist/zip.sha256
           if-no-files-found: error
 
   # ------------------------------------------------------------ Windows
@@ -360,6 +386,10 @@ jobs:
           | macOS（Intel） | `Moshan-*-macos-x64.dmg` |
           | Windows 10/11 64 位 | `Moshan-*-windows-x64-Setup.exe` |
 
+          **从 0.3.8 起可以在软件里点「立即更新并重启」**，不必再来这里下载：
+          程序会自己取同版本的 `Moshan-*-macos-*.zip`（dmg 旁边那份，签名在里面）、
+          校验、替换自己再打开。手动装仍然用 dmg，两者内容一致。
+
           **macOS 首次打开**：安装包没有 Apple 开发者签名，双击若提示「无法验证开发者」，
           请在「访达」里**右键点 Moshan → 打开**，或到「系统设置 → 隐私与安全性」点「仍要打开」。
           这是未签名应用的系统行为，不是安装包损坏。
@@ -382,6 +412,7 @@ jobs:
         with:
           files: |
             artifacts/*.dmg
+            artifacts/*.zip
             artifacts/*.exe
             artifacts/release.json
           draft: false
