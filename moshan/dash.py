@@ -37,6 +37,10 @@ from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE))
+import paths  # noqa: E402  （打包后数据必须离开 .app 内部，否则破坏签名）
+
+# 可写数据目录：源码运行 = moshan/，打包后 = 状态目录
+DATA = paths.base_dir()
 
 import ai_trends_runner  # noqa: E402
 import dedupe_runner  # noqa: E402
@@ -1224,7 +1228,7 @@ def _ext(url) -> dict:
 
 
 def _auto_worklog(cfg: dict) -> list[dict]:
-    rows = _tail_jsonl(BASE / "pocket.jsonl")
+    rows = _tail_jsonl(DATA / "pocket.jsonl")
     model = _local_model(cfg)
     now = datetime.now()
     now_s = now.strftime("%Y-%m-%d %H:%M:%S")
@@ -1251,7 +1255,7 @@ def _auto_worklog(cfg: dict) -> list[dict]:
     # 没有它的分支，就安安静静被丢掉了。用户想找「这张图什么时候发的」
     # 只能翻手机，账本里明明有。归类的 if 链是白名单，加 event 必须同步加分支。
     tf_batch: dict = {}
-    for d in _tail_by_event(BASE / "pocket.jsonl", {"tf_push"}, days=2):
+    for d in _tail_by_event(DATA / "pocket.jsonl", {"tf_push"}, days=2):
         k = (str(d.get("ts") or ""), str(d.get("kind") or ""))
         b = tf_batch.setdefault(k, {"total": 0, "ok": 0, "attempt": 0,
                                     "names": [], "error": ""})
@@ -1487,7 +1491,7 @@ def _auto_worklog(cfg: dict) -> list[dict]:
     # —— 传输助手的另两头：收到的（手机→网页）与被删的。同样按时间捞 ——
     # 网页自己加的那条不记 tf_in（推送链已经记 tf_push），只有微信来的才算「收到」，
     # 否则同一次操作在账上会出现两行。
-    for d in _tail_by_event(BASE / "pocket.jsonl", {"tf_in", "tf_del"}, days=2):
+    for d in _tail_by_event(DATA / "pocket.jsonl", {"tf_in", "tf_del"}, days=2):
         ev2 = str(d.get("event") or "")
         at2 = _iso(d.get("ts"))
         kind2 = {"image": "图片", "file": "文件", "video": "视频",
@@ -5166,7 +5170,7 @@ def payload(cfg: dict) -> dict:
 if __name__ == "__main__":  # 终端排错用：python dash.py [--json|--export]
     _cfg = {"allowed_roots": [str(Path.home() / "Documents/AI项目")],
             "inbox_dir": str(Path.home() / "Documents/AI项目/07-收件箱")}
-    _cfg.update(_load(BASE / "config.json", {}) or {})
+    _cfg.update(_load(DATA / "config.json", {}) or {})
     if "--export" in sys.argv:  # 只重铺 markdown 镜像，不动页面数据
         print(json.dumps(export_markdown(_cfg), ensure_ascii=False))
         sys.exit(0)

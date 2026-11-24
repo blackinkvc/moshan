@@ -23,8 +23,9 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import metrics
+import paths
 
-BASE = Path(__file__).resolve().parent
+BASE = paths.base_dir()   # 账本走可写目录：打包后写 .app 内部会让签名 seal 失效
 HUB = metrics.REPORT_DIR
 INDEX_PATH = HUB / "_索引.json"
 

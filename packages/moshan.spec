@@ -21,6 +21,16 @@ SRC = ROOT / "moshan"                                # 平铺的 Python 源码�
 _m = re.search(r'VERSION\s*=\s*"([^"]+)"', (SRC / "version.py").read_text(encoding="utf-8"))
 VERSION = _m.group(1) if _m else "0.0.0"
 
+# 图标源见 docs/images/logo.svg；这里用生成好的二进制（macOS .icns / Windows .ico）。
+# 以前是 icon=None，PyInstaller 就退回自己的默认图标 —— 装出来的 app 在 Dock、
+# 访达、安装器里都是一个通用的「花屏 Mac」，用户看不到墨山。
+_ICNS = ROOT / "packages" / "moshan.icns"
+_ICO = ROOT / "packages" / "moshan.ico"
+if sys.platform.startswith("win"):
+    APP_ICON = str(_ICO) if _ICO.exists() else None
+else:
+    APP_ICON = str(_ICNS) if _ICNS.exists() else None
+
 # 本地模块全部显式声明：server.py 用的是平铺 import（import storage 而非 from moshan import storage），
 # PyInstaller 的静态分析能跟到大部分，但 dashboard 里有些是运行期 import，漏一个就白屏。
 # 过滤掉以「.」开头的名字：仓库若放在 exFAT/网络盘上，macOS 会生成 ._xxx 元数据文件，
@@ -118,7 +128,7 @@ exe = EXE(
     target_arch=None,          # 跟随构建机架构（macOS 上 arm64 原生）
     codesign_identity=None,    # 交给 CI 做 ad-hoc 签名
     entitlements_file=None,
-    icon=None,
+    icon=APP_ICON,
 )
 
 coll = COLLECT(
@@ -134,7 +144,7 @@ if sys.platform == "darwin":
     app = BUNDLE(
         coll,
         name=f"Moshan.app",
-        icon=None,
+        icon=APP_ICON,
         bundle_identifier="cn.moshan.hub",
         info_plist={
             "CFBundleName": "Moshan",

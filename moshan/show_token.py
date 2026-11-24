@@ -9,10 +9,13 @@ from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE))
+import paths  # noqa: E402  （配置与证书在可写目录：打包后在状态目录）
+
+DATA = paths.base_dir()
 
 
 def main() -> int:
-    cfg_path = BASE / "config.json"
+    cfg_path = DATA / "config.json"
     if not cfg_path.exists():
         print("还没有配置，先运行一次 server.py 生成。")
         return 1
@@ -25,11 +28,11 @@ def main() -> int:
         import tls as tlsmod
         lan, ts = tlsmod.lan_ip(), tlsmod.tailscale_ip()
         ts_name = tlsmod.tailscale_name()
-        cert_dir = Path(cfg.get("tls_dir", str(BASE / "certs")))
+        cert_dir = Path(cfg.get("tls_dir", str(DATA / "certs")))
         trusted = (cert_dir / "tailscale.crt").exists()
     except Exception:  # noqa: BLE001 - 只是打印脚本，不该因此崩
         lan = ts = ts_name = None
-        cert_dir, trusted = BASE / "certs", False
+        cert_dir, trusted = DATA / "certs", False
 
     print("口袋服务（全程加密）\n" + "=" * 46)
     if lan:
