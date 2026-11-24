@@ -1074,6 +1074,19 @@ def workbench() -> HTMLResponse:
     """
     p = dashmod.page_path(CFG)
     if not p.exists():
+        # 第一次运行（或换了数据根）：从包里铺一份默认工作台过去。
+        # dash.html 是**产品界面**，不是用户数据 —— 它以前只存在于作者本机的
+        # 数据根里，别人装上以后 /dash 永远 404：双击进来只有口袋的文件列表，
+        # 于是以为这软件就是个网盘，中台的卡片一张都见不到。
+        # 只「缺了才铺」，用户改过的页面一个字节都不动。
+        src = paths.resource("dash.html")
+        try:
+            if src.exists():
+                p.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, p)
+        except OSError:
+            pass
+    if not p.exists():
         return HTMLResponse(
             "<meta charset='utf-8'><body style='font:15px -apple-system;padding:40px'>"
             f"<h3>工作台页面还没生成</h3><p style='color:#666'>应当位于：{p}</p></body>",

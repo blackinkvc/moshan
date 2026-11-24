@@ -187,7 +187,8 @@ async function pollPull(){
 
 async function finish(){
   try{ await api("/welcome/finish", {}); }catch(e){}
-  location.href = "/?k=" + encodeURIComponent(TOKEN);
+  /* 配完之后进中台，不进口袋首页 —— 口袋只是中台里的一项能力 */
+  location.href = "/dash?k=" + encodeURIComponent(TOKEN);
 }
 
 $("#pullBtn").addEventListener("click", startPull);
