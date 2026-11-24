@@ -563,6 +563,11 @@ html[data-theme="dark"] .rwwho span.mdl{color:var(--mcd,var(--pri))}
 .wsleg{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--tx3);margin-top:4px}
 .wsleg span{display:inline-flex;align-items:center;gap:5px}
 .wsleg i{width:9px;height:9px;border-radius:2px;display:inline-block}
+.wsstore{margin-top:12px;padding-top:9px;border-top:1px solid var(--line2);
+  gap:8px;color:var(--tx3);opacity:.85}
+.wsstore b{font-weight:600;color:var(--tx2)}
+.wsfile{margin-left:auto;font-family:var(--mono,ui-monospace);font-size:10.5px;
+  opacity:.6;border:1px solid var(--line2);border-radius:5px;padding:0 5px}
 
 </style>
 </head>
@@ -621,6 +626,7 @@ html[data-theme="dark"] .rwwho span.mdl{color:var(--mcd,var(--pri))}
       <span class="wsday"><input type="date" id="wsDay" aria-label="选日期"></span>
     </div>
     <div id="wsBody"><div class="wsempty">正在统计…</div></div>
+    <div class="wsleg wsstore" id="wsStore"></div>
   </div>
   </div>
 
@@ -2754,6 +2760,17 @@ $('#ebHidden').addEventListener('click', function () {
       : viewTime();
     var at = $('#wsAt');
     if (at) at.textContent = d.at || '';
+    // 存档那行：告诉用户这些数存在哪、从哪天起、只增不减
+    var st = $('#wsStore');
+    if (st) {
+      var s = d.store || {};
+      st.innerHTML = s.days
+        ? '存档 <b>' + s.days + ' 天</b>（' + esc(s.from || '') + ' 起 · '
+          + (s.kb || 0) + ' KB）· 只增不减，源数据被清了也不丢'
+          + '<span class="wsfile" title="' + esc(s.file || '') + '">'
+          + esc((s.file || '').split('/').pop() || '') + '</span>'
+        : '存档还没建起来';
+    }
   }
 
   function load() {

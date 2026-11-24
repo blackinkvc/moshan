@@ -449,7 +449,7 @@ _WIN_CIM_PS = (
     "$cs=Get-CimInstance Win32_ComputerSystem;"
     "$cp=Get-CimInstance Win32_Processor|Select-Object -First 1;"
     "$os=Get-CimInstance Win32_OperatingSystem;"
-    "$gp=Get-CimInstance Win32_VideoController|Select-Object -First 1;"
+    "$gp=Get-CimInstance Win32_VideoController|Where-Object{ $_.Name -notmatch 'Virtual|Basic Display|Remote|Mirror' }|Select-Object -First 1;""if(-not $gp){ $gp=Get-CimInstance Win32_VideoController|Select-Object -First 1 };"
     "$bios=Get-CimInstance Win32_BIOS;"
     "@{model=$cs.Model;vendor=$cs.Manufacturer;family=$cs.SystemFamily;"
     "cpu=$cp.Name;cores=$cp.NumberOfCores;threads=$cp.NumberOfLogicalProcessors;"
@@ -2154,6 +2154,34 @@ def scan_if_stale(max_age: float = 20.0) -> None:
     scan_sessions()
 
 
+_SCAN_RUN = {"on": False}
+
+
+def _kick_scan(max_age: float = 6.0) -> bool:
+    """需要补扫就丢到后台，不挡这次请求。
+
+    为什么不能同步：会话扫描是「把每个客户端的 jsonl 从头读一遍」，换了新
+    数据根等于缓存从零开始，Windows 上实测要几十秒。前端对这张卡只有 20 秒
+    耐心，同步扫的结果就是卡片永远先显示超时，用户以为功能坏了。
+    """
+    if time.time() - float(_SCAN_AT.get("t") or 0) < max_age:
+        return False
+    if _SCAN_RUN.get("on"):
+        return False
+
+    def _run() -> None:
+        _SCAN_RUN["on"] = True
+        try:
+            scan_sessions()
+        except Exception:                              # noqa: BLE001
+            pass
+        finally:
+            _SCAN_RUN["on"] = False
+
+    threading.Thread(target=_run, daemon=True, name="hw-scan-kick").start()
+    return True
+
+
 def _scan_sessions(force: bool = False) -> None:
     global _SESS
     if not WB_ROOT.exists():
@@ -3799,8 +3827,12 @@ def tasks_view(range_key: str = "7d") -> dict:
     # 任务下面的「说了哪几句」来自会话扫描缓存。页面来要数据时顺手补扫一次，
     # 不然最新那几轮得等后台 2 分钟那一轮才出现 —— 旁边的逐轮记录是现解析的，
     # 两边一对就像这张卡滞后了。
+    # 2026-11-25：这里原来是 scan_if_stale(6) —— 同步扫。
+    # 换到全新数据根（没有会话缓存）之后，Windows 上第一次全量扫要几十秒，
+    # 页面那边 20 秒就 abort，卡片上直接是「超时（20 秒没回应）」。
+    # 改成丢后台：本次先把已经解析出来的给出去，扫完下一轮就有全量。
     try:
-        scan_if_stale(6)
+        _kick_scan(6)
         now = time.time()
     except Exception:                                  # noqa: BLE001
         pass
