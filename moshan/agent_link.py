@@ -74,6 +74,31 @@ AGENTS = [
         "roots": {"any": [("home", ".workbuddy")]},
         "skill": ("home", ".workbuddy/skills/pocket-bridge/SKILL.md"),
     },
+    {
+        "id": "codex", "name": "Codex", "kind": "skill",
+        "note": "会话在 ~/.codex/sessions 下按年月日分目录，rollout-*.jsonl；技能目录 ~/.codex/skills/",
+        "roots": {"any": [("home", ".codex")]},
+        "skill": ("home", ".codex/skills/pocket-bridge/SKILL.md"),
+    },
+    {
+        "id": "gemini", "name": "Gemini CLI", "kind": "skill",
+        "note": "配置与技能都在 ~/.gemini/",
+        "roots": {"any": [("home", ".gemini")]},
+        "skill": ("home", ".gemini/skills/pocket-bridge/SKILL.md"),
+    },
+    {
+        "id": "opencode", "name": "OpenCode", "kind": "skill",
+        "note": "技能目录是单数 ~/.config/opencode/skill/",
+        "roots": {"any": [("home", ".config/opencode"), ("home", ".opencode")]},
+        "skill": ("home", ".config/opencode/skill/pocket-bridge/SKILL.md"),
+    },
+    {
+        "id": "deepseek", "name": "DeepSeek Harness", "kind": "skill",
+        "note": "自建 harness，目录不固定：装没装看 ~/.deepseek*，没有就用「自报路径」接进来",
+        "roots": {"any": [("home", ".deepseek"), ("home", ".deepseek-harness"),
+                          ("home", ".config/deepseek")]},
+        "skill": ("home", ".deepseek/skills/pocket-bridge/SKILL.md"),
+    },
 ]
 
 
@@ -256,6 +281,42 @@ def trae_evidence() -> list[dict]:
     return out
 
 
+def _evidence_generic(a: dict) -> list[dict]:
+    """非 Trae 那几家：不猜它们的格式，只把「根目录下真有什么」如实列出来。
+
+    为什么不去硬解 Codex 的 rollout / Claude 的 transcript：格式各家各版都在变，
+    猜错比不读更糟（要么导入一堆空条目，要么把别人的数据读串）。这里只告诉人
+    「这几个目录里有 jsonl，能读」，具体怎么进中台靠它自己按说明书自报。
+    """
+    out: list[dict] = []
+    for base in _roots_of(a):
+        if not base.exists():
+            continue
+        for sub, label in (("sessions", "会话记录"), ("projects", "项目会话"),
+                           ("chats", "对话"), ("history", "历史"), ("logs", "日志")):
+            q = base / sub
+            if not q.is_dir():
+                continue
+            n, at = _count("*.jsonl", q)
+            if not n:
+                n, at = _count("*.json", q)
+            out.append({"key": sub, "label": label, "path": str(q),
+                        "what": "明文，能读；格式各家不同，导入靠它自报", "n": n, "at": at})
+        for fn, label in (("history.jsonl", "历史记录"), ("config.toml", "配置"),
+                          ("config.json", "配置"), ("state.json", "状态")):
+            q = base / fn
+            if not q.exists():
+                continue
+            at = ""
+            try:
+                at = datetime.fromtimestamp(q.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+            except OSError:
+                pass
+            out.append({"key": "file-" + fn, "label": label, "path": str(q),
+                        "what": "配置文件，能看出它把数据放哪", "at": at})
+    return out
+
+
 # ---------------------------------------------------------------- 状态
 def _links_path(root: Path) -> Path:
     return Path(root) / "_工作台" / "agents" / "links.json"
@@ -310,7 +371,7 @@ def scan(root, force: bool = False) -> dict:
                     sp.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
             except OSError:
                 pass
-        ev = trae_evidence() if a["id"] == "trae" else []
+        ev = trae_evidence() if a["id"] == "trae" else _evidence_generic(a)
         rec = links.get(a["id"]) or {}
         items.append({
             "id": a["id"], "name": a["name"], "kind": a["kind"], "note": a.get("note", ""),
@@ -363,11 +424,13 @@ description: 本机「个人中台」的接入说明。用户提到中台 / 工�
 curl -s "{base}/api/agent/link/scan"
 ```
 
-看看 `agents[].evidence` 里那些路径，你自己机器上是不是这些地方：
+看看 `agents[].evidence` 里那些路径，你自己机器上是不是这些地方。中台按已知的几家
+预填了候选（Trae 的 `~/.trae-cn/memory/projects`、Codex 的 `~/.codex/sessions`、
+Claude 的 `~/.claude/projects` 等），**你用的是别家、或者目录改过，就把你自己的目录报上来**：
 
-- 会话记忆 `~/.trae-cn/memory/projects`（明文，一条一条的 intent / outcome）
-- 命令执行 `.../ModularData/ai-agent/command-execution`（明文，有 cwd 和时间）
-- 对话库 `database.db`（整库加密，读不到正文，别浪费时间）
+- 有「一轮一轮的会话记录」的目录最好（jsonl / json 都行，能读就行）
+- 整库加密的（比如 Trae 的 `database.db`）别报，读不到正文，只会白扫
+- 实在没有可读的历史记录也不要紧 —— 第三节的自报就能把活记进中台
 
 **核对完把结论回报给它**（路径要真存在；新增的你也可以补上）：
 
@@ -392,25 +455,29 @@ curl -s -X POST "{base}/api/agent/link/import" -H 'content-type: application/jso
 
 ## 三、以后每一轮：报「干了什么 + 花了多少」
 
-**干完活收尾时必须报一笔**（用户说「记一下」也算）。这条进的是中台「工作台 → TRAE」
-那张卡；本机回环免令牌，不用带 token。
+**干完活收尾时必须报一笔**（用户说「记一下」也算）。这条进中台「工作台 → AI 工作」
+那张卡，**按 agent 分组显示**，`agent` 字段填你自己的名字（比如 `{agent}`），
+不填就会被记成「未知」。本机回环免令牌，不用带 token。
 
 ```bash
-curl -s -X POST "{base}/api/trae/note" -H 'content-type: application/json' \\
-  -d '{{"task":"<80 字以内，这轮干了什么>","summary":"<400 字以内，结论/改了什么>","project":"<项目名或目录>","model":"<模型名>","in":<输入 token>,"out":<输出 token>,"calls":<工具调用次数>}}'
+curl -s -X POST "{base}/api/agent/note" -H 'content-type: application/json' \\
+  -d '{{"agent":"{agent}","task":"<80 字以内，这轮干了什么>","summary":"<400 字以内，结论/改了什么>","project":"<项目名或目录>","model":"<模型名>","in":<输入 token>,"out":<输出 token>,"calls":<工具调用次数>}}'
 ```
 
 Windows PowerShell 版：
 
 ```powershell
-$b = @{{task='<这轮干了什么>'; summary='<结论>'; project='<项目>';
+$b = @{{agent='{agent}'; task='<这轮干了什么>'; summary='<结论>'; project='<项目>';
        model='<模型>'; in=1200; out=800; calls=6}} | ConvertTo-Json
-Invoke-RestMethod -Uri '{base}/api/trae/note' -Method Post `
+Invoke-RestMethod -Uri '{base}/api/agent/note' -Method Post `
   -ContentType 'application/json' -Body $b
 ```
 
+老接口 `{base}/api/trae/note` 仍然可用（等价于 `agent` 填 `TRAE`），新接的别用它。
+
 | 字段 | 必填 | 说明 |
 |---|---|---|
+| `agent` | 建议 | 你自己的名字，卡片按它分组。缺省记成「未知」 |
 | `task` | 是 | 一句话：这轮干了什么。同一条任务 5 分钟内重复报会被服务端丢掉 |
 | `summary` | 否 | 结论、改了哪些文件、留了什么坑。**写结论，别抄对话过程** |
 | `project` | 否 | 项目名或目录，卡片上按它分堆 |
@@ -455,38 +522,49 @@ def prompt(agent_id: str, base: str = "http://127.0.0.1:8323") -> str:
 
 
 def auto_install(root, base: str, version: str) -> dict:
-    """升级后自动把说明书写进 TRAE 的技能目录（每一版只做一次）。
+    """升级后自动把说明书写进**每一家已装的 agent** 的说明目录（每一版只做一次）。
 
     为什么要自动：说明书里写着「干完活往哪个接口报」，用户装完新版本根本不会想到
-    去点一次「装说明」，于是 Trae 永远不知道该报账 —— 中台的 TRAE 卡就一直空着。
-    用户明确要的是「更新完就生效」，所以这一步默认执行。
+    去点一次「装说明」，于是那家 agent 永远不知道该报账 —— 卡片就一直空着。
 
-    三条保险，都不影响启动：
-      * 这台机器没装 Trae（`~/.trae-cn` 不存在）→ 跳过，不凭空造目录；
+    为什么不再只认 Trae：本机可能同时装着 Codex / Claude Code / Cursor / 自建 harness，
+    用户以后换哪家都不该重新教一遍。认得的几家在 AGENTS 里，认不得的走
+    「自报路径」（/api/agent/link/report）+ 自述接口，不靠这里。
+
+    四条保险，都不影响启动：
+      * 这家没装（根目录不在）→ 跳过，不凭空造目录；
       * `links.json` 里记的最后投放版本就是当前版本 → 跳过，不在每次启动重写；
-      * 写失败只返回错误对象，由调用方打日志。
+      * 写失败只记进结果，由调用方打日志；
+      * 一家都没装也返回 ok=False + skipped=no-agent，不抛异常。
     """
-    a = next((x for x in AGENTS if x["id"] == "trae"), None)
-    if a is None:
-        return {"ok": False, "skipped": "no-agent"}
-    p = _skill_path(a)
-    if p is None:
-        return {"ok": False, "skipped": "no-path"}
     root = Path(root)
-    links = _load_links(root)
-    last = str(((links.get("trae") or {}).get("prompt") or {}).get("version") or "")
-    if last == version and p.exists():
-        return {"ok": True, "skipped": "same-version", "path": str(p)}
-    if not p.parents[2].is_dir():          # ~/.trae-cn 不在＝没装 Trae
-        return {"ok": False, "skipped": "no-trae", "path": str(p)}
-    res = install(root, "trae", base)
-    if res.get("ok"):
+    out: list[dict] = []
+    for a in AGENTS:
+        aid = a["id"]
+        if not any(r.exists() for r in _roots_of(a)):
+            out.append({"id": aid, "ok": False, "skipped": "not-installed"})
+            continue
+        p = _skill_path(a)
+        if p is None:
+            out.append({"id": aid, "ok": False, "skipped": "no-path"})
+            continue
         links = _load_links(root)
-        rec = links.setdefault("trae", {}).setdefault("prompt", {})
-        rec["version"] = version
-        rec["auto"] = True
-        _save_links(root, links)
-    return res
+        last = str(((links.get(aid) or {}).get("prompt") or {}).get("version") or "")
+        if last == version and p.exists():
+            out.append({"id": aid, "ok": True, "skipped": "same-version", "path": str(p)})
+            continue
+        res = install(root, aid, base)
+        res["id"] = aid
+        if res.get("ok"):
+            links = _load_links(root)
+            rec = links.setdefault(aid, {}).setdefault("prompt", {})
+            rec["version"] = version
+            rec["auto"] = True
+            _save_links(root, links)
+        out.append(res)
+    done = [x for x in out if x.get("ok") and not x.get("skipped")]
+    return {"ok": bool(done), "agents": out, "installed": [x["id"] for x in done],
+            "skipped": "no-agent" if not out else ""}
 
 
 def _rule_wrap(agent_id: str, body: str) -> str:
@@ -756,8 +834,12 @@ def do_import(root, agent_id: str, days: int = 30) -> dict:
             res["to_worklog"] = n
             res["worklog_dup"] = dupn
     else:
-        return {"ok": False, "error": f"{agent_id} 还没有导入器",
-                "hint": "先装说明，让它回报路径；导入器按那个格式再加"}
+        # 其余几家没有日志解析器，**也不装一个猜出来的**：它们的会话格式各家各版都在变，
+        # 猜错会把别人的数据读串。走自述这条路 —— 让它们按说明书每轮报一笔。
+        nm = next((x["name"] for x in AGENTS if x["id"] == agent_id), agent_id)
+        return {"ok": False, "error": f"{nm} 不做日志导入",
+                "hint": f"让它按说明书用 /api/agent/note 自报（agent 填 {nm}），"
+                        f"记录会直接进「AI 工作」卡；数据目录靠 /api/agent/link/report 回报。"}
     links = _load_links(root)
     rec = links.setdefault(agent_id, {})
     prev = rec.get("import") or {}

@@ -154,33 +154,54 @@ else
   bad "版本号不一致：version.py=$V1 / VERSION=$V2"
 fi
 
-say "== 7. TRAE 自述通道 =="
-# 这条通道有三段，少一段 Trae 报的账就落不到卡片上：
-#   写（POST /api/trae/note）→ 存（_本机工作/TRAE自述.jsonl）→ 读（dash 折成卡片行）
+say "== 7. 自述通道（任何 agent 都能报）=="
+# 这条通道有三段，少一段 agent 报的账就落不到卡片上：
+#   写（POST /api/agent/note，任意 agent）→ 存（_本机工作/Agent自述.jsonl）
+#   → 读（dash 折成卡片行，按 agent 分组）
 # 说明书里的接口写错端点（曾经写成 /api/agent/event，那条进总线、卡片读不到），
-# 装到用户机器上表现就是「Trae 明明报了，工作台却空着」—— 只能用断言钉住。
+# 装到用户机器上表现就是「明明报了，工作台却空着」—— 只能用断言钉住。
+# 另外别把接口写回只认 Trae：用户以后装 Codex / 自建 harness 也要能报。
 if ( cd moshan && "${PY}" - <<'PY'
 import sys
 import agent_link
 t = agent_link.prompt("trae", "http://127.0.0.1:8323")
 问题 = []
-if "/api/trae/note" not in t:
-    问题.append("说明书没让 Trae 报 /api/trae/note")
+if "/api/agent/note" not in t:
+    问题.append("说明书没让 agent 报 /api/agent/note")
+if '"agent"' not in t:
+    问题.append("说明书没让 agent 带 agent 字段（卡片没法分组）")
 for k in ('"in"', '"out"', '"calls"'):
     if k not in t:
         问题.append(f"说明书缺用量字段 {k}")
 if not callable(getattr(agent_link, "auto_install", None)):
     问题.append("没有 auto_install（升级后不会自动投放说明书）")
+ids = {a["id"] for a in agent_link.AGENTS}
+for must in ("trae", "codex", "claude", "workbuddy"):
+    if must not in ids:
+        问题.append(f"AGENTS 里没有 {must}（认不出这家就投不了说明书）")
+for a in agent_link.AGENTS:
+    if not a.get("skill"):
+        问题.append(f"{a['id']} 缺 skill 路径")
 if 问题:
     print("；".join(问题)); sys.exit(1)
 PY
-); then ok "说明书要求 Trae 报「工作 + 用量」，且升级后自动投放"; else bad "TRAE 自述通道不完整（改文案时别把接口写回 /api/agent/event）"; fi
+); then ok "说明书走通用 /api/agent/note，认得出 $(cd moshan && "${PY}" -c 'import agent_link;print(len(agent_link.AGENTS))') 家 agent"; else bad "自述通道不完整（别把接口写回 /api/agent/event，也别只认 Trae）"; fi
+
+if grep -q '"/api/agent/note"' moshan/server.py && \
+   grep -q '"/api/trae/note"' moshan/server.py && \
+   grep -q 'Agent自述.jsonl' moshan/server.py && \
+   grep -q 'Agent自述.jsonl' moshan/trae_work.py; then
+  ok "接口两代并存（新 /api/agent/note + 老 /api/trae/note），都落 Agent自述.jsonl"
+else
+  bad "自述接口或落盘路径不对（老路径要保留，否则已装出去的说明书报不上来）"
+fi
 
 if grep -q "def _trae_self_items" moshan/dash.py && \
-   grep -q '_trae_self_items(since_ms)' moshan/dash.py; then
-  ok "工作台会把 TRAE自述.jsonl 折成卡片行"
+   grep -q '_trae_self_items(since_ms)' moshan/dash.py && \
+   grep -q 'Agent自述.jsonl' moshan/dash.py; then
+  ok "工作台会把 Agent自述.jsonl 折成卡片行（按 agent 分组）"
 else
-  bad "dashboard 没读 TRAE自述.jsonl（Trae 报了也看不见）"
+  bad "dashboard 没读 Agent自述.jsonl（agent 报了也看不见）"
 fi
 
 say "== 8. 远端脚本编码与工作目录 =="

@@ -5,6 +5,22 @@
 
 ## [未发布]
 
+### 新增
+- **自述通道从「只认 TRAE」改成「认任何 agent」**：接口 `/api/agent/note`（`agent` 字段决定
+  记到谁名下，缺省「未知」），老的 `/api/trae/note` 保留等价于 `agent=TRAE` —— 已经装出去的
+  说明书不会失效。落盘从 `TRAE自述.jsonl` 换成 `Agent自述.jsonl`，老文件继续读，卡片按 agent
+  分组显示（Codex、Claude Code、自建 harness 各占一行，不再挤在 TRAE 名下）。
+- **认人表扩到 8 家**：Trae / Cursor / Claude Code / WorkBuddy / Codex / Gemini CLI /
+  OpenCode / DeepSeek Harness。升级后说明书**投给每一家已装的**（没装的不造目录），
+  不再是只塞 Trae 一个目录。
+- 非 Trae 的几家不做日志硬解：只如实列出根目录下的 `sessions` / `projects` / `history`
+  里有什么（几条、最后改动时间），导入走它自己按说明书自报 —— 各家会话格式一直在变，
+  猜格式比不读更糟。
+
+### 修复
+- `trae_work.items()` 里有一段重复的 `def items(...)`（历史上误粘贴），后一个定义盖掉前一个，
+  行为没变但读代码会被误导；删掉重复的那段。
+
 ### 计划
 - Windows 上补缩略图：优先 Pillow（pip 装、进程内、Windows 轮子 7 MB），而不是 PowerShell + System.Drawing —— 后者每张图都要起一次 PowerShell，约 200 ms，列表页会明显卡（详见 docs/WINDOWS-PARITY.md）
 - 应用内托盘图标与「退出」菜单

@@ -3725,6 +3725,10 @@ _SOURCE_SPECS = [
      "*/*/*.jsonl"),
     ("TRAE 窗口采样", lambda: getattr(trae_work, "WIN_PATH", Path("/nonexistent")), ""),
     ("TRAE 自述账", lambda: getattr(trae_work, "NOTE_PATH", Path("/nonexistent")), ""),
+    # 任何 agent 都能报的那本账（Codex / Claude / 自建 harness），跟上面老的并存
+    ("Agent 自述账", lambda: getattr(trae_work, "AGENT_NOTE_PATH",
+                                    Path("/nonexistent")), ""),
+    ("Codex", lambda: HOME / ".codex" / "sessions", "*/*/*/rollout-*.jsonl"),
     ("Claude Code", lambda: HOME / ".claude" / "projects", "*/*.jsonl"),
     # 同一个库，两件事：这个库以前只被当成「有没有装 Cherry」，现在里面的
     # ai_usage_record 还供着花费账（cherry_usage），所以名字写全一点。

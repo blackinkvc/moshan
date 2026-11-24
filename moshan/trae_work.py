@@ -1039,7 +1039,10 @@ def task_rows(since_ms: float) -> list[dict]:
 # intent 就是「这轮要干什么」，outcome 是「结果如何」。这是唯一不用切窗口、
 # 不用 OCR、也不依赖 TRAE 配合就能拿到的意图层。命令记录只管证据，两者互补。
 MEM_ROOT = HOME / ".trae-cn" / "memory" / "projects"
-NOTE_PATH = OWN_DIR / "TRAE自述.jsonl"          # skill 让 TRAE 收尾时补的那笔
+# 自述账：任何 agent 收尾时补的那笔。老文件名留着（已经装出去的说明书往那儿写），
+# 新记录统一进 Agent自述.jsonl，读的时候两个都读。
+NOTE_PATH = OWN_DIR / "TRAE自述.jsonl"
+AGENT_NOTE_PATH = OWN_DIR / "Agent自述.jsonl"
 _MEM_CACHE: dict[str, object] = {"at": 0.0, "rows": []}
 _MEM_TTL = 60.0
 _MEM_MERGE_MS = 90 * 60 * 1000     # 记忆时刻前后 90 分钟内的命令算同一轮
@@ -1136,36 +1139,40 @@ def memory_rounds(since_ms: float) -> list[dict]:
 
 
 def note_rounds(since_ms: float) -> list[dict]:
-    """skill 让 TRAE 收尾时主动补的那笔（TRAE自述.jsonl），补记忆库没覆盖的轻活。"""
-    if not NOTE_PATH.exists():
-        return []
+    """agent 收尾时主动补的那笔，补记忆库没覆盖的轻活。
+
+    两个文件都读：`Agent自述.jsonl`（新，任何 agent 都能写）与 `TRAE自述.jsonl`
+    （老，已经装出去的说明书还往那儿写）。老文件里的记录没有 agent 字段，
+    按 TRAE 算。
+    """
     out: list[dict] = []
-    try:
-        lines = NOTE_PATH.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return []
-    for ln in lines:
+    for p, fallback in ((AGENT_NOTE_PATH, "未知"), (NOTE_PATH, "TRAE")):
+        if not p.exists():
+            continue
         try:
-            d = json.loads(ln)
-            t = float(d.get("at") or 0) * 1000
-        except (ValueError, TypeError):
+            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
             continue
-        if t < since_ms:
-            continue
-        task = str(d.get("task") or "").strip()
-        if not task:
-            continue
-        summary = " ".join(str(d.get("summary") or "").split())
-        proj = str(d.get("project") or "").strip()
-        out.append(_item("note" + str(int(t))[-8:], task,
-                         summary or "TRAE 主动上报，没写摘要", t, t, [],
-                         str(d.get("source") or "TRAE 自述"), proj or "TRAE 收尾自报"))
+        for ln in lines:
+            try:
+                d = json.loads(ln)
+                t = float(d.get("at") or 0) * 1000
+            except (ValueError, TypeError):
+                continue
+            if t < since_ms:
+                continue
+            task = str(d.get("task") or "").strip()
+            if not task:
+                continue
+            who = str(d.get("agent") or "").strip() or fallback
+            summary = " ".join(str(d.get("summary") or "").split())
+            proj = str(d.get("project") or "").strip()
+            out.append(_item("note" + str(int(t))[-8:], task,
+                             summary or f"{who} 主动上报，没写摘要", t, t, [],
+                             f"{who} 自述", proj or f"{who} 收尾自报"))
     return out
 
 
-def items(since_ms: float) -> list[dict]:
-    cmd = command_rounds(since_ms)
-    proc = process_rounds(since_ms)
 def items(since_ms: float) -> list[dict]:
     cmd = command_rounds(since_ms)
     proc = process_rounds(since_ms)

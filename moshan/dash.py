@@ -3054,17 +3054,26 @@ def _trae_items(since_ms: float) -> list[dict]:
 
 
 def _trae_self_items(since_ms: float) -> list[dict]:
-    """TRAE 自己报回来的账（`_本机工作/TRAE自述.jsonl`），一轮一条。
+    """agent 自己报回来的账，一轮一条，**按 agent 分组**显示。
+
+    两个文件都读：`_本机工作/Agent自述.jsonl`（新，任何 agent 都往这儿报）与
+    `_本机工作/TRAE自述.jsonl`（老，已装出去的说明书还在写，没有 agent 字段）。
 
     为什么还要这条路：会话记忆（session_memory_*.jsonl）只有「想干什么、结论是什么」，
-    **没有用量**，而且新版 Trae 一换存放位置就读不到；自述这条是 Trae 主动 POST 来的，
-    带 token、换了机器和版本都还在。两条并存，按 id 天然不撞（一个带 message_id，
-    一个带时间戳+任务名）。
+    **没有用量**，而且新版一换存放位置就读不到；自述这条是 agent 主动 POST 来的，
+    带 token、换了机器和版本都还在。两条并存，按 id 天然不撞。
 
-    字段口径与 /api/trae/note 一致：task / summary / project / model / tin / tout /
-    cached / calls。估不出来就写 0 —— 宁可显示 0，也不编一个像样的数字。
+    字段口径与 /api/agent/note 一致：agent / task / summary / project / model /
+    tin / tout / cached / calls。估不出来就写 0 —— 宁可显示 0，也不编像样的数字。
     """
-    p = paths.data_root() / "_本机工作" / "TRAE自述.jsonl"
+    out: list[dict] = []
+    for p, fallback in ((paths.data_root() / "_本机工作" / "Agent自述.jsonl", "未知"),
+                        (paths.data_root() / "_本机工作" / "TRAE自述.jsonl", "TRAE")):
+        out.extend(_self_items_from(p, since_ms, fallback))
+    return out
+
+
+def _self_items_from(p: Path, since_ms: float, fallback: str) -> list[dict]:
     out: list[dict] = []
     try:
         if not p.exists() or p.stat().st_mtime * 1000 < since_ms:
@@ -3091,6 +3100,7 @@ def _trae_self_items(since_ms: float) -> list[dict]:
         task = " ".join(str(o.get("task") or "").split())
         if not task:
             continue
+        who = str(o.get("agent") or "").strip() or fallback
         b = _new_req(ts, str(o.get("project") or ""))
         b["t1"] = ts
         b["ask"] = _clip(task, 320)
@@ -3108,8 +3118,8 @@ def _trae_self_items(since_ms: float) -> list[dict]:
         # 自述里没有分步，calls 只用来让卡片显示「× 步」；一条都没有就按 1 算，
         # 否则 _req_item 会因为「没调用也没提问」把它整条丢掉。
         b["calls"] = b["calls"] or 1
-        rid = "trself" + hashlib.sha1(f"{o.get('at')}|{task}".encode()).hexdigest()[:10]
-        it = _req_item(b, rid, "TRAE", rid)
+        rid = "trself" + hashlib.sha1(f"{who}|{o.get('at')}|{task}".encode()).hexdigest()[:10]
+        it = _req_item(b, rid, who, rid)
         if it:
             it["source"] = "自述"
             out.append(it)

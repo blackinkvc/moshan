@@ -581,10 +581,12 @@ _BRIDGE_STARTED = {"done": False}
 
 
 def _start_trae_bridge() -> None:
-    """升级后自动把「TRAE 自述」说明书塞进 Trae 的技能目录。
+    """升级后自动把「自述」说明书写进每一家已装 agent 的说明目录。
 
-    用户装完新版本不会去点「装说明」，但 Trae 不知道要报账，TRAE 卡就永远是空的。
+    用户装完新版本不会去点「装说明」，但 agent 不知道要报账，卡片就永远是空的。
     所以这一步默认执行，版本变了才重写；失败只打日志，绝不影响启动。
+    认得的几家在 agent_link.AGENTS 里（Trae / Cursor / Claude Code / Codex /
+    WorkBuddy / Gemini / OpenCode / DeepSeek Harness），一家没装也不会造目录。
     """
     if _BRIDGE_STARTED["done"]:
         return
@@ -595,14 +597,14 @@ def _start_trae_bridge() -> None:
             base = f"http://127.0.0.1:{int(CFG.get('local_port') or 8323)}"
             res = agent_link.auto_install(dashmod._root(CFG), base, version.VERSION)
         except Exception as exc:                       # noqa: BLE001
-            print(f"[Moshan] TRAE 说明书自动投放失败（不影响使用）：{exc}", flush=True)
+            print(f"[Moshan] 说明书自动投放失败（不影响使用）：{exc}", flush=True)
             return
-        if res.get("ok") and not res.get("skipped"):
-            print(f"[Moshan] 已更新 TRAE 自述说明书 {version.VERSION} → {res.get('path')}",
+        got = res.get("installed") or []
+        if got:
+            print(f"[Moshan] 已更新自述说明书 {version.VERSION} → {', '.join(got)}",
                   flush=True)
-        elif res.get("skipped") in ("no-trae", "no-path"):
-            print(f"[Moshan] 本机没装 Trae，跳过说明书投放（{res.get('skipped')}）",
-                  flush=True)
+        elif res.get("skipped") == "no-agent":
+            print("[Moshan] 本机没认出任何 agent，跳过说明书投放", flush=True)
 
     threading.Thread(target=run, daemon=True, name="trae-bridge").start()
 
@@ -1504,17 +1506,28 @@ def agent_read(ns: str = "all", since: str = "7d", limit: int = 100,
                          limit=limit, q=q, client=client)
 
 
-@app.post("/api/trae/note", dependencies=[Depends(auth_agent)])
-async def trae_note(request: Request) -> dict:
-    """TRAE 收尾时自报一笔「这一轮干了什么、花了多少」，进 **TRAE 卡**。
+def _self_note_path() -> Path:
+    """自述账落哪：采集层在就用它的，不在就自己拼同样位置。
+
+    两边都指向 `<数据根>/_本机工作/Agent自述.jsonl`，谁写谁读都对得上。
+    老文件 `TRAE自述.jsonl` 继续读（见 dash._agent_self_items），不再写。
+    """
+    return Path(getattr(twmod, "AGENT_NOTE_PATH", "") or
+                (paths.data_root() / "_本机工作" / "Agent自述.jsonl"))
+
+
+async def _self_note(request: Request, forced_agent: str = "") -> dict:
+    """任意 agent 收尾时自报一笔「这一轮干了什么、花了多少」，进 **AI 工作卡**。
 
     跟 /api/agent/event 的分工：那条进 agent 总线（给别的 agent 读），
-    这条落 `_本机工作/TRAE自述.jsonl`，由 dash._trae_self_items() 读成逐轮记录。
-    同一 task 5 分钟内只记一次，防止模型每轮重复刷同一句。
+    这条落 `_本机工作/Agent自述.jsonl`，由 dash._agent_self_items() 读成逐轮记录，
+    卡片按 `agent` 字段分组 —— 所以**接口不绑任何一家**：Trae、Codex、Claude Code、
+    自己写的 harness 都报同一个口。`forced_agent` 只给老路径 /api/trae/note 用。
+
+    同一 (agent, task) 5 分钟内只记一次，防止模型每轮重复刷同一句。
 
     用量字段（model / in / out / cached / calls）可省：估不出来就别填，
-    卡片按 0 显示。**这个接口在没装 cuntu 的干净机器上也得能用** —— 以前
-    trae_work 导入失败就直接 503，等于「新装的中台收不到任何自述」。
+    卡片按 0 显示。**这个接口在没装 cuntu 的干净机器上也得能用**。
     """
     try:
         body = await request.json()
@@ -1525,6 +1538,8 @@ async def trae_note(request: Request) -> dict:
     task = " ".join(str(body.get("task") or "").split())[:80]
     if not task:
         return JSONResponse({"ok": False, "error": "task 必填"}, status_code=400)
+    agent = (forced_agent or str(body.get("agent") or "")
+             or request.headers.get("x-agent") or "").strip()[:40] or "未知"
     try:
         at = float(body.get("at") or time.time())
     except (TypeError, ValueError):
@@ -1538,6 +1553,7 @@ async def trae_note(request: Request) -> dict:
 
     rec = {
         "at": round(at, 1),
+        "agent": agent,
         "task": task,
         "summary": " ".join(str(body.get("summary") or "").split())[:400],
         "project": str(body.get("project") or "").strip()[:120],
@@ -1546,12 +1562,9 @@ async def trae_note(request: Request) -> dict:
         "tout": _num("out"),
         "cached": _num("cached"),
         "calls": _num("calls"),
-        "source": "TRAE 自述",
+        "source": f"{agent} 自述",
     }
-    # 模块在就用它的路径（开发机上和采集层同源），不在就自己拼一份同样的位置 ——
-    # 两边都指向 `<数据根>/_本机工作/TRAE自述.jsonl`，谁写谁读都对得上。
-    p = Path(getattr(twmod, "NOTE_PATH", "") or
-             (paths.data_root() / "_本机工作" / "TRAE自述.jsonl"))
+    p = _self_note_path()
     recent: set[str] = set()
     if p.exists():
         try:
@@ -1565,10 +1578,10 @@ async def trae_note(request: Request) -> dict:
                 continue
             try:
                 if abs(float(d.get("at") or 0) - at) < 300:
-                    recent.add(str(d.get("task") or ""))
+                    recent.add(f"{d.get('agent') or 'TRAE'}|{d.get('task') or ''}")
             except (TypeError, ValueError):
                 continue
-    if task in recent:
+    if f"{agent}|{task}" in recent:
         return {"ok": True, "dup": True, "note": rec}
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -1581,6 +1594,19 @@ async def trae_note(request: Request) -> dict:
         if isinstance(cache, dict):
             cache["at"] = 0.0
     return {"ok": True, "note": rec}
+
+
+@app.post("/api/agent/note", dependencies=[Depends(auth_agent)])
+async def agent_note(request: Request) -> dict:
+    """通用自述入口：任何 agent 都报这里，`agent` 字段决定归到谁的账下。"""
+    return await _self_note(request)
+
+
+@app.post("/api/trae/note", dependencies=[Depends(auth_agent)])
+async def trae_note(request: Request) -> dict:
+    """老入口，等价于 /api/agent/note 且 agent 固定 TRAE。留着是因为已经装出去的
+    说明书里写的是这个地址，删了它们就再也报不上来。"""
+    return await _self_note(request, forced_agent="TRAE")
 
 
 # ---------------------------------------------------------------------------
