@@ -3,6 +3,42 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.7] - 2026-11-25
+
+**Windows 上「一晚上弹了上千个终端窗口」，根因是子进程没关窗口 + 默认终端是
+Windows Terminal。这一版把这条路堵死，并补齐插件表在 Windows 上的识别。**
+
+### 修复
+- **从 GUI 进程起控制台程序会在桌面上弹黑框**。Moshan.exe 本身没有控制台，
+  它去起 `powershell.exe`、`python.exe`、带 `.cmd` 的脚本时，系统会给子进程
+  新建一个控制台窗口；本机「默认终端」若是 Windows Terminal，还会经 COM 交接
+  再拉起一个 `OpenConsole.exe`。轮询/刷新一次闪一个，看上去就是满屏弹窗。
+
+  2026-11-25 在 EVO 上实测到现场：`conhost.exe` 544 个、`OpenConsole.exe` 397 个，
+  且 6 秒内还在新增 21 个，其中 392 个 conhost 的父进程早就退出了 —— 全是孤儿。
+  真正的发起者不是中台（它那 5 秒里 CPU 只涨 0.1 秒、没拉子进程），是另一个
+  程序在每秒跑一次 `git log`；但**中台自己起 powershell 探测时同样会弹**，
+  这条隐患必须堵掉。
+
+  现在统一走 `paths.hide_console()`（POSIX 下返回空 dict，等于不带任何开关）：
+  `hostwork`、`sysinfo`、`pyexe`、`bootstrap`、`heartbeat`、`dedupe_runner`、
+  `ai_trends_runner`、`articlebox`、`server` 的 snapshot 调用全部带上
+  `CREATE_NO_WINDOW`。控制台照旧存在、stdout 照旧能取，只是不显示窗口。
+- **「第三方插件」表在 Windows 上一律显示「这台没装」**。原来只认
+  `/Applications` 下的 `.app`、brew 目录和 PATH 里的命令，这三样 Windows 上都没有。
+  现在补了三条 Windows 判据：注册表「应用和功能」清单（十分钟缓存，覆盖
+  scoop / winget / 用户目录装的）、进程名精确匹配（走 psutil，不用命令行匹配）、
+  本地端口应答。版本号也直接从注册表的 `DisplayVersion` 取。
+- **首次全量扫描把接口堵死**（0.3.5 的 `c9e872d` 已修，这里只是记一笔）：新数据根
+  没有会话缓存时要扫 40~90 秒，而页面 20 秒就 abort —— 表现是「进程消耗」「本机
+  AI 的工作」两张卡一起空。改成后台补扫、本次请求不等待。
+
+### 说明
+- 四档端（橙主端 / 紫自管 / 蓝受限 / 绿只读）**共用这一个版本号**，功能与权限
+  按档位在运行时区分，不按档位分叉版本号。详见 `docs/ARCHITECTURE.md` 第八节。
+- 「本机大模型」卡空白不一定是坏了：LM Studio / Ollama 停掉后端口没人应答，
+  卡片就会显示「没在跑」。服务在、只是没加载模型时，卡片会单独说明。
+
 ## [0.3.6] - 2026-11-25
 
 **双击打开应该是中台，不是口袋的文件列表。口袋只是中台里的一项能力。**

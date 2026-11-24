@@ -30,6 +30,9 @@ import os
 import re
 import shutil
 import subprocess
+
+# Windows 上从 GUI 进程起控制台程序会弹黑框，起子进程时带上这个开关
+NO_WIN = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 import sys
 import threading
 import time
@@ -194,7 +197,8 @@ def pid_alive(pid) -> bool:
 
 def node_version(exe: str) -> tuple | None:
     try:
-        r = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=6)
+        r = subprocess.run([exe, "--version"], capture_output=True, text=True,
+                           timeout=6, creationflags=NO_WIN)
         m = re.search(r"(\d+)\.(\d+)\.(\d+)", (r.stdout or "") + (r.stderr or ""))
         return tuple(int(x) for x in m.groups()) if m else None
     except (OSError, subprocess.SubprocessError):

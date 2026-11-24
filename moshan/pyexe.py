@@ -23,6 +23,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Windows 上起 `py -3` 会新建控制台窗口，别让它在桌面上闪一下。
+# 别的模块（跑脚本的 runner）也共用这一个，别再各写一份。
+NO_WIN = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+
 
 def venv_python(venv) -> Path:
     """venv 目录里的解释器。两个平台的目录名不一样，这是唯一的差别。"""
@@ -43,7 +47,8 @@ def _py_launcher() -> Path | None:
         return None
     try:
         r = subprocess.run([exe, "-3", "-c", "import sys;print(sys.executable)"],
-                           capture_output=True, text=True, timeout=10)
+                           capture_output=True, text=True, timeout=10,
+                           creationflags=NO_WIN)
     except (OSError, subprocess.SubprocessError):
         return None
     out = (r.stdout or "").strip().splitlines()

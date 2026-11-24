@@ -26,6 +26,10 @@ import time
 
 GB = float(1 << 30)
 
+# Windows 上起控制台程序别弹黑框。这模块刻意不依赖 paths（要能单独跑），
+# 所以那点常量就地写一份；POSIX 下是 0，等于不带任何开关。
+_NO_WIN = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+
 
 def _ps():
     try:
@@ -37,7 +41,8 @@ def _ps():
 
 def _run(argv: list[str], timeout: float = 4.0) -> str:
     try:
-        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
+                           creationflags=_NO_WIN)
         return p.stdout or ""
     except Exception:  # noqa: BLE001
         return ""

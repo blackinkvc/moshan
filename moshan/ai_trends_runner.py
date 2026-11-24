@@ -143,7 +143,8 @@ def run(cfg: dict, force: bool = False, timeout: int = 900) -> dict:
         try:
             r = subprocess.run([str(c["python"]), str(c["script"])],
                                cwd=str(c["script"].parents[1]),
-                               capture_output=True, text=True, timeout=timeout)
+                               capture_output=True, text=True, timeout=timeout,
+                               creationflags=pyexe.NO_WIN)
         except subprocess.TimeoutExpired:
             STATE["error"] = "超时"
             return {"ok": False, "error": f"跑了 {timeout}s 还没结束，已中止"}

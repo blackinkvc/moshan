@@ -71,7 +71,8 @@ def detect_ollama(base: str = OLLAMA_DEFAULT) -> dict:
 
     if exe:
         try:
-            out = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=5)
+            out = subprocess.run([exe, "--version"], capture_output=True, text=True,
+                                 timeout=5, **paths.hide_console())
             result["version"] = (out.stdout or out.stderr or "").strip().splitlines()[0][:60]
         except (OSError, subprocess.SubprocessError, IndexError):
             pass

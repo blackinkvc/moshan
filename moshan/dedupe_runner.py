@@ -88,7 +88,8 @@ def run(cfg: dict, apply: bool | None = None, limit: int | None = None,
             cmd += ["--apply", "--limit", str(limit or c["limit"])]
         t0 = time.time()
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                               creationflags=pyexe.NO_WIN)
         except subprocess.TimeoutExpired:
             STATE["error"] = "超时"
             return {"ok": False, "error": f"跑了 {timeout}s 还没结束，已中止"}
@@ -119,7 +120,8 @@ def restore(cfg: dict, batch: str) -> dict:
     if not batch.startswith("去重_"):
         return {"ok": False, "error": "批次名要以 去重_ 开头"}
     r = subprocess.run([str(c["python"]), str(c["script"]), "--root", str(c["root"]),
-                        "--restore", batch], capture_output=True, text=True, timeout=300)
+                        "--restore", batch], capture_output=True, text=True, timeout=300,
+                       creationflags=pyexe.NO_WIN)
     ok = r.returncode == 0
     return {"ok": ok, "output": (r.stdout or r.stderr or "").strip()[:500]}
 
