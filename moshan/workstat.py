@@ -32,12 +32,14 @@
 """
 from __future__ import annotations
 
+import errno
 import json
 import os
 import plistlib
 import re
 import sqlite3
 import subprocess
+import sys
 import threading
 import time
 from datetime import date, datetime, timedelta
@@ -384,6 +386,34 @@ def scan(force: bool = False) -> dict:
 KC_DB = (Path.home() / "Library" / "Application Support"
          / "Knowledge" / "knowledgeC.db")
 _CF_EPOCH = 978307200.0          # Core Data 的时间戳原点（2001-01-01 UTC）
+
+
+def _kc_probe() -> str:
+    """读不到时到底卡在哪一步：文件本身被系统挡住，还是 SQLite 打不开。
+
+    「完全磁盘访问」没给的时候是 EPERM/EACCES —— 这时同一个解释器换个终端跑就能读，
+    所以别去怀疑 SQL 或路径。别的错号（ENOENT/EBUSY/锁）另说。
+    """
+    try:
+        fd = os.open(str(KC_DB), os.O_RDONLY)
+    except OSError as e:
+        if e.errno in (errno.EPERM, errno.EACCES):
+            return "连打开都被拒（EPERM），是 TCC 没授权，不是路径或 SQL 的问题"
+        if e.errno == errno.ENOENT:
+            return "文件不存在（这台机器没开过屏幕使用时间？）"
+        return f"打不开库文件（errno={e.errno}）"
+    else:
+        os.close(fd)
+        return "文件能打开，是 SQLite 那一层失败（库被占用或已损坏）"
+
+
+def _self_exe() -> str:
+    """要加进「完全磁盘访问」的那个二进制（跟着 venv 走的解释器本体）。"""
+    try:
+        return os.path.realpath(sys.executable)
+    except Exception:                                  # noqa: BLE001
+        return ""
+
 _NAME = {"m": {}, "at": 0.0}
 _NAME_LOCK = threading.Lock()
 # 兜底译名：系统盘扫不到的那几个（装在别处 / 沙箱里），手写比留一串 bundle id 强
@@ -630,10 +660,13 @@ def screen(days: int = 30) -> dict:
         # 最常见的就是没给「完全磁盘访问」（launchd 起的服务默认没有），
         # 退到自采样本：数据从服务开始跑的那天起，至少有今天的。
         fb = _screen_from_samples(days)
-        fb["why"] = (f"系统屏幕使用库读不了（{type(e).__name__}: {e}）——"
-                     "要在「隐私与安全性 · 完全磁盘访问」里给这个 python 授权；"
-                     "在那之前用本服务自己采的前台样本")
+        exe = _self_exe()
+        fb["why"] = (f"系统屏幕使用库读不了（{type(e).__name__}: {e}）——{_kc_probe()}。"
+                     + (f"要补历史：把 {exe} 加进「系统设置 · 隐私与安全性 · 完全磁盘访问」并打开开关；"
+                        if exe else "要补历史：给本服务的解释器「完全磁盘访问」；")
+                     + f"在那之前只用本机自己采的前台样本（{fb.get('span', ['', ''])[0]} 起）")
         fb["need_fda"] = True
+        fb["exe"] = exe
         return fb
     if not rows:
         return _screen_from_samples(days)
@@ -1153,6 +1186,7 @@ def view(days: int = 30, day: str = "", fresh: bool = False) -> dict:  # noqa: F
             "day": day,
             "apps": sc.get("day_apps") or [],
             "names": sc.get("names") or {},
+            "exe": sc.get("exe") or "",
         },
         "agents": agents,
         "models": models,
