@@ -165,27 +165,22 @@ bash scripts/fix-exfat.sh
   `du` 看到的 `.git` 体积会远超真实内容（例如真实 1 MB 显示 80 MB），这是块放大，
   不影响功能，也不用清。
 
-## 推送与合并（多窗口协作）
+## 推送与维护（单人维护）
 
-本机只有**一份工作目录**，多个 Agent 窗口（TRAE / WorkBuddy 等）共用它。为了不互相
-踩工作区，规矩只有三条：
+这个仓库现在只由 **WorkBuddy** 一个窗口维护，`main` 直推，没有分支流程。
 
-1. **不切分支**。切了就会把别人的未提交改动带走。
-2. **除了主力窗口，谁都不要把提交推到 `main`**。做完自己的活，把当前 HEAD 推到自己的分支：
+- 改完照常：`bash scripts/check.sh` 全绿 → `git commit` → 推 `main`。
+- 推送要带放行令牌，否则 `.git/hooks/pre-push` 会拦下来（防误推、防手滑推 tag）：
 
-   ```bash
-   git push origin HEAD:refs/heads/agent/trae      # 名字换成自己的
-   ```
+  ```bash
+  MOSHAN_PUSH=workbuddy git -c http.version=HTTP/1.1 -c http.postBuffer=524288000 \
+    -c credential.helper=osxkeychain push origin main
+  ```
 
-3. **`main` 的合并与推送、打 tag 只由主力窗口做**（需要 `MOSHAN_PUSH=workbuddy`）。
-   仓库里装了 `.git/hooks/pre-push` 强制这一点：推 `main` / tag 会被直接拒掉，
-   推 `agent/*` 随便推。闸门把每次尝试记在 `~/Documents/cuntu/push-guard.log`。
-
-主力窗口合并时做的事：`git fetch` → 看 `git log --oneline main..origin/agent/<名字>` 与
-`git diff` → `git merge --no-ff`（或 `cherry-pick`）→ `bash scripts/check.sh` 全绿 →
-`MOSHAN_PUSH=workbuddy git push origin main`。
-
-后续窗口拿到最新版：`git pull --ff-only`（本地没有自己的提交时就能直接快进）。
+- **打 tag 等于对外发版**：`build.yml` 会构建 macOS / Windows 两套安装包并直接创建
+  Release，正文由 `CHANGELOG.md` 里对应版本那节生成。确认后才打。
+- 闸门把每次推送尝试记在 `~/Documents/cuntu/push-guard.log`；`agent/*` 分支仍放行，
+  将来真出现第二个协作者时再启用「各推分支、集中合并」那套（`~/Documents/cuntu/merge-agent.sh`）。
 
 ## 不要做的事
 
