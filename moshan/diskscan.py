@@ -463,6 +463,7 @@ def types(path: str, roots: list[str]) -> dict:
     rows = sorted(agg.values(), key=lambda r: -r["size"])
     data = {"ok": True, "path": real, "entries": rows,
             "total": sum(r["size"] for r in rows), "truncated": cut,
+            "crumbs": _crumbs(Path(real), roots),
             "at": time.strftime("%H:%M:%S")}
     _cache_put(key, data)
     return data

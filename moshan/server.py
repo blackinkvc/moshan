@@ -985,7 +985,10 @@ def _disk_roots() -> list[str]:
 @app.get("/api/disk/volumes", dependencies=[Depends(auth)])
 def disk_volumes() -> dict:
     try:
-        return {"ok": True, "vols": diskscan.volumes()}
+        # home 一起给：前端的「类型」模式默认看家目录 —— 整块盘里 /usr、/System
+        # 那些系统文件会把「其他」这一类顶到十几 G，看文件整理毫无意义。
+        return {"ok": True, "vols": diskscan.volumes(),
+                "home": str(Path.home())}
     except Exception as e:                     # noqa: BLE001
         return {"ok": False, "error": f"{type(e).__name__}: {e}"[:160], "vols": []}
 
