@@ -1185,6 +1185,11 @@ def dash_data() -> dict:
     """工作台一次性拉全量：探测/巡检/心跳/新闻/存图/阅读/收件箱/去重/OCR。"""
     data = dashmod.payload(CFG)
     data["ledger"] = ledger.payload(CFG)
+    # 这份资料库是哪台产生的：foreign 非空说明数据根是从别的机器拷过来的
+    # （2026-11-25 EVO 显示着 mac 的 629 条流水就是这么来的）。
+    # 只报不拦，让前端能提示，也让 curl 一眼看得出来。
+    data["machine"] = {"host": paths.stamp_machine().get("host") or "",
+                       "foreign": paths.foreign_origin()}
     return data
 
 
