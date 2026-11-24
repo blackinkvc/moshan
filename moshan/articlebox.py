@@ -14,6 +14,7 @@ from pathlib import Path
 
 import linkbox          # 判重键与重复窗口跟存图共用一套，别各写一份
 import pending
+import pyexe            # 只为了借 NO_WIN：起子进程别在 Windows 桌面上弹黑框
 
 HERE = Path(__file__).resolve().parent
 # 解释器路径跟 linkbox 走同一份约定（cuntu 位置可配 + Windows 的 Scripts/python.exe）
@@ -121,7 +122,7 @@ class ArticleBox:
         try:
             p = subprocess.run([str(PY), str(SCRIPT)] + cmd,
                                capture_output=True, text=True, timeout=TIMEOUT,
-                               cwd=str(HERE))
+                               cwd=str(HERE), creationflags=pyexe.NO_WIN)
         except subprocess.TimeoutExpired:
             return {"ok": False, "error": f"超时（>{TIMEOUT} 秒）"}
         except OSError as e:

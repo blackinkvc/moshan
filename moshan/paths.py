@@ -191,6 +191,25 @@ def ensure_layout() -> None:
     stamp_machine()
 
 
+def hide_console() -> dict:
+    """subprocess 的「别弹黑框」开关，展开进调用参数里用。
+
+    为什么需要：Windows 上 GUI 程序（Moshan.exe 无控制台）去起一个控制台程序
+    （powershell.exe / 带 `.cmd` 的脚本）时，系统会为子进程新建一个控制台窗口。
+    本机的「默认终端」若是 Windows Terminal，还会经 COM 交接再拉起
+    OpenConsole.exe —— 每调用一次就闪一个终端窗口，轮询起来就是满屏弹窗
+    （2026-11-25 在 EVO 上实测过：一夜之间攒了 400 多个 OpenConsole 孤儿）。
+
+    CREATE_NO_WINDOW（0x08000000）让子进程照旧有控制台、照旧能写 stdout，
+    但那个控制台不显示窗口。只在 Windows 有意义；POSIX 下返回空 dict，
+    调用处 `**paths.hide_console()` 不会多带任何参数。
+    """
+    if os.name != "nt":
+        return {}
+    import subprocess
+    return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)}
+
+
 def describe() -> dict:
     """给「关于」页与日志用的一览。"""
     return {

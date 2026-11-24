@@ -845,7 +845,8 @@ def _start_llmcost_scheduler() -> None:
             try:
                 env = dict(os.environ, LLMCOST_DIR=data)
                 r = subprocess.run([py, script, "--snapshot"], capture_output=True,
-                                   text=True, timeout=600, env=env)
+                                   text=True, timeout=600, env=env,
+                                   **paths.hide_console())
                 tail = (r.stdout or r.stderr or "").strip().splitlines()[-1:]
                 log({"event": "llmcost_snapshot", "ok": r.returncode == 0, "tail": tail})
             except (OSError, subprocess.SubprocessError) as e:

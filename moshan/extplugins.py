@@ -35,6 +35,14 @@ from pathlib import Path
 RECIPE_FILE = "第三方插件.json"
 APP_DIRS = ["/Applications", "/System/Applications", "/Applications/Utilities",
             "/System/Applications/Utilities", str(Path.home() / "Applications")]
+# Windows 没有 .app 包，程序散在三处「默认安装地」。列进来只为了 find_app 能按
+# 名字认出来；真正的权威清单是注册表（见 _win_apps）。
+if os.name == "nt":
+    _PF = os.environ.get("ProgramFiles") or r"C:\Program Files"
+    _PF86 = os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)"
+    APP_DIRS = [_PF, _PF86,
+                str(Path(os.environ.get("LOCALAPPDATA") or
+                         (Path.home() / "AppData" / "Local")) / "Programs")]
 
 _LOCK = threading.Lock()
 _TASK_LOCK = threading.Lock()
@@ -518,6 +526,76 @@ def _brew_installed(r: dict) -> bool:
     return False
 
 
+_WIN_APPS: dict = {"at": 0.0, "map": {}}
+
+
+def _win_apps() -> dict[str, tuple[str, str]]:
+    """Windows 上「装了什么」：读注册表三处 Uninstall 键，十分钟刷一次。
+
+    为什么不能只看 Program Files：Windows 程序不一定在 PATH 里，也不一定装在
+    固定目录（scoop / winget / 用户目录都可能）。「应用和功能」里那份清单是唯一
+    覆盖全的，安装包基本都会登记。键名统一转小写，后面按子串认。
+
+    返回 {小写显示名: (原始显示名, 版本)}。
+    """
+    if os.name != "nt":
+        return {}
+    now = time.time()
+    if _WIN_APPS["map"] and now - _WIN_APPS["at"] < 600:
+        return _WIN_APPS["map"]
+    import winreg
+    out: dict[str, tuple[str, str]] = {}
+    subs = [
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_LOCAL_MACHINE,
+         r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_CURRENT_USER,
+         r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+    ]
+    for hive, sub in subs:
+        try:
+            k = winreg.OpenKey(hive, sub)
+        except OSError:
+            continue
+        i = 0
+        while True:
+            try:
+                kid = winreg.EnumKey(k, i)
+                i += 1
+            except OSError:
+                break
+            try:
+                sk = winreg.OpenKey(k, kid)
+                dn = str(winreg.QueryValueEx(sk, "DisplayName")[0] or "").strip()
+                ver = str(winreg.QueryValueEx(sk, "DisplayVersion")[0] or "")
+                if dn:
+                    out.setdefault(dn.lower(), (dn, ver))
+                winreg.CloseKey(sk)
+            except OSError:
+                continue
+        try:
+            winreg.CloseKey(k)
+        except OSError:
+            pass
+    _WIN_APPS.update(at=now, map=out)
+    return out
+
+
+def _win_find(name: str) -> tuple[str, str] | None:
+    """按名字在注册表清单里找：先全等，再子串（取最短的那个，避免
+    「Ollama」被认成「Ollama Proxy 插件」这种更长的东西）。"""
+    q = (name or "").strip().lower()
+    if not q:
+        return None
+    apps = _win_apps()
+    if q in apps:
+        return apps[q]
+    hits = [v for k, v in apps.items() if q in k]
+    if not hits:
+        return None
+    return sorted(hits, key=lambda x: len(x[0]))[0]
+
+
 def installed(r: dict) -> bool:
     """装没装。.app 优先，其次命令行，最后 brew 目录。"""
     app = r.get("app")
@@ -529,6 +607,14 @@ def installed(r: dict) -> bool:
             return True
     if r.get("cli") and which(r["cli"]):
         return True
+    if os.name == "nt":
+        # Windows 上再补两条：注册表登记过、或者进程/端口正在应答。
+        # 这条是 0.3.7 补的 —— 之前整张插件表在 Windows 上一律「这台没装」。
+        if _win_find(str(r.get("name") or "")):
+            return True
+        if _pgrep_exact(_exe_name(r)):
+            return True
+        return port_open(r.get("port"))
     return _brew_installed(r)
 
 
@@ -540,6 +626,26 @@ def _pgrep_exact(name: str) -> bool:
     于是 curl 自己会被认成「X 正在运行」——实测过一次，加完计算器就显示运行中。
     """
     if not name:
+        return False
+    if os.name == "nt":
+        # Windows 没有 pgrep：用 psutil 按进程名全等比（同样不用命令行匹配，
+        # 理由见上）。名字统一削掉 .exe 再比，前后大小写不敏感。
+        try:
+            import psutil
+        except ImportError:
+            return False
+        want = name.strip().lower()
+        if want.endswith(".exe"):
+            want = want[:-4]
+        try:
+            for p in psutil.process_iter(["name"]):
+                nm = str((p.info or {}).get("name") or "").strip().lower()
+                if nm.endswith(".exe"):
+                    nm = nm[:-4]
+                if nm == want:
+                    return True
+        except Exception:                                  # noqa: BLE001
+            return False
         return False
     try:
         rc = subprocess.run(["/usr/bin/pgrep", "-x", "-q", name],
@@ -634,6 +740,10 @@ def version(r: dict) -> str:
     found = find_app(r.get("name", ""))
     if found:
         return _app_info(found)["version"]
+    if os.name == "nt":
+        hit = _win_find(str(r.get("name") or ""))
+        if hit:
+            return hit[1]
     return ""
 
 

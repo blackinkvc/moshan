@@ -96,7 +96,9 @@ GB = 1073741824.0
 
 def _run(argv: list[str], timeout: float = 4) -> str:
     try:
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        # 别弹黑框 —— Windows 上起 powershell 会新建控制台，轮询一次闪一个窗口
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
+                           **paths.hide_console())
         return r.stdout or ""
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -578,7 +580,7 @@ def specs(fresh: bool = False) -> dict:
 def _run_env(argv: list[str], extra: dict, timeout: float = 8) -> str:
     try:
         r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
-                           env={**os.environ, **extra})
+                           env={**os.environ, **extra}, **paths.hide_console())
         return r.stdout or ""
     except (OSError, subprocess.SubprocessError):
         return ""
