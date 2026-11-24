@@ -165,22 +165,74 @@ bash scripts/fix-exfat.sh
   `du` 看到的 `.git` 体积会远超真实内容（例如真实 1 MB 显示 80 MB），这是块放大，
   不影响功能，也不用清。
 
-## 推送与维护（单人维护）
+## 推送、并行任务与 main 保护
 
-这个仓库现在只由 **WorkBuddy** 一个窗口维护，`main` 直推，没有分支流程。
+维护者是 **WorkBuddy**，但经常同时开着好几个窗口改这个仓库。真正会丢东西的不是「谁改文件」，
+而是「**多个写者抢同一条分支**」：push 被拒时，AI 会自己 fetch / 强推 / `reset --hard`
+「保留我的版本」，把别人的提交抹掉，而且不报错。所以用三层堵，缺一层都堵不住。
 
-- 改完照常：`bash scripts/check.sh` 全绿 → `git commit` → 推 `main`。
-- 推送要带放行令牌，否则 `.git/hooks/pre-push` 会拦下来（防误推、防手滑推 tag）：
+### 第 1 层：文件系统隔离（治「写同一份文件」）
 
-  ```bash
-  MOSHAN_PUSH=workbuddy git -c http.version=HTTP/1.1 -c http.postBuffer=524288000 \
-    -c credential.helper=osxkeychain push origin main
-  ```
+新建任务时打开 **Worktree 开关**（输入框下方，默认关），选 Base Branch = `main`，
+WorkBuddy 会建独立目录 + `workbuddy/main-<hash>` 分支，文件级互不污染。
+命令行等价物：
 
-- **打 tag 等于对外发版**：`build.yml` 会构建 macOS / Windows 两套安装包并直接创建
-  Release，正文由 `CHANGELOG.md` 里对应版本那节生成。确认后才打。
-- 闸门把每次推送尝试记在 `~/Documents/cuntu/push-guard.log`；`agent/*` 分支仍放行，
-  将来真出现第二个协作者时再启用「各推分支、集中合并」那套（`~/Documents/cuntu/merge-agent.sh`）。
+```bash
+bash ~/Documents/cuntu/new-worktree.sh <任务名>          # 建 /Volumes/AI仓库/worktrees/<任务名>
+bash ~/Documents/cuntu/new-worktree.sh --rm <任务名>     # 用完删掉
+```
+
+不要在主工作目录里 `git checkout -b` —— 本机只有一份工作目录，切分支会把别人未提交的
+改动一起带走。主工作目录永远停在 `main`。
+
+### 第 2 层：服务端锁 main（治「推同一条分支」，唯一无法绕过的一层）
+
+仓库上了 GitHub Ruleset（Settings → Rules → Rulesets，`main-baseline`）：
+
+- Require a pull request before merging（approvals = 0，单人仓库不能自己批自己）
+- Block force pushes
+- Restrict deletions
+- **Bypass list 为空** —— 管理员也绕不过
+
+所以 `main` 的直接推送现在服务端会拒。日常流程变成：
+
+```bash
+git push origin HEAD:refs/heads/agent/<名字>     # 推自己的分支
+# 建 PR → 合并（走 merge commit，不是 squash，这样本地能 fast-forward 上去）
+git fetch origin && git merge --ff-only origin/main
+```
+
+发版（打 tag）不受影响，tag 不是分支引用。
+
+### 第 3 层：钩子 + 规约（治「Agent 自作主张」）
+
+`.git/hooks/pre-push` 拦四类：
+
+| 情形 | 结果 |
+|---|---|
+| 非快进推送 / 改已有 tag / 删分支（任何分支） | 拒（`MOSHAN_FORCE=1` + 令牌才放，仅限用户排障） |
+| 推 `main` / `master` / 非 `agent/*` 分支 | 拒（`MOSHAN_PUSH=workbuddy` 放行） |
+| 推 `refs/heads/agent/*` | 放行 |
+| 推 tag | 拒 |
+
+每次尝试记 `~/Documents/cuntu/push-guard.log`（谁、什么引用、是否强推）。
+钩子不依赖具体 Agent，任何工具在这份仓库里执行 git 都会撞上它。行为规约写在根目录
+**`AGENTS.md`**（跨工具通用）和 `.trae/rules/project_rules.md`。
+
+**别绕过钩子**：`--no-verify`、删钩子、卸载后重装都不算解决方式，服务端那道门还在，
+只是错误信息变难懂了。
+
+### 已经撞了怎么收
+
+1. 先在 GitHub 上确认 ruleset 是 active，防止继续被抹。
+2. 本地丢的提交：`git reflog` 找 SHA → `git cherry-pick`。
+3. 远端被覆盖的提交：仓库 Events / `git ls-remote` 翻旧 SHA，同样 cherry-pick 回来。
+4. 这一轮**不要交给 Agent 做**，手动来。
+
+### 一条经验
+
+Git 是版本历史，不是共享内存。需要多窗口实时共享的状态（配置表、进度数据、看板）
+别放仓库里，放中台的接口后面 —— 现在 `Agent自述.jsonl`、`pocket.jsonl` 就是这么处理的。
 
 ## 不要做的事
 
