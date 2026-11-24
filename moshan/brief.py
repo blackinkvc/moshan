@@ -644,9 +644,48 @@ def push(data: dict, cfg: dict | None = None, dry: bool = False,
 # 「昨天的账」是打扰，不如等明天。
 PUSH_FROM, PUSH_TO = 8, 11
 
+# 一天最多打几跳（60 秒一跳 ≈ 5 分钟）。网关短暂抽风要能自己缓过来；
+# 但整段窗口都连不上就别每跳都上去碰一次，记一条 giveup 收手。
+PUSH_TRIES = 5
+
 
 def _push_state(root: Path) -> Path:
     return brief_dir(root) / "_推送.json"
+
+
+def _claim_path(day: str, root: Path) -> Path:
+    return brief_dir(root) / f"{day}.push"
+
+
+def _sent_path(day: str, root: Path) -> Path:
+    return brief_dir(root) / f"{day}.sent.json"
+
+
+def _sent_state(day: str, root: Path) -> dict:
+    """今天哪几段已经发成功、试过几跳。
+
+    为什么要记：推送是逐段发的，第 3 段失败时前 2 段已经在手机上了。重试要是
+    从头发一遍，手机就收到两遍；不重试，今天剩下 3 段全丢。所以记下成功的 id，
+    重试只补没发出去的那几段。
+    """
+    st = _load(_sent_path(day, root), {}) or {}
+    try:
+        tries = int(st.get("tries") or 0)
+    except (TypeError, ValueError):
+        tries = 0
+    return {"ids": [str(x) for x in (st.get("ids") or []) if x], "tries": tries}
+
+
+def _save_sent(day: str, root: Path, ids, tries: int) -> None:
+    try:
+        _sent_path(day, root).write_text(
+            json.dumps({"ids": sorted({str(x) for x in ids if x}),
+                        "tries": int(tries),
+                        "at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
+                       ensure_ascii=False),
+            encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _claim(day: str, root: Path) -> bool:
@@ -657,7 +696,7 @@ def _claim(day: str, root: Path) -> bool:
     还没推」—— 结果是十条。O_CREAT|O_EXCL 是原子的：谁先建出 <日期>.push
     谁推，另一个默默退出。落盘的 _推送.json 是给人看的账，不是锁。
     """
-    p = brief_dir(root) / f"{day}.push"
+    p = _claim_path(day, root)
     try:
         fd = os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         os.write(fd, str(int(time.time())).encode())
@@ -679,6 +718,75 @@ def _write_push_state(root: Path, day: str) -> None:
         pass
 
 
+def _tick(cfg: dict, root: Path, log=None) -> str:
+    """跑一跳。返回值只给测试看，业务不看它。
+
+    done   今天已经推完（或全发过了只是没落账）
+    wait   不在 8–11 点窗口
+    busy   另一个实例正在推，这一跳让开
+    retry  还有段没发出去，下一跳接着补（只补没成功的）
+    giveup 今天试够次数了，不再碰网关
+
+    牌子（<日期>.push）仍是「今天归我」的唯一凭据：它**推成功与否都不删**。
+    删了的话，另一个实例会在同一分钟接着抢、接着发，手机上就多一份。所以
+    「失败要能重试」只能靠 sent 账，不能靠放牌。
+    """
+    now = datetime.now()
+    if not (PUSH_FROM <= now.hour < PUSH_TO):
+        return "wait"
+    today = now.date().isoformat()
+    if (_load(_push_state(root), {}) or {}).get("last") == today:
+        return "done"
+
+    st = _sent_state(today, root)
+    if st["tries"] >= PUSH_TRIES:
+        # 到点了就收手，只记一次 —— 否则整段窗口每分钟刷一行同样的放弃
+        if st["tries"] == PUSH_TRIES:
+            _save_sent(today, root, st["ids"], PUSH_TRIES + 1)
+            if log:
+                log({"event": "brief_push_giveup", "day": today,
+                     "sent": len(st["ids"]), "tries": PUSH_TRIES})
+        return "giveup"
+
+    # 牌子可能上一跳就抢到了（发了一半失败），那就跳过抢占直接续推。
+    if not _claim_path(today, root).exists() and not _claim(today, root):
+        return "busy"
+
+    try:
+        data = build(today, cfg)
+    except Exception as e:                 # noqa: BLE001  算不出来也算一次尝试
+        _save_sent(today, root, st["ids"], st["tries"] + 1)
+        if log:
+            log({"event": "brief_build_error", "day": today, "error": str(e)[:160],
+                 "tries": st["tries"] + 1})
+        return "retry"
+
+    sections = [s for s in (data.get("sections") or []) if s.get("id")]
+    todo = [s["id"] for s in sections if s["id"] not in st["ids"]]
+    if not todo:                           # 全发过了，只是没来得及落账（进程被 kill）
+        _write_push_state(root, today)
+        if log:
+            log({"event": "brief_push", "day": today, "sent": len(sections),
+                 "resumed": True})
+        return "done"
+
+    r = push(data, cfg, only=todo)
+    got = [x for x in (r.get("sent") or []) if x]
+    sent = list(st["ids"]) + got
+    _save_sent(today, root, sent, st["tries"] + 1)
+    left = [x for x in todo if x not in set(got)]
+    if r.get("ok") and not left:
+        _write_push_state(root, today)
+        if log:
+            log({"event": "brief_push", "day": today, "sent": len(set(sent)),
+                 "tries": st["tries"] + 1})
+        return "done"
+    if log:
+        log({"event": "brief_push_fail", "day": today, "left": left,
+             "fail": r.get("fail"), "tries": st["tries"] + 1})
+    return "retry"
+
+
 def scheduler_loop(cfg: dict, log=None) -> None:
     """每天早上把简报逐条推出去，推过就落盘记一笔。
 
@@ -687,25 +795,16 @@ def scheduler_loop(cfg: dict, log=None) -> None:
     把闹钟放进它里面最稳 —— 开机晚了，9 点、10 点进来也能补上。
 
     去重靠 _推送.json 的 last：进程被重启十次，今天也只推一次。
+
+    2026-11-24 修：以前抢牌建出来就不收，第一跳发送一失败，后面每一跳都撞在
+    FileExistsError 上，当天彻底不推 —— 窗口补推形同虚设。现在牌子照样只让
+    一个实例进，但把「哪几段已发成功」记进 <日期>.sent.json：失败下一跳只补
+    漏的那几段（不重发），试够 PUSH_TRIES 跳才放弃。
     """
     root = _root(cfg)
     while True:
         try:
-            now = datetime.now()
-            if PUSH_FROM <= now.hour < PUSH_TO:
-                today = now.date().isoformat()
-                last = (_load(_push_state(root), {}) or {}).get("last")
-                if last != today and _claim(today, root):
-                    data = build(today, cfg)
-                    r = push(data, cfg)
-                    if r.get("ok"):
-                        _write_push_state(root, today)
-                        if log:
-                            log({"event": "brief_push", "day": today,
-                                 "sent": len(r.get("sent") or [])})
-                    elif log:
-                        log({"event": "brief_push_fail", "day": today,
-                             "fail": r.get("fail")})
+            _tick(cfg, root, log)
         except Exception as e:             # noqa: BLE001  闹钟自己不能把进程带崩
             if log:
                 log({"event": "brief_loop_error", "error": str(e)[:200]})
