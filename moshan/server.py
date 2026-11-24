@@ -1219,6 +1219,13 @@ def notes_write(body: dict) -> dict:
     return dashmod.write_notes(CFG, body)
 
 
+@app.post("/api/notes/add", dependencies=[Depends(auth)])
+def notes_add(body: dict) -> dict:
+    # 追加一条（页面之外的调用方用：设备事件、脚本）。整份覆盖写那条在
+    # /api/notes，这条是锁内读-改-写，两边不会互相冲掉。
+    return dashmod.add_note(CFG, body)
+
+
 # —— 行程：一段话交给本机 4B 读成字段（2026-11-18）——
 #   同步阻塞 3~8 秒（冷启动更久），所以路由用普通 def 让 FastAPI 丢线程池，
 #   别用 async def 把事件循环卡住。解析失败也要给结果：dash.py 里会退回正则。

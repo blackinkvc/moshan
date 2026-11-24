@@ -3342,6 +3342,15 @@ def _worklog(cfg: dict) -> dict:
 #   scope="view"     没有独立进程，只是口袋自己的一个页面（url 指过去）
 #   cmd              双击启动脚本（相对数据根），只有 service 才有
 #   svc_port         服务清单探的端口（pocket 自己跟自己同进程，故单独给）
+#
+# 分组（group，2026-11-23 加第四档）：
+#   tool    小工具   —— 打开来用的：看图、阅读、影音、日程、备忘
+#   plugin  内置插件 —— 中台自己的能力与运维：口袋、巡检、本机工作、关注
+#   other   其他插件 —— 「自己写的、但不属于前两档」的东西：Token 价格追踪、
+#                       智能设备、界面评审、游戏记录、月相、玄枢号看板、股权投资分析。
+#                       共同点是各自有一套数据 + 一套页面，既不是随手打开的小工具，
+#                       也不是中台运维；以前硬塞进内置插件，把「内置」那档撑得没法看。
+#   third   第三方插件 —— 从目录里装进来的开源程序（这个不由 group 决定，看 ext）
 BUILTIN_APPS = [
     {"id": "pocket", "name": "口袋", "scope": "service", "port": None, "svc_port": 8321,
      "svc_name": "口袋（传输/抓取）", "self": True, "url": "/",
@@ -3368,10 +3377,12 @@ BUILTIN_APPS = [
      "url": "/dash?v=host", "note": "进程 / 磁盘内存 / token 折算",
      "glyph": "hostwork", "group": "plugin"},
     # Token 价格追踪：API / 套餐 / 本地部署 三维度成本 + 多源交叉校验。数据在 13-算价/。
+    # 代码已单独拆成 GitHub 仓库（pamphile/pocket-llmcost），安装和更新都从那边拉；
+    # 中台这边只留「怎么起」这一条。见 13-算价/README.md。
     {"id": "llmcost", "name": "Token 价格追踪", "scope": "service", "port": 8776,
      "svc_name": "Token 价格追踪", "url": "http://127.0.0.1:8776/",
      "note": "模型 API / 套餐 / 本地部署成本", "cmd": ("13-算价", "_算价.command"),
-     "glyph": "llmcost", "group": "plugin"},
+     "glyph": "llmcost", "group": "other"},
     {"id": "follow", "name": "关注", "scope": "service", "port": 8780, "svc_name": "关注追踪",
      "url": "http://127.0.0.1:8780/",
      "note": "微博/B站/小红书/抖音更新", "cmd": ("11-关注追踪", "_关注追踪.command"),
@@ -3382,7 +3393,7 @@ BUILTIN_APPS = [
     {"id": "review", "name": "界面评审", "scope": "service", "port": 8785,
      "svc_name": "界面评审", "url": "http://127.0.0.1:8785/",
      "note": "UI 体检 / 待决定 / 已落地", "cmd": ("18-界面评审", "_界面评审.command"),
-     "glyph": "review", "group": "tool"},
+     "glyph": "review", "group": "other"},
     # 手机接入（2026-11-21 改）：它**不是插件**，是「智能设备」那个插件里的一张功能卡
     # （8778 的 data-card="pair"，见 pgkit.CARDS["devices"]）。所以这里不挂号丸 ——
     # 顶栏只放真正的插件，功能卡去设备页看，或在工作台「＋ 插件卡片」把它钉到主页。
@@ -3397,7 +3408,7 @@ BUILTIN_APPS = [
 # 有了这三个属性，顶栏药丸、＋入口弹窗、深链 #card=ledger 自动就有，
 # 不用再到 BUILTIN_APPS 里手抄一行 —— 抄漏了（记账就是这么漏的）页面上看不出来。
 _TAG_RE = re.compile(r"<[a-zA-Z][^>]*\bdata-card=\"([A-Za-z0-9_-]+)\"[^>]*>")
-_ATTR_RE = re.compile(r'data-tool(-glyph|-note)?="([^"]*)"')
+_ATTR_RE = re.compile(r'data-tool(-glyph|-note|-group)?="([^"]*)"')
 
 
 def _auto_view_apps(cfg: dict) -> list[dict]:
@@ -3420,7 +3431,10 @@ def _auto_view_apps(cfg: dict) -> list[dict]:
             # 卡片型工具没有独立进程，落点是「内容页」（?v=more）并滚到这张卡 ——
             # 2026-11-19 起纯内容卡片合到那一页，首页只留摘要。
             "url": "/dash?v=more#card=" + cid, "port": None, "scope": "view", "up": True,
-            "group": "tool",          # 卡片型的就是「小工具」：打开来用，不是运维面板
+            # 卡片型默认是「小工具」：打开来用，不是运维面板。
+            # 想归「其他插件」（月相这种：自带数据 + 一套自己的视图），
+            # 在卡片上写 data-tool-group="other" 即可，别在后端写死 id 名单。
+            "group": "other" if (attrs.get("-group") or "").strip().lower() == "other" else "tool",
         })
     return out
 
@@ -3444,8 +3458,10 @@ PLUGINS_FILE = "plugins.json"
 _PLUGIN_ID = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 _PLUGIN_LOCK = threading.Lock()
 _PLUGIN_TEMPLATE = ("加插件就往下写一条：{\"id\":\"backup\",\"name\":\"备份\",\"port\":8781,"
-                    "\"cmd\":\"14-备份/_备份.command\",\"note\":\"一句话说明\",\"group\":\"plugin\"}。"
-                    "group 决定弹窗里归哪一档（tool=小工具 / plugin=内置插件，不写按有没有端口猜）；"
+                    "\"cmd\":\"14-备份/_备份.command\",\"note\":\"一句话说明\",\"group\":\"other\"}。"
+                    "group 决定弹窗里归哪一档（tool=小工具 / plugin=内置插件 / "
+                    "other=其他插件 —— 自己写的、自带数据与页面、既不是随手打开也不是中台运维；"
+                    "不写按有没有端口猜）；"
                     "还没做的加 \"soon\":true 先占位。写完刷新页面即可，不用重启口袋；"
                     "id 跟内置重名会覆盖内置那一行。")
 
@@ -3507,7 +3523,7 @@ def _norm_plugin(raw: dict, idx: int = 0) -> dict | None:
         if d.strip() and f.strip():
             cmd_t = (d.strip(), f.strip())
     group = str(raw.get("group") or "").strip().lower()
-    if group not in ("tool", "plugin"):
+    if group not in ("tool", "plugin", "other"):
         group = "plugin" if (port or cmd_t) else "tool"
     return {
         "id": pid, "name": name,
@@ -3560,7 +3576,7 @@ def write_plugins(cfg: dict, rows: list[dict]) -> None:
             it["note"] = r["note"]
         if r.get("svc_name") and r["svc_name"] != r["name"]:
             it["svc_name"] = r["svc_name"]
-        if r.get("group") in ("tool", "plugin"):
+        if r.get("group") in ("tool", "plugin", "other"):
             it["group"] = r["group"]
         if r.get("soon"):
             it["soon"] = True
@@ -4434,6 +4450,74 @@ def write_notes(cfg: dict, body: dict) -> dict:
             pass
     return {"ok": True, "bytes": len(raw.encode("utf-8")), "updated_at": payload["updated_at"],
             "dir": str(p.parent)}
+
+
+# --------------------------------------------------------------------------
+# 追加一条待办 / 备忘（2026-11-23）
+#
+#   为什么不是「读一遍再整份 write_notes」：那是覆盖写，读完到写回之间页面
+#   自动保存一次，这条就没了。这里读-改-写都在 _NOTES_LOCK 里做，原子落盘。
+#   调用方是别的插件（第一个是 13-设备的洗碗机「洗完了」），所以：
+#     · 认 kind（todo / memo），默认 todo
+#     · 认 key（幂等标识）：同 key 已存在就直接回 dup，不重复加 —— 轮询类
+#       调用会一天问几百次，不能每次都多一条
+#     · 返回整份 notes，调用方不用再 GET 一次（两次往返之间别人可能又改了）
+# --------------------------------------------------------------------------
+
+def add_note(cfg: dict, body: dict) -> dict:
+    body = body or {}
+    kind = "memo" if str(body.get("kind") or "") == "memo" else "todo"
+    text = str(body.get("text") or "").strip()
+    if not text:
+        return {"ok": False, "error": "写点什么吧"}
+    if len(text) > 200:
+        text = text[:200]
+    key = str(body.get("key") or "").strip()[:80]
+    src = str(body.get("src") or "").strip()[:40]
+    now = datetime.now()
+    p = notes_path(cfg)
+    _ensure_notes(cfg)
+    with _NOTES_LOCK:
+        d = _load(p, {}) or {}
+        if not isinstance(d, dict):
+            d = {}
+        payload = {
+            "todos": d.get("todos") if isinstance(d.get("todos"), list) else [],
+            "events": d.get("events") if isinstance(d.get("events"), list) else [],
+            "memo": d.get("memo") if isinstance(d.get("memo"), list) else [],
+            "diary": d.get("diary") if isinstance(d.get("diary"), dict) else {},
+        }
+        lst = payload["todos" if kind == "todo" else "memo"]
+        if key and any(isinstance(x, dict) and str(x.get("key") or "") == key for x in lst):
+            return {"ok": True, "dup": True, "notes": read_notes(cfg)}
+        item = {"id": "m" + uuid.uuid4().hex[:11], "text": text,
+                # 与页面自己存的格式一致（UTC …Z）：页面按 new Date() 解析
+                "created": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000Z")}
+        if kind == "todo":
+            item["done"] = False
+            item["due"] = str(body.get("due") or now.strftime("%Y-%m-%d"))
+        else:
+            item["at"] = str(body.get("at") or now.strftime("%Y-%m-%d"))
+        if key:
+            item["key"] = key
+        if src:
+            item["src"] = src
+        lst.insert(0, item)                 # 新的放最上面
+        payload["updated_at"] = now.isoformat(timespec="seconds")
+        raw = json.dumps(payload, ensure_ascii=False, indent=1)
+        if len(raw.encode("utf-8")) > _MAX_NOTES_BYTES:
+            return {"ok": False, "error": "内容太大（超过 512KB），先清理旧备忘"}
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".json.tmp")
+        tmp.write_text(raw, encoding="utf-8")
+        tmp.replace(p)
+    # markdown 镜像：跟 write_notes 同一份出口，失败只当没铺
+    with _MD_LOCK:
+        try:
+            export_markdown(cfg, payload)
+        except OSError:
+            pass
+    return {"ok": True, "dup": False, "item": item, "notes": read_notes(cfg)}
 
 
 # --------------------------------------------------------------------------
