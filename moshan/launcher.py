@@ -142,7 +142,11 @@ def main() -> int:
             pass
 
     first = bootstrap.is_first_run()
-    target = f"http://127.0.0.1:{port}/welcome" if first else f"http://127.0.0.1:{port}/?k={server.TOKEN}"
+    # 默认落点是**中台**（/dash），不是口袋首页（/）。
+    # 口袋是服务里的一项能力（存图/抓取/文件），中台才是这个软件的正面 ——
+    # 以前双击进来第一眼是口袋的文件列表，用户以为装错了东西。
+    target = (f"http://127.0.0.1:{port}/welcome" if first
+              else f"http://127.0.0.1:{port}/dash?k={server.TOKEN}")
 
     print(f"[Moshan] {version.version_line()}  首次启动={first}")
     for k, v in paths.describe().items():

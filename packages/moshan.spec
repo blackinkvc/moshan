@@ -64,7 +64,7 @@ EXCLUDES = [
     "PyQt5", "PySide2", "PySide6", "wx",
 ]
 
-datas = [(str(SRC / "ui.html"), ".")]
+datas = [(str(SRC / "ui.html"), "."), (str(SRC / "dash.html"), ".")]
 # CA 证书必须打进包：打包版用自带 OpenSSL，默认证书路径在别人机器上不存在，
 # 缺了它安装版里所有 https（检查更新、抓网页、装插件）都验不过证书。
 # PyInstaller 通常有 certifi 的 hook 会自动带上，这里再显式收一次 —— 这个坑
