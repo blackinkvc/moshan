@@ -2989,7 +2989,13 @@ def _app_series(hist: list[dict], step: int = 3, per: int = 3, cap: int = 12) ->
 # 这样工作台卡片调用本页接口拿到的行，跟它自己解析出来的一模一样，
 # 不会出现两边字段名/截断规则漂移。
 POCKET_DASH = POCKET_LOG.parent / "dash.py"
-_ROUNDS_CACHE: dict[str, object] = {"at": 0.0, "data": None}
+# 2026-11-24：按档位分桶 + 先用旧账、后台刷新（见 rounds_items 的说明）。
+# 原来是一个槽位、TTL 8 秒；重算一锅 1.5~2.5 秒，前端 15 秒轮询一次，
+# 等于每次打开都撞在重算上。现在过期也先回旧账，另起线程补算。
+_ROUNDS_CACHE: dict[str, object] = {"by": {}, "busy": set()}
+_ROUNDS_LOCK = threading.Lock()
+_ROUNDS_BUILD_LOCK = threading.Lock()
+_ROUNDS_TTL = 8.0
 _ROUNDS_MOD: dict[str, object] = {"m": None}
 
 _WB_CLIENTS = (("WorkBuddy", "_wb_items"),
@@ -3120,61 +3126,115 @@ def _rounds_parser():
     return _ROUNDS_MOD["m"]
 
 
-def rounds_items(range_key: str = "7d") -> dict:
-    """逐轮工作记录：本页从会话流水自己解析，20 秒缓存。"""
+def _rounds_compute(range_key: str) -> dict | None:
+    """真算一遍逐轮记录，算完写进缓存。解析层读不到时返回 None。"""
     now = time.time()
     days = _range_days(range_key)
-    cached = _ROUNDS_CACHE.get("data")
-    # 8 秒（原 20）：页面上有「进行中」时自己会 15 秒快刷一次，
-    # 缓存拖到 20 秒就等于快刷拿到的还是上一锅，状态切换要等快两轮。
-    if cached is not None and now - float(_ROUNDS_CACHE.get("at") or 0) < 8:
-        data = cached
-    else:
-        m = _rounds_parser()
-        if m is None:
-            return {"ok": False, "error": "会话解析层读不到", "items": []}
-        since_ms = (time.time() - days * 86400) * 1000 if days else 0
-        items: list[dict] = []
-        for _name, fn_name in _WB_CLIENTS:
-            fn = getattr(m, fn_name, None)
-            if not fn:
-                continue
-            try:
-                items.extend(fn(since_ms))
-            except Exception:                      # 一家客户端读挂了不拖垮整张表
-                continue
-        # TRAE 的对话正文在加密库里，走自己的证据链（命令 / 进程 / OCR 补录）
+    m = _rounds_parser()
+    if m is None:
+        return None
+    since_ms = (time.time() - days * 86400) * 1000 if days else 0
+    items: list[dict] = []
+    for _name, fn_name in _WB_CLIENTS:
+        fn = getattr(m, fn_name, None)
+        if not fn:
+            continue
         try:
-            items.extend(trae_work.items(since_ms))
-        except Exception:
+            items.extend(fn(since_ms))
+        except Exception:                      # 一家客户端读挂了不拖垮整张表
+            continue
+    # TRAE 的对话正文在加密库里，走自己的证据链（命令 / 进程 / OCR 补录）
+    try:
+        items.extend(trae_work.items(since_ms))
+    except Exception:
+        pass
+    items.sort(key=lambda x: (x.get("end") or x.get("start") or ""), reverse=True)
+    # 只回前端用得上的字段：每轮带 18 步明细，80 条就是 160KB+
+    # title 是由原话抽出的短任务名，task 仍是原文（展开可见）
+    keep = [{k: it.get(k) for k in (
+        "id", "sid", "task", "detail", "rest", "status", "start", "end",
+        "secs", "t0",
+        "sources", "facets", "ctx_labels", "client", "children", "more_steps",
+        "project", "tokens")} for it in items[:80]]
+    # 会话库补两样这轮账本里没有的东西：
+    #   space      —— 这轮属于哪个空间（个人中台 / 日程软件 / …）。cwd 里
+    #                 永远只有客户端名，真正的归属在 sessions.space_id。
+    #   sess_title —— 这个会话叫什么。它就是「任务」：一轮一轮的 task 是
+    #                 用户当次敲的指令，会话标题才是这件事的名字。
+    sidx = _session_index()
+    for row in keep:
+        row["title"] = _task_title(row.get("task"))
+        meta = sidx.get(str(row.get("sid") or "")) or {}
+        row["space"] = str(meta.get("space") or "")
+        row["sess_title"] = str(meta.get("title") or "")
+        row["sess_gone"] = bool(meta.get("deleted"))
+    data = {"ok": True, "items": keep, "at": datetime.now().strftime("%H:%M:%S")}
+    with _ROUNDS_LOCK:
+        _ROUNDS_CACHE["by"][range_key] = (now, data)
+    return data
+
+
+def _rounds_refresh(range_key: str) -> None:
+    """过期了：先让调用方拿旧账，后台补算一锅。同一档位同一时间只补一锅。"""
+    with _ROUNDS_LOCK:
+        if range_key in _ROUNDS_CACHE["busy"]:
+            return
+        _ROUNDS_CACHE["busy"].add(range_key)
+
+    def run() -> None:
+        try:
+            with _ROUNDS_BUILD_LOCK:           # 7d 与 30d 别同时压 _HOST_CACHE
+                _rounds_compute(range_key)
+        except Exception:                      # noqa: BLE001  后台算挂了不影响已返回的账
             pass
-        items.sort(key=lambda x: (x.get("end") or x.get("start") or ""), reverse=True)
-        # 只回前端用得上的字段：每轮带 18 步明细，80 条就是 160KB+
-        # title 是由原话抽出的短任务名，task 仍是原文（展开可见）
-        keep = [{k: it.get(k) for k in (
-            "id", "sid", "task", "detail", "rest", "status", "start", "end",
-            "secs", "t0",
-            "sources", "facets", "ctx_labels", "client", "children", "more_steps",
-            "project", "tokens")} for it in items[:80]]
-        # 会话库补两样这轮账本里没有的东西：
-        #   space      —— 这轮属于哪个空间（个人中台 / 日程软件 / …）。cwd 里
-        #                 永远只有客户端名，真正的归属在 sessions.space_id。
-        #   sess_title —— 这个会话叫什么。它就是「任务」：一轮一轮的 task 是
-        #                 用户当次敲的指令，会话标题才是这件事的名字。
-        sidx = _session_index()
-        for row in keep:
-            row["title"] = _task_title(row.get("task"))
-            meta = sidx.get(str(row.get("sid") or "")) or {}
-            row["space"] = str(meta.get("space") or "")
-            row["sess_title"] = str(meta.get("title") or "")
-            row["sess_gone"] = bool(meta.get("deleted"))
-        data = {"ok": True, "items": keep, "at": datetime.now().strftime("%H:%M:%S")}
-        _ROUNDS_CACHE.update(at=now, data=data)
+        finally:
+            with _ROUNDS_LOCK:
+                _ROUNDS_CACHE["busy"].discard(range_key)
+
+    threading.Thread(target=run, name="rounds-refresh", daemon=True).start()
+
+
+def _rounds_view(data: dict, range_key: str) -> dict:
+    """按档位出账。返回浅拷贝：调用方改 items 不会把缓存改坏。"""
     if range_key == "today":
         day = date.today().isoformat()
-        keep = [x for x in data["items"] if str(x.get("start") or "").startswith(day)]
-        return dict(data, items=keep)
-    return data
+        return dict(data, items=[x for x in data["items"]
+                                 if str(x.get("start") or "").startswith(day)])
+    return dict(data, items=list(data["items"]))
+
+
+def rounds_items(range_key: str = "7d") -> dict:
+    """逐轮工作记录：本页从会话流水自己解析。
+
+    2026-11-24 改成「先用旧账、后台刷新」：重算一锅要 1.5~2.5 秒（WorkBuddy
+    那近 600 条每轮都要重新组装），而前端 15 秒轮询一次 —— 8 秒 TTL 意味着
+    **每次打开都撞在重算上**，这就是「点开本机工作要等很久」的真正原因。
+    现在过期了也立刻回上一锅，另一个线程补算，页面不再等解析；
+    只有进程刚起来、这一档还没算过的那一刻才同步等（那一次本来就躲不掉）。
+    """
+    key = range_key
+    with _ROUNDS_LOCK:
+        slot = _ROUNDS_CACHE["by"].get(key)
+        if slot is None and key == "today":
+            # 「今天」是「7 天」的子集：7 天那锅已经在手边就直接切，
+            # 别为同一批数据再解析一遍（首次算 today 要 0.8 秒，纯浪费）。
+            slot = _ROUNDS_CACHE["by"].get("7d")
+            if slot is not None:
+                key = "7d"
+    if slot is not None:
+        at, data = slot
+        if time.time() - at >= _ROUNDS_TTL:
+            _rounds_refresh(key)
+        return _rounds_view(data, range_key)
+    with _ROUNDS_BUILD_LOCK:
+        with _ROUNDS_LOCK:                     # 排队期间别人可能已经算好了
+            slot = _ROUNDS_CACHE["by"].get(range_key)
+        if slot is not None:
+            return _rounds_view(slot[1], range_key)
+        data = _rounds_compute(range_key)
+    if data is None:
+        return {"ok": False, "error": "会话解析层读不到", "items": []}
+    return _rounds_view(data, range_key)
 
 
 # ---------------------------------------------------------------- 节奏（五张卡共用的账）
