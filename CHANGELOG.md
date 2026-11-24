@@ -3,7 +3,26 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [0.3.4] - 2026-11-25
+
+**Windows 上「这台是什么机器」终于答得出来了：机型、芯片、应用清单、常驻服务不再是空的。**
+
+### 修复
+- **「机器规格」在 Windows 上整张卡是空的**（型号「未知机型」、芯片「—」、0 个应用、
+  0 个常驻服务）。`specs()` / `software()` / `units()` 三个函数只写了 macOS 那条路
+  （`sysctl` / `system_profiler` / `launchd`），Windows 上一条都取不到值。现在：
+  `specs()` 走一次 `Get-CimInstance`（机型/芯片/显卡/系统/BIOS）翻成同一份形状；
+  `software()` 读注册表三处 Uninstall 键（64 位 / WOW6432Node / 当前用户，毫秒级，
+  口径与「设置→应用」一致），命令栏取 scoop / choco 的包目录；
+  `units()` 用 `psutil.win_service_iter()` 列服务，只留「在跑」或「开机自启」的
+  —— Windows 光 disabled 驱动就两三百条，全摊上去这张卡没法看。
+  内存优先 psutil，没有则退 `sysinfo`（`GlobalMemoryStatusEx`，系统自带），
+  不再因为缺一个包就把 16 GB 报成 0。
+- **数据根加了「出生证」**：`_工作台/machine.json` 记下这份资料库是哪台机器产生的
+  （有章不覆盖），`/api/dash` 多一个 `machine.foreign` 字段。起因是 EVO 的 `/dash`
+  里显示着另一台机器 629 条工作流水 —— 部署时把 `09-个人工作台/流水` 整目录拷了过去，
+  而程序本身分不出「这份数据是本机攒的还是别人搬来的」。现在拷贝会连章一起带走，
+  换机器一读就知道来源不对。只报不拦，清不清由人决定。
 
 ### 新增
 - **自述通道从「只认 TRAE」改成「认任何 agent」**：接口 `/api/agent/note`（`agent` 字段决定
