@@ -756,11 +756,23 @@ _DRAWER_ROW = """
 <style>
   #mosh-upd-row .sl span{word-break:break-all}
   #mosh-upd-b.hot{background:#a8641c;border-color:#a8641c;color:#fff}
+  /* 版本足迹：跟上面那行「版本 + 检查更新」是两件事 ——
+     那行回答「有没有新的」，这行回答「我这条线怎么走过来的」。 */
+  #mosh-hist-row .sl div{font-size:11.5px;color:var(--tx2);line-height:1.4;margin-top:2px}
+  #mosh-hist-row details{margin-top:4px}
+  #mosh-hist-row summary{cursor:pointer;color:var(--tx3);font-size:11px;outline:none}
+  #mosh-hist-row .mh-v{font-size:11px;color:var(--tx2);line-height:1.75;
+    font-variant-numeric:tabular-nums}
+  #mosh-hist-row .mh-v b{display:inline;font-size:11px;color:var(--tx);font-weight:600}
+  #mosh-hist-row .mh-t{margin-top:3px;font-size:10.5px;color:var(--tx3)}
 </style>
 <script>
 (function(){
   var K = new URLSearchParams(location.search).get('k')
         || localStorage.getItem('pocket_token') || '';
+  // 页面里就带着当前版本号（注入时替换）：/api/update/state 在「还没查过更新」
+  // 时 info 是 null，光靠它标题会只剩「版本」两个字，看着像没装上。
+  var VER = '__VER__';
   var ROW = null, BTN = null, SUB = null, TITLE = null, BUSY = false;
 
   function j(path, opt){
@@ -782,7 +794,7 @@ _DRAWER_ROW = """
     // checked_at 在**外层**（/api/update/state 的约定），info 里没有；读错会永远
     // 显示「还没检查过」——明明刚查过。
     var seen = (st && st.checked_at) || info.checked_at || 0;
-    TITLE.textContent = '版本' + (cur ? ' ' + cur : '');
+    TITLE.textContent = '版本 ' + (cur || VER);
     BTN.classList.toggle('hot', !!info.has_update);
     BTN.disabled = false;
     if (info.has_update){
@@ -868,7 +880,7 @@ _DRAWER_ROW = """
     ROW = document.createElement('div');
     ROW.className = 'set-row';
     ROW.id = 'mosh-upd-row';
-    ROW.innerHTML = '<div class="sl"><b id="mosh-upd-t">版本</b>'
+    ROW.innerHTML = '<div class="sl"><b id="mosh-upd-t">版本 ' + VER + '</b>'
       + '<span id="mosh-upd-s">还没检查过</span></div>'
       + '<button class="btn-line" id="mosh-upd-b" type="button">检查更新</button>';
     var first = grp.querySelector('.set-row');
@@ -878,6 +890,54 @@ _DRAWER_ROW = """
     BTN = document.getElementById('mosh-upd-b');
     BTN.addEventListener('click', onClick);
     j('/api/update/state').then(paint).catch(function(){});
+    mountHist(grp);
+  }
+
+  /* 版本足迹（2026-11-25 用户要的）：首次启用时间 + 之后跑过哪些版本。
+     数据在本地 versions.json，由服务启动时记一笔 —— 断网也能看，
+     与「检查更新」（要问 GitHub）互不依赖。 */
+  function fmtAt(s){
+    s = String(s || '');
+    return s.length >= 16 ? (s.slice(5, 10) + ' ' + s.slice(11, 16)) : s;
+  }
+  function paintHist(d){
+    var el = document.getElementById('mosh-hist-s');
+    if (!el) return;
+    if (!d || d.ok === false){ el.textContent = '读不到（versions.json 还没写）'; return; }
+    // 上面那行标题顺手补上版本号：/api/update/state 在「还没查过更新」时
+    // info 是 null，标题就只剩「版本」两个字，看着像没装上。
+    if (TITLE && d.current && TITLE.textContent.trim() === '版本'){
+      TITLE.textContent = '版本 ' + d.current;
+    }
+    var vs = (d.versions || []).slice().reverse();
+    var head = (d.first_at
+      ? '首次使用 ' + fmtAt(d.first_at) + (d.first_guess ? '（不晚于）' : '')
+      : '首次使用时间未知')
+      + ' · 跑过 ' + (vs.length || 0) + ' 个版本';
+    el.innerHTML = '<span>' + head + '</span>'
+      + (vs.length ? '<details><summary>每个版本的首末时间</summary>'
+        + vs.map(function(x){
+            return '<div class="mh-v"><b>' + x.v + '</b> ' + fmtAt(x.first)
+              + ' → ' + fmtAt(x.last) + ' · 启动 ' + (x.n || 1) + ' 次'
+              + (x.v === d.current ? ' · 当前' : '') + '</div>';
+          }).join('')
+        + '<div class="mh-t">' + (d.first_guess
+            ? '首次时间是按' + ((d.first_basis || '本机文件时间')) + '推的，不是精确值；'
+            : '') + '记录从 ' + (d.first_version || d.current) + ' 开始，更早的版本没有留账。</div>'
+        + '</details>' : '');
+  }
+  function mountHist(grp){
+    if (!grp || document.getElementById('mosh-hist-row')) return;
+    var h = document.createElement('div');
+    h.className = 'set-row';
+    h.id = 'mosh-hist-row';
+    h.innerHTML = '<div class="sl"><b>版本足迹</b><div id="mosh-hist-s">读取中…</div></div>';
+    if (ROW && ROW.nextSibling) grp.insertBefore(h, ROW.nextSibling);
+    else grp.appendChild(h);
+    j('/api/versions').then(paintHist).catch(function(){
+      var el = document.getElementById('mosh-hist-s');
+      if (el) el.textContent = '读不到（服务还没重启过）';
+    });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
@@ -908,6 +968,7 @@ def inject(html: str, drawer: bool = False) -> str:
     if "mosh-upd-row" in html or "mosh-about" in html:
         return html
     badge = _DRAWER_ROW if drawer else _BADGE
+    badge = badge.replace("__VER__", version.VERSION)
     i = html.rfind("</body>")
     if i >= 0:
         return html[:i] + badge + html[i:]
