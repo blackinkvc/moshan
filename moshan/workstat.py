@@ -1313,6 +1313,26 @@ def view(days: int = 30, day: str = "", fresh: bool = False,  # noqa: FBT001
     drec = days_map.get(day) or {}
     hs_day = drec.get("hours") or [[0] * len(HOUR_COLS) for _ in range(24)]
     hours = [{c: hs_day[h][i] for i, c in enumerate(HOUR_COLS)} for h in range(24)]
+    # 窗口内按钟点累计（各天相加）：卡片上「分小时」看的是长期作息。
+    # 只给今天那 24 桶的话，昨天以前全看不见 —— 7 点开工还是 23 点开工，
+    # 靠一天的桶根本判不出来。返回里两份都给：hours = 今天，hours_win = 整窗。
+    hs_win = [[0.0] * len(HOUR_COLS) for _ in range(24)]
+    windays = 0
+    for r in rows:
+        dd = days_map.get(r.get("d")) or {}
+        hh = dd.get("hours")
+        if not hh:
+            continue
+        windays += 1
+        for h in range(min(24, len(hh))):
+            grp = hh[h] or []
+            for i in range(min(len(HOUR_COLS), len(grp))):
+                try:
+                    hs_win[h][i] += float(grp[i] or 0)
+                except (TypeError, ValueError):
+                    continue
+    hours_win = [{c: round(hs_win[h][i], 1) for i, c in enumerate(HOUR_COLS)}
+                 for h in range(24)]
     day_apps = sorted(([k, round(float(v), 1)] for k, v in (drec.get("apps") or {}).items()),
                       key=lambda kv: -kv[1])[:12]
     # 存档本身的状态：卡片上要告诉用户「这些数存在哪、从哪天起」
@@ -1331,6 +1351,8 @@ def view(days: int = 30, day: str = "", fresh: bool = False,  # noqa: FBT001
         "range": [since_day, date.today().isoformat()],
         "rows": rows,
         "hours": hours,
+        "hours_win": hours_win,
+        "hours_win_days": windays,
         "heat": heat,
         "screen": {
             "ok": bool(sc.get("ok")), "why": sc.get("why") or "",
