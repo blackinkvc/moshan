@@ -3,7 +3,7 @@
 <head>
 <!-- 页面版本戳：服务端拿它跟包里那份比，旧了会自动备份并换新。
      改这个文件时把日期往后挪一格，别原地不动，否则老机器收不到。 -->
-<meta name="moshan-page" content="2026-11-25n">
+<meta name="moshan-page" content="2026-11-25s">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
@@ -2205,6 +2205,25 @@ html[data-theme="dark"] .hw-tbl .hw-mdl{color:var(--mcd,var(--tx))}
   color:var(--pri);font-variant-numeric:tabular-nums}
 .hw-big .l{font-size:10.5px;color:var(--tx3)}
 .hw-big .why{font-size:10px;color:var(--tx3);margin-left:auto}
+/* 「用量」档顶上那三格提示词账：平均每条多少字 / 一共多少条 / 活跃几天。
+   数据是 /api/overview 的 prompts 段，跟详情页「提示词」那一页同一份聚合。 */
+.hw-prm{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;
+  padding:9px 11px;border:1px solid var(--line);border-radius:11px;background:var(--card2)}
+.hw-prm>div{min-width:0}
+.hw-prm b{display:block;font-size:17px;font-weight:700;letter-spacing:-.025em;
+  color:var(--tx);line-height:1.2;font-variant-numeric:tabular-nums;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hw-prm b em{font-style:normal;font-size:10px;font-weight:600;color:var(--tx3);margin-left:2px}
+.hw-prm i{display:block;font-style:normal;font-size:10px;color:var(--tx3);margin-top:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@container (max-width:520px){
+  .hw-prm{gap:6px;padding:8px}
+  .hw-prm b{font-size:15px}
+}
+/* 提示词那张卡：跟 hwtok 一样走竖向 flex，body 撑满后自己滚 */
+.card[data-card="hwprm"]{container-type:inline-size;display:flex;flex-direction:column}
+.hw-prm-x{display:flex;justify-content:space-between;font-size:9px;color:var(--tx3);
+  font-variant-numeric:tabular-nums}
 .hw-tbl{width:100%;border-collapse:collapse;font-size:11px;font-variant-numeric:tabular-nums}
 .hw-tbl th{font-weight:520;color:var(--tx3);font-size:10px;text-align:right;padding:0 0 5px;
   border-bottom:1px solid var(--line2);white-space:nowrap}
@@ -5275,6 +5294,21 @@ body.v-more .more-wrap > .card[data-card="transfer"].tf-none .tf-body{height:180
   <!-- ===== 节奏四张（2026-11-22）：跟「本机工作」同一页，数据合在 /api/pulse 里 =====
        都只算「本机这台机器上我在干什么」，不是中台插件干的活，所以归本机工作页；
        首页想摆哪张，编辑态里从「隐藏卡片」挑（带「本机工作」标签那批）。 -->
+
+  <!-- 提示词（2026-11-25）：一天说了多少字、平均每条多长、多少天在说话。
+       数据是 /api/overview 的 prompts 段（由 workstat.view 派生），跟详情页
+       /hostwork 的「提示词」那一页是同一份聚合 —— 不在这张卡上另算一套。
+       单独一张，不并进「花费与用量」：token 是烧掉的资源，字数是我说出口的量，
+       两者偶尔要对着看，但不该挤在同一个 tab 里互相稀释。 -->
+  <section class="card" data-card="hwprm" data-hostonly="host" data-title="提示词" data-h="5">
+    <div class="card-h">
+      <span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v11H12l-4.5 3.5v-3.5H4z"/><path d="M8 9.5h8M8 12.6h5"/></svg></span>
+      提示词
+      <span class="r"><span class="hw-rng" id="hwRng3" role="group" aria-label="时间范围"></span>
+        <span id="hwprmStat">—</span></span>
+    </div>
+    <div class="hwb" id="hwprmBody"></div>
+  </section>
 
   <!-- 时间投入：一天里真正坐在电脑前多久。
        口径不是「首末时间差」（挂机一夜会把 40 分钟说成 8 小时），而是相邻两次
@@ -11899,6 +11933,66 @@ function renderHWChart() {
   box.innerHTML = html || '<div class="hr-empty"><span>还没有采样数据</span></div>';
 }
 
+/* ---- 提示词（2026-11-25）：说了多少字 / 平均每条多长 / 多少天在说话 ----
+   数据是 /api/overview 的 prompts 段，服务端由 workstat.view() 派生 ——
+   跟 /hostwork「提示词」那一页同一份聚合，不在这儿另算。
+   用户要求「输入的字单独一张卡」，所以不并进「花费与用量」。 */
+function hwPrmSvg(rows) {
+  const w = 600, h = 132, padB = 8;
+  const vals = rows.map(r => (r.n ? r.c / r.n : 0));
+  const max = Math.max.apply(null, vals.concat([1]));
+  const bw = w / Math.max(1, rows.length);
+  const iw = Math.max(1.4, bw - 2);
+  let out = '';
+  rows.forEach((r, i) => {
+    const v = vals[i];
+    const bh = (h - padB) * Math.min(1, v / max);
+    const x = i * bw + (bw - iw) / 2;
+    out += '<rect x="' + x.toFixed(1) + '" y="' + (h - padB - bh).toFixed(1)
+      + '" width="' + iw.toFixed(1) + '" height="' + Math.max(0.8, bh).toFixed(1)
+      + '" rx="1.2" style="fill:var(--pri);fill-opacity:' + (v ? '.7' : '.13') + '"/>';
+  });
+  // 字不放 SVG 里：这张图横向拉伸，字会被拉扁（横轴标签用 HTML 摆）
+  return '<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none" '
+    + 'style="height:' + h + 'px;width:100%" role="img" aria-label="每天平均每条多少字">'
+    + out + '</svg>';
+}
+function renderHWPrm() {
+  const box = $('hwprmBody');
+  if (!box) return;
+  const wait = hwWait();
+  if (wait) { box.innerHTML = wait; $('hwprmStat').textContent = '—'; return; }
+  const pr = (HR.data || {}).prompts;
+  if (!pr || !pr.ok) {
+    const why = (pr && pr.why) || '统计层没接上（workstat 模块）';
+    $('hwprmStat').textContent = '—';
+    box.innerHTML = '<div class="hr-empty"><span>' + esc(why) + '</span></div>';
+    return;
+  }
+  $('hwprmStat').textContent = hrN(pr.n) + ' 条 · '
+    + pr.active_days + '/' + pr.days + ' 天';
+  const rows = (pr.by_day || []).slice();
+  let html = '<div class="hw-prm">'
+    + '<div><b>' + esc(String(pr.per || 0)) + '<em>字/条</em></b>'
+    + '<i>平均每条提示词</i></div>'
+    + '<div><b>' + hrN(pr.n) + '<em>条</em></b>'
+    + '<i>' + esc(pr.days + ' 天共 ' + hrN(pr.chars) + '字') + '</i></div>'
+    + '<div><b>' + pr.active_days + '<em>/' + pr.days + ' 天</em></b>'
+    + '<i>活跃 · 那天平均 ' + esc(String(pr.per_active || 0)) + ' 条</i></div>'
+    + '</div>';
+  if (rows.length) {
+    const peak = rows.reduce((a, r) => Math.max(a, r.n ? r.c / r.n : 0), 0);
+    html += '<div class="hw-chart"><div class="cap">'
+      + '<span>每天平均每条多少字</span>'
+      + '<span>峰值 ' + esc(String(Math.round(peak))) + ' 字</span></div>'
+      + '<div class="box">' + hwPrmSvg(rows) + '</div>'
+      + '<div class="hw-prm-x"><span>' + esc(String((rows[0] || {}).d || '').slice(5)) + '</span>'
+      + '<span>' + esc(String((rows[rows.length - 1] || {}).d || '').slice(5)) + '</span></div>'
+      + '</div>';
+  }
+  box.innerHTML = html;
+}
+
 /* ---- 24 小时：逐小时堆叠柱 ----
    会话日志的粒度到分钟，所以「每小时烧了多少」是真能算出来的；按天柱状图看不出
    「凌晨三点还在跑」这种事，这张图能。同一份数据两种劈法：
@@ -12449,7 +12543,7 @@ function renderHWRange() {
     + ' data-hwrange="' + r[0] + '" aria-pressed="' + (r[0] === HR.range) + '">'
     + r[1] + '</button>').join('');
   // 两处都要画：巡检「这台机器」一份，本机工作「花费与用量」一份（同一份状态，两个出口）
-  ['hwRng', 'hwRng2'].forEach(id => {
+  ['hwRng', 'hwRng2', 'hwRng3'].forEach(id => {
     const box = $(id);
     if (box) box.innerHTML = html;
   });
@@ -12537,6 +12631,7 @@ function renderHW() {
   hwSeedColors(HR.data);     // 先发色板：进程榜和走势图必须认同一套颜色
   renderHWRange();
   renderHWKpi(); renderHWWho(); renderHWTol(); renderHWProc(); renderHWChart();
+  renderHWPrm();             // 提示词：字数 / 条数 / 活跃天数（单独一张卡）
   renderHWHour();
   renderHWQuota();
   renderHWGloss();
@@ -15921,6 +16016,8 @@ const SZ_DEF = {
   sysmap: [3, 6], inspLog: [3, 6], diskbrowse: [3, 8], storm: [3, 5],  // 节奏卡组（2026-11-22）：applyLayout() 对每张卡都写 defSize，不登记在这儿
   // 就等于 data-h 白写 —— 一律被 [3,5] 顶掉。
   moon: [3, 5], hwtime: [3, 5], hwhour: [3, 5], hwstrat: [3, 5], hwindex: [3, 5],
+  // 提示词（2026-11-25）：三格 KPI + 一条按天柱，5 行够。
+  hwprm: [3, 5],
   // AI 工作计划（2026-11-22）：树 + 底部收件箱 + 输入框，9 行刚好一屏不滚太多。
   aiplan: [3, 10],
 };
@@ -18802,7 +18899,7 @@ const PAGES = {
   // 「用量走势」并进「花费与用量」了，这一页只剩六张
   // 口袋是「同一张卡」：首页摆着它，这一页也列着它（页面视图搬过去而已）。
   // 任务清单已并进 hostwork 卡当第四档视图，不再是独立一张。
-  host: { title: 'Agent 监控', ids: ['hostwork', 'hwtime', 'hwhour', 'hwstrat', 'hwindex', 'hwtok', 'hwbill', 'hwproc', 'pocketwork'] },
+  host: { title: 'Agent 监控', ids: ['hostwork', 'hwprm', 'hwtime', 'hwhour', 'hwstrat', 'hwindex', 'hwtok', 'hwbill', 'hwproc', 'pocketwork'] },
   // 机器指标（hwkpi）2026-11-21 从本机工作挪到巡检：它答的是「机器还撑得住吗」，
   // 跟服务的死活是同一个问题；「谁在吃内存」另有进程榜（hwproc）留在本机工作。
   // 机器规格（mspec）2026-11-21 新增：巡检要说得清「这是台什么机器、上面装了些什么」

@@ -2688,6 +2688,63 @@ def _ov_fallback(key: str, reason: str) -> dict:
     }
 
 
+_PRM_CACHE: dict = {"at": 0.0, "days": 0, "data": None}
+
+
+def _prompts_brief(days: int) -> dict:
+    """「提示词平均字数 / 活跃天数」压成一小段，塞进 overview。
+
+    数据取自 workstat.view() —— 跟 /hostwork 里「提示词」那一页是同一份聚合。
+    不在 overview 里另算一套：同一个数字三处重算，早晚对不上（这是老账了）。
+    带 45 秒缓存：overview 会被轮询，workstat.view() 虽然自己也有缓存，但每次
+    仍要 _fold + 落存档，没必要跟着 overview 一起抖。
+    """
+    now = time.time()
+    c = _PRM_CACHE
+    if c["data"] and int(c["days"]) == int(days) and now - float(c["at"] or 0) < 45:
+        return c["data"]
+    if workstatmod is None:
+        return {"ok": False, "why": f"统计模块没装上（{_WS_IMPORT_ERR}）"}
+    # workstat.view() 的窗口最少 7 天（热力图要够宽），而 overview 的「今天」
+    # 是 1 天 —— 所以自己按天切，不从它的 tot 直接拿，免得「今天」显示成 7 天。
+    win_n = max(1, int(days))
+    try:
+        v = workstatmod.view(max(7, win_n))
+    except Exception as e:                             # noqa: BLE001
+        return {"ok": False, "why": f"{type(e).__name__}: {e}"}
+    if not v.get("ok", True):
+        return {"ok": False, "why": str(v.get("error") or "统计层返回失败")[:200]}
+    rows = (v.get("rows") or [])[-win_n:]
+    # 口径跟 workstat 的 tot / active_days 完全一致：就是窗口内那几天相加
+    n = sum(int(r.get("prompts") or 0) for r in rows)
+    chars = sum(int(r.get("chars") or 0) for r in rows)
+    active = sum(1 for r in rows if int(r.get("prompts") or 0) or int(r.get("reqs") or 0))
+    d = {
+        "ok": True,
+        "days": win_n,
+        "n": n,
+        "chars": chars,
+        "per": round(chars / max(1, n), 1),
+        "per_active": round(n / max(1, active), 1),
+        "active_days": active,
+        # 每天一条，只留三个字段 —— 「用量」那一档要画「每天平均多少字」
+        "by_day": [{"d": r.get("d"), "n": int(r.get("prompts") or 0),
+                    "c": int(r.get("chars") or 0)} for r in rows],
+    }
+    _PRM_CACHE.update({"at": now, "days": int(days), "data": d})
+    return d
+
+
+def _with_prompts(d: dict) -> dict:
+    # 「全部」档 hostwork 给的是 days: 0（不限天数），不能当 7 天用
+    try:
+        days = int((d.get("range") or {}).get("days") or 0)
+    except (TypeError, ValueError):
+        days = 0
+    d["prompts"] = _prompts_brief(days if days > 0 else 180)
+    return d
+
+
 def _with_llm(d: dict) -> dict:
     """把「这台机器跑着什么大模型」并进 overview。
 
@@ -2716,19 +2773,19 @@ def overview_api(range: str = "7d", fresh: int = 0) -> dict:
         try:
             d = hwmod.overview(key, fresh=bool(fresh))
             if d.get("ok", True):
-                return _with_llm(d)
+                return _with_prompts(_with_llm(d))
             # 采集层自己报了错：把错因带上，但照样给一份能看的机器指标。
             # 同时落一份完整堆栈到日志 —— 只把一句话回给前端，事后根本查不到哪一行。
             log({"event": "overview_degraded", "range": key,
                  "error": str(d.get("error") or "")[:300]})
-            return _with_llm(_ov_fallback(key, str(d.get("error") or "采集层返回失败")))
+            return _with_prompts(_with_llm(_ov_fallback(key, str(d.get("error") or "采集层返回失败"))))
         except Exception as e:                         # noqa: BLE001
             import traceback                            # noqa: PLC0415
             log({"event": "overview_error", "range": key,
                  "error": f"{type(e).__name__}: {e}",
                  "trace": traceback.format_exc()[-1500:]})
-            return _with_llm(_ov_fallback(key, f"{type(e).__name__}: {e}"))
-    return _with_llm(_ov_fallback(key, f"Agent 监控模块没装上（{_HW_IMPORT_ERR}）"))
+            return _with_prompts(_with_llm(_ov_fallback(key, f"{type(e).__name__}: {e}")))
+    return _with_prompts(_with_llm(_ov_fallback(key, f"Agent 监控模块没装上（{_HW_IMPORT_ERR}）")))
 
 
 @app.get("/api/hourly", dependencies=[Depends(auth)])
