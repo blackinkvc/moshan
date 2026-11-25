@@ -411,7 +411,7 @@ def _sec_token(t: dict, yest: str) -> dict:
     if not t.get("ok"):
         return {"id": "token", "title": "昨日消耗", "glyph": "coin",
                 "head": "采集层不可用", "badge": "warn",
-                "lines": ["本机工作的采集层没读到（hostwork 模块不在或报错）"]}
+                "lines": ["Agent 监控的采集层没读到（hostwork 模块不在或报错）"]}
     if not t["total"]:
         return {"id": "token", "title": "昨日消耗", "glyph": "coin",
                 "head": "昨天没有 AI 会话", "badge": "ok",

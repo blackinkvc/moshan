@@ -2489,7 +2489,7 @@ def transfer_file(id: str, w: int = 0, dl: int = 0) -> FileResponse:
 def tasks_proxy(range: str = "7d") -> dict:
     key = range if range in ("today", "7d", "30d", "all") else "7d"
     if hwmod is None:
-        return {"ok": False, "error": f"本机工作模块没装上（{_HW_IMPORT_ERR}）", "groups": []}
+        return {"ok": False, "error": f"Agent 监控模块没装上（{_HW_IMPORT_ERR}）", "groups": []}
     try:
         return hwmod.tasks_view(key)
     except Exception as e:                             # noqa: BLE001
@@ -2599,7 +2599,7 @@ def _raw(data: bytes, ctype: str, code: int, cookie: bool = False):
 @app.get("/api/sources", dependencies=[Depends(auth)])
 def sources_proxy(force: int = 0) -> dict:
     if hwmod is None:
-        return {"ok": False, "error": f"本机工作模块没装上（{_HW_IMPORT_ERR}）", "items": []}
+        return {"ok": False, "error": f"Agent 监控模块没装上（{_HW_IMPORT_ERR}）", "items": []}
     try:
         return hwmod.sources_report(force=bool(force))
     except Exception as e:                             # noqa: BLE001
@@ -2612,7 +2612,7 @@ def sources_proxy(force: int = 0) -> dict:
 # —— 没有 hostwork 时的降级账 ————————————————————————————————
 # hostwork 是本机 cuntu 的深度采集层，交付包里不带（见上面 CUNTU_DIR 那段：
 # 分发版默认没有 cuntu）。可这几个接口以前硬依赖它 —— 别人装完 Moshan，
-# 资源卡永远只有一句「本机工作模块没装上」，谁在干活、节奏账同样空着。
+# 资源卡永远只有一句「Agent 监控模块没装上」，谁在干活、节奏账同样空着。
 # 这里把能算的算出来：磁盘/内存/CPU/开机时长来自 metrics + sysinfo，
 # 客户端与 token 给结构完整的空表。前端读的是 `m.disk || {}`、
 # `pick(se.load)` 这类写法，空表不会崩，只是那几格显示「—」。
@@ -2728,7 +2728,7 @@ def overview_api(range: str = "7d", fresh: int = 0) -> dict:
                  "error": f"{type(e).__name__}: {e}",
                  "trace": traceback.format_exc()[-1500:]})
             return _with_llm(_ov_fallback(key, f"{type(e).__name__}: {e}"))
-    return _with_llm(_ov_fallback(key, f"本机工作模块没装上（{_HW_IMPORT_ERR}）"))
+    return _with_llm(_ov_fallback(key, f"Agent 监控模块没装上（{_HW_IMPORT_ERR}）"))
 
 
 @app.get("/api/hourly", dependencies=[Depends(auth)])
@@ -2738,7 +2738,7 @@ def hourly_api(d: str = "", fresh: int = 0) -> dict:
     只算这一份轻量账，不碰进程 / 磁盘 —— 切日期时不该把整页数据重拉一遍。
     """
     if hwmod is None:
-        return {"ok": False, "error": f"本机工作模块没装上（{_HW_IMPORT_ERR}）", "hours": []}
+        return {"ok": False, "error": f"Agent 监控模块没装上（{_HW_IMPORT_ERR}）", "hours": []}
     try:
         return hwmod.hourly_bundle(d, fresh=bool(fresh))
     except Exception as e:                             # noqa: BLE001
@@ -2779,7 +2779,7 @@ def rounds_api(range: str = "7d") -> dict:
         except Exception as e:                         # noqa: BLE001
             reason = f"{type(e).__name__}: {e}"
     else:
-        reason = f"本机工作模块没装上（{_HW_IMPORT_ERR}）"
+        reason = f"Agent 监控模块没装上（{_HW_IMPORT_ERR}）"
     # 降级：直接用工作台自己的读取器（TRAE / WorkBuddy / Cherry / Claude 都在
     # _CLIENTS 里）。它的条目结构与 hostwork 那份同源，前端不用改一行。
     try:
@@ -2806,7 +2806,7 @@ def pulse_api(days: int = 75, scope: str = "") -> dict:
     各收一摊。选项清单每次都在 opts 里回全量，前端切范畴不必再要菜单。
     """
     if hwmod is None:
-        return {"ok": False, "error": f"本机工作模块没装上（{_HW_IMPORT_ERR}）",
+        return {"ok": False, "error": f"Agent 监控模块没装上（{_HW_IMPORT_ERR}）",
                 "days": [], "hours": [], "weeks": []}
     try:
         return hwmod.pulse(days, scope)
@@ -2821,7 +2821,7 @@ def pulse_api(days: int = 75, scope: str = "") -> dict:
 @app.get("/api/billing", dependencies=[Depends(auth)])
 def billing_api() -> dict:
     if hwmod is None:
-        return {"ok": False, "error": f"本机工作模块没装上（{_HW_IMPORT_ERR}）", "accounts": []}
+        return {"ok": False, "error": f"Agent 监控模块没装上（{_HW_IMPORT_ERR}）", "accounts": []}
     try:
         return hwmod.billing_payload()
     except Exception as e:                             # noqa: BLE001
@@ -2870,7 +2870,7 @@ def billing_pull_api(body: dict | None = None) -> dict:
 def icon_api(f: str = "") -> FileResponse:
     """进程图标：本机工作自己按 bundle 生成的小 png。只认它自己起的名字。"""
     if hwmod is None:
-        raise HTTPException(404, "本机工作模块没装上")
+        raise HTTPException(404, "Agent 监控模块没装上")
     if not re.fullmatch(r"[0-9a-f]{6,32}\.png", f or ""):
         raise HTTPException(400, "文件名不对")
     fp = hwmod.ICON_DIR / f
@@ -2883,7 +2883,7 @@ def icon_api(f: str = "") -> FileResponse:
 @app.post("/api/rescan", dependencies=[Depends(auth)])
 def rescan_api(body: dict | None = None) -> dict:
     if hwmod is None:
-        return {"ok": False, "error": "本机工作模块没装上"}
+        return {"ok": False, "error": "Agent 监控模块没装上"}
     force = bool((body or {}).get("force"))
     threading.Thread(target=hwmod.scan_sessions, kwargs={"force": force},
                      daemon=True).start()
@@ -2933,7 +2933,7 @@ def hostwork_page() -> HTMLResponse:
     if hwmod is None or p is None:
         return HTMLResponse(
             "<meta charset='utf-8'><body style='font:15px -apple-system;padding:40px'>"
-            "<h3>本机工作页面不在这台机器上</h3>"
+            "<h3>Agent 监控页面不在这台机器上</h3>"
             f"<p style='color:#666'>找不到 hostwork_ui.html（cuntu 与包内均无）</p>"
             "</body>", status_code=404)
     html = p.read_text(encoding="utf-8")
