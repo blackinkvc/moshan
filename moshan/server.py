@@ -1065,6 +1065,62 @@ def status() -> dict:
     }
 
 
+_PAGE_READY = {"done": False}
+_PAGE_STAMP_RE = re.compile(r'<meta\s+name="moshan-page"\s+content="([^"]*)"')
+
+
+def _page_stamp(text: str) -> str:
+    m = _PAGE_STAMP_RE.search(text)
+    return m.group(1) if m else ""
+
+
+def _ensure_page(p) -> None:
+    """把随包分发的 dash.html 铺到数据根；数据根那份旧了就备份换新。
+
+    以前只「缺了才铺」，理由是不动用户改过的页面。代价是：0.3.6 之后所有界面
+    改动（导入按钮、合表、设置抽屉里新增的组）**只有新装包的用户看得到**，
+    老机器永远停在自己第一天的样子 —— 用户会以为「你根本没做」。
+
+    现在按页内的 `moshan-page` 戳判断：
+      · 数据根没有 → 铺一份；
+      · 戳比包里旧 → 备份成 dash.html.bak-<时间> 再覆盖（用户的手改不会凭空
+        消失，但也不会自动生效 —— 备份就在旁边）；
+      · 戳相同或更新 → 一个字节都不动。
+    只在进程内第一次访问 /dash 时做一次，不在每个请求上读两个 1MB 文件。
+    """
+    if _PAGE_READY["done"]:
+        return
+    src = paths.resource("dash.html")
+    try:
+        if not src.exists():
+            _PAGE_READY["done"] = True
+            return
+        if not p.exists():
+            p.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, p)
+            _PAGE_READY["done"] = True
+            return
+        want = _page_stamp(src.read_text(encoding="utf-8", errors="replace"))
+        have = _page_stamp(p.read_text(encoding="utf-8", errors="replace"))
+        if want and want != have:
+            backup = p.with_name(p.name + ".bak-" + time.strftime("%Y%m%d-%H%M%S"))
+            try:
+                shutil.copy2(p, backup)
+            except OSError:
+                backup = None
+            shutil.copy2(src, p)
+            try:
+                os.chmod(p, 0o644)
+            except OSError:
+                pass
+            print(f"[dash] 页面已从 {have or '(无戳)'} 换到 {want}"
+                  + (f"，旧的备份在 {backup.name}" if backup else ""),
+                  file=sys.stderr, flush=True)
+    except OSError:
+        pass
+    _PAGE_READY["done"] = True
+
+
 @app.get("/dash", response_class=HTMLResponse)
 def workbench() -> HTMLResponse:
     """工作台页面。文件放在数据根的 _工作台/ 下，改完刷新即生效，不用重启服务。
@@ -1074,19 +1130,7 @@ def workbench() -> HTMLResponse:
     写死在页面里就等于把设置焊死在模板上，插件页也拿不到。
     """
     p = dashmod.page_path(CFG)
-    if not p.exists():
-        # 第一次运行（或换了数据根）：从包里铺一份默认工作台过去。
-        # dash.html 是**产品界面**，不是用户数据 —— 它以前只存在于作者本机的
-        # 数据根里，别人装上以后 /dash 永远 404：双击进来只有口袋的文件列表，
-        # 于是以为这软件就是个网盘，中台的卡片一张都见不到。
-        # 只「缺了才铺」，用户改过的页面一个字节都不动。
-        src = paths.resource("dash.html")
-        try:
-            if src.exists():
-                p.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, p)
-        except OSError:
-            pass
+    _ensure_page(p)
     if not p.exists():
         return HTMLResponse(
             "<meta charset='utf-8'><body style='font:15px -apple-system;padding:40px'>"
@@ -1657,6 +1701,92 @@ async def trae_note(request: Request) -> dict:
 # 卡片上的账平时是现算的：去扫 ~/.workbuddy 和 Cherry 的库。换台机只拷了数据根时，
 # 源目录不在就永远是 0。这两个接口把它折成基线账写进数据根，卡片照旧读得到。
 
+@app.get("/api/agent/import/detect", dependencies=[Depends(auth)])
+def agent_import_detect() -> dict:
+    """列一遍本机装了哪些 agent、数据落在哪、多大。
+
+    跟 /scan 的区别：/scan 只问「WorkBuddy 和 Cherry 能导多少」（要真去解析几万
+    行会话，慢），这里只数文件量和体积（快），用于「导入数据」弹窗先铺一屏。
+    """
+    try:
+        import agentscan                                     # noqa: PLC0415
+        return agentscan.detect()
+    except Exception as e:                                   # noqa: BLE001
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "agents": []}
+
+
+@app.post("/api/agent/probe", dependencies=[Depends(auth)])
+async def agent_probe(request: Request) -> dict:
+    """手选目录：只量体积，先不解析（格式还没摸清的客户端走这条）。"""
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    path = str((body or {}).get("path") or "").strip()
+    if not path:
+        return JSONResponse({"ok": False, "error": "没给路径"}, status_code=400)
+    try:
+        import agentscan                                     # noqa: PLC0415
+        return agentscan.probe_manual(path)
+    except Exception as e:                                   # noqa: BLE001
+        return JSONResponse({"ok": False, "error": f"{type(e).__name__}: {e}"},
+                            status_code=500)
+
+
+@app.post("/api/pick/dir", dependencies=[Depends(auth)])
+def pick_dir() -> dict:
+    """在本机弹一个原生「选择文件夹」对话框，把绝对路径还回来。
+
+    网页里拿不到绝对路径（<input webkitdirectory> 只给相对名），而导入需要的
+    恰恰是绝对路径。中台本来就是跑在这台机器上的本地服务，直接借 osascript 弹。
+    弹不出来（无 GUI 会话 / 非 macOS）就如实说，前端退回手输。
+    """
+    if sys.platform != "darwin":
+        return {"ok": False, "error": "只有 macOS 有原生选择器，直接填路径"}
+    try:
+        out = subprocess.run(
+            ["osascript", "-e",
+             'POSIX path of (choose folder with prompt "选一个客户端的数据目录")'],
+            capture_output=True, text=True, timeout=180)
+    except Exception as e:                                   # noqa: BLE001
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    p = (out.stdout or "").strip().rstrip("/")
+    if out.returncode != 0 or not p:
+        msg = (out.stderr or "").strip()
+        return {"ok": False, "cancelled": True,
+                "error": msg[:200] if msg else "已取消"}
+    return {"ok": True, "path": p}
+
+
+@app.post("/api/agent/store/refresh", dependencies=[Depends(auth)])
+async def agent_store_refresh(request: Request) -> dict:
+    """把 WorkBuddy 的会话流水折进本地账本（增量，按 mtime 跳过没变的文件）。
+
+    这是「不再每次刷新重解 748 MB」的那一半：解析一次落成一行，以后卡片查库。
+    """
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    force = bool((body or {}).get("force"))
+    try:
+        import agentstore                                    # noqa: PLC0415
+        r = agentstore.ingest_workbuddy(force=force)
+    except Exception as e:                                   # noqa: BLE001
+        return JSONResponse({"ok": False, "error": f"{type(e).__name__}: {e}"},
+                            status_code=500)
+    return r
+
+
+@app.get("/api/agent/store/stats", dependencies=[Depends(auth)])
+def agent_store_stats() -> dict:
+    try:
+        import agentstore                                    # noqa: PLC0415
+        return {"ok": True, **agentstore.stats(), "summary": agentstore.summary(0)}
+    except Exception as e:                                   # noqa: BLE001
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
 @app.get("/api/agent/import/scan", dependencies=[Depends(auth)])
 def agent_import_scan() -> dict:
     """只读扫描：两个客户端各有多少历史可导。不动任何文件。"""
@@ -1677,9 +1807,12 @@ async def agent_import_apply(request: Request) -> dict:
     names = None
     if isinstance(body, dict) and isinstance(body.get("sources"), list):
         names = [str(x) for x in body["sources"] if str(x).strip()]
+    dirs = []
+    if isinstance(body, dict) and isinstance(body.get("paths"), list):
+        dirs = [str(x) for x in body["paths"] if str(x).strip()]
     try:
         import agent_import                                 # noqa: PLC0415
-        r = agent_import.apply(names)
+        r = agent_import.apply(names, dirs)
     except Exception as e:                                  # noqa: BLE001
         return JSONResponse({"ok": False, "error": f"{type(e).__name__}: {e}"},
                             status_code=500)
