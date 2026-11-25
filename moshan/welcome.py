@@ -99,6 +99,22 @@ WELCOME_HTML = r"""<!doctype html>
   .llm .row{margin-top:10px}
   .llmBody[hidden]{display:none}
 
+  /* 模型来源三选（2026-11-25）：本机已有 / 下载新的 / 接 API。
+     这台机上跑的不一定是默认那个 4B —— 35B 的专家模型、LM Studio 里加载着的、
+     或者干脆接个云 API，都从这里走。 */
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .seg button{border:0;border-radius:0;background:transparent;color:var(--tx2);
+              padding:6px 12px;font-size:13px}
+  .seg button+button{border-left:1px solid var(--line)}
+  .seg button.on{background:var(--accent);color:#fff}
+  .pane{margin-top:10px}
+  .pane[hidden]{display:none}
+  .llmBody select{font:inherit;font-size:13px;padding:7px 10px;border-radius:9px;
+                  border:1px solid var(--line);background:var(--bg);color:var(--tx);
+                  max-width:100%}
+  .llmBody .note{font-size:12px;color:var(--tx3);line-height:1.5;margin:10px 0 0;
+                 white-space:pre-wrap;word-break:break-all}
+
   /* 存什么：三栏清单 */
   .lbl{display:inline-block;font:600 11.5px/1 var(--mono);padding:3px 7px;border-radius:5px;
        margin:14px 0 7px}
@@ -128,14 +144,51 @@ WELCOME_HTML = r"""<!doctype html>
       <label class="feat" id="llmSw" style="background:transparent;border:0;padding:0">
         <input type="checkbox" id="useLlm">
         <div><div class="fn">本机大模型（可选）</div>
-          <div class="fd">给「对话」用，模型文件约 2.4 GB。不装也能用，只是对话会提示去配一个。</div></div>
+          <div class="fd">给「对话」用。这台机上已经有就直接选；也能拉一个新的，或接一个外部 API。不配也能用，只是对话会提示去配一个。</div></div>
       </label>
       <div class="llmBody" id="llmBody" hidden>
-        <div class="row">
-          <input type="text" id="model" value="qwen3.5-4b-gguf:q4km" style="flex:1;min-width:220px">
-          <button id="pullBtn">开始下载</button>
+        <div class="seg" id="segSrc">
+          <button data-v="have" class="on">本机已有</button>
+          <button data-v="pull">下载新的</button>
+          <button data-v="api">接 API / 网关</button>
         </div>
-        <pre id="pullLog" style="display:none"></pre>
+
+        <div class="pane" id="paneHave">
+          <div class="row">
+            <select id="haveSel" style="flex:1;min-width:220px"></select>
+            <button id="haveBtn">用这个</button>
+          </div>
+          <p class="note" id="haveHint">正在看这台机上有什么…</p>
+        </div>
+
+        <div class="pane" id="panePull" hidden>
+          <div class="row">
+            <input type="text" id="model" value="qwen3.5-4b-gguf:q4km" style="flex:1;min-width:220px">
+            <button id="pullBtn">开始下载</button>
+          </div>
+          <pre id="pullLog" style="display:none"></pre>
+        </div>
+
+        <div class="pane" id="paneApi" hidden>
+          <div class="row">
+            <select id="apiPreset"></select>
+            <input type="text" id="apiBase" placeholder="https://api.example.com/v1"
+                   style="flex:1;min-width:180px">
+          </div>
+          <div class="row">
+            <input type="text" id="apiKey" placeholder="API Key（本机服务通常留空）"
+                   style="flex:1;min-width:180px">
+          </div>
+          <div class="row">
+            <input type="text" id="apiModel" placeholder="模型名，如 deepseek-chat / qwen3-30b"
+                   style="flex:1;min-width:180px">
+            <button class="ghost" id="testBtn">测试连接</button>
+            <button id="apiSave">用它</button>
+          </div>
+          <pre id="apiLog" style="display:none"></pre>
+        </div>
+
+        <p class="note" id="llmNote"></p>
       </div>
     </div>
   </div>
@@ -270,6 +323,142 @@ function paintLibHint(){
     + (changed ? '<b>改动</b><span style="color:var(--warn)">保存后重启一次中台才完全生效（旧目录不删）</span>' : '');
 }
 
+/* —— 模型来源三选 ——
+   三条路最后都落到 /api/model/save：它把选择写进 config.json，同时热贴到
+   正在跑的网关客户端上。只写文件是不够的 —— 进中台后客户端还拿着旧模型名，
+   得等重启才生效，而用户以为已经选好了。 */
+let MDL_SRC = [];
+
+/* /api/* 要令牌，引导页地址里没有，所以单独一个带头的封装 */
+async function apiT(path, body){
+  const opt = body
+    ? {method:"POST", headers:{"Content-Type":"application/json", "x-token":TOKEN},
+       body:JSON.stringify(body)}
+    : {headers:{"x-token":TOKEN}};
+  const r = await fetch(path, opt);
+  if(!r.ok) throw new Error(path + " -> " + r.status);
+  return r.json();
+}
+
+function llmNote(msg){ $("#llmNote").textContent = msg || ""; }
+
+function showPane(v){
+  ["have","pull","api"].forEach(k => {
+    $("#pane" + k.charAt(0).toUpperCase() + k.slice(1)).hidden = (k !== v);
+  });
+  [].slice.call($("#segSrc").children).forEach(b => {
+    b.classList.toggle("on", b.dataset.v === v);
+  });
+}
+
+async function saveModel(body){
+  const r = await apiT("/api/model/save", body);
+  if(r.ok === false) throw new Error(r.error || "保存被拒");
+  const c = r.current || {};
+  /* 回填到那个老输入框：最后统一 /welcome/apply 时会带 model 字段，
+     不回填就把刚选的覆盖回默认的 4B 了 */
+  if(c.model) $("#model").value = c.model;
+  return c;
+}
+
+async function loadModels(){
+  try{
+    const s = await apiT("/api/model");
+    MDL_SRC = s.sources || [];
+    const cur = s.current || {};
+    const nb = x => String(x || "").replace(/\/+$/, "");
+
+    const sel = $("#haveSel");
+    sel.innerHTML = "";
+    let n = 0;
+    MDL_SRC.forEach(src => {
+      (src.models || []).forEach(m => {
+        const o = document.createElement("option");
+        o.value = [src.kind, src.base, m].join("\u0001");
+        o.textContent = src.name + " · " + m + (src.kind === "gateway" ? "（可调工具）" : "");
+        if(cur.base && nb(src.base) === nb(cur.base) && m === cur.model) o.selected = true;
+        sel.appendChild(o); n++;
+      });
+    });
+    if(!n){
+      const o = document.createElement("option");
+      o.value = ""; o.textContent = "没探到本机模型";
+      sel.appendChild(o);
+    }
+    $("#haveHint").textContent = n
+      ? "这台机上有 " + n + " 个模型，选一个点「用这个」。"
+      : "没探到本机模型。切到「下载新的」拉一个，或者「接 API」。";
+
+    const ps = $("#apiPreset");
+    ps.innerHTML = "";
+    MDL_SRC.forEach(src => {
+      const o = document.createElement("option");
+      o.value = src.id;
+      o.textContent = src.name + (src.running ? "（运行中）"
+                     : (src.note ? "（" + src.note + "）" : ""));
+      o.dataset.base = src.base || "";
+      o.dataset.kind = src.kind || "openai";
+      ps.appendChild(o);
+    });
+    if(cur.base){
+      [].slice.call(ps.options).forEach(o => {
+        if(o.dataset.base && nb(o.dataset.base) === nb(cur.base)) o.selected = true;
+      });
+    }
+    $("#apiBase").value = ps.selectedOptions[0] ? ps.selectedOptions[0].dataset.base : "";
+    if(cur.model && !$("#apiModel").value) $("#apiModel").value = cur.model;
+
+    /* 本机有就默认看本机；没有但 Ollama 在跑就给下载；都没有就停在接 API */
+    showPane(n ? "have" : (ollamaOk ? "pull" : "api"));
+    if(cur.model) llmNote("现在用的是 " + cur.model + "（" + (cur.base || "—") + "）");
+  }catch(e){
+    $("#haveHint").textContent = "读不到模型清单：" + e.message;
+  }
+}
+
+async function useHave(){
+  const v = $("#haveSel").value;
+  if(!v){ llmNote("没有可选的模型"); return; }
+  const p = v.split("\u0001");
+  $("#haveBtn").disabled = true;
+  try{
+    const c = await saveModel({kind:p[0], base:p[1], model:p[2]});
+    llmNote("已切到 " + c.model + "，进中台就能用。");
+  }catch(e){ llmNote("失败：" + e.message); }
+  finally{ $("#haveBtn").disabled = false; }
+}
+
+async function testApi(){
+  const base = $("#apiBase").value.trim();
+  const log = $("#apiLog");
+  log.style.display = "block";
+  if(!base){ log.textContent = "先填地址。"; return; }
+  log.textContent = "探测中…";
+  try{
+    const r = await apiT("/api/model/test", {base, key:$("#apiKey").value.trim()});
+    if(!r.ok){ log.textContent = "不通：" + (r.reason || "未知原因"); return; }
+    const ms = r.models || [];
+    log.textContent = "通了（" + (r.reason || "") + "），列出 " + ms.length + " 个模型：\n"
+      + (ms.slice(0, 20).join("\n") || "（空）");
+    if(!$("#apiModel").value.trim() && ms.length) $("#apiModel").value = ms[0];
+  }catch(e){
+    log.textContent = "探测失败：" + e.message;
+  }
+}
+
+async function saveApi(){
+  const base = $("#apiBase").value.trim(), model = $("#apiModel").value.trim();
+  if(!base || !model){ llmNote("地址和模型名都要填。"); return; }
+  const opt = $("#apiPreset").selectedOptions[0];
+  const kind = opt ? (opt.dataset.kind || "openai") : "openai";
+  $("#apiSave").disabled = true;
+  try{
+    const c = await saveModel({kind, base, model, key:$("#apiKey").value.trim()});
+    llmNote("已保存并生效：" + c.model);
+  }catch(e){ llmNote("失败：" + e.message); }
+  finally{ $("#apiSave").disabled = false; }
+}
+
 async function startPull(){
   const model = $("#model").value.trim();
   if(!model) return;
@@ -296,6 +485,17 @@ async function pollPull(){
     $("#pullLog").scrollTop = $("#pullLog").scrollHeight;
     if(s.running){ setTimeout(pollPull, 1200); return; }
     $("#pullBtn").disabled = false;
+    if(s.ok === true){
+      /* 拉完就顺手切成「用这个」，省得用户再回来选一遍 */
+      try{
+        await saveModel({kind:"ollama", base:"http://127.0.0.1:11434", model:s.model});
+        llmNote("模型已就绪：" + s.model);
+      }catch(e){
+        llmNote("模型已就绪，但没写进配置：" + e.message);
+      }
+    }else if(s.ok === false){
+      llmNote("下载未完成：" + (s.error || "未知原因"));
+    }
   }catch(e){
     $("#pullBtn").disabled = false;
   }
@@ -339,6 +539,18 @@ $("#resetBtn").addEventListener("click", () => {
 });
 $("#useLlm").addEventListener("change", (e) => {
   $("#llmBody").hidden = !e.target.checked;
+  /* 清单等到真的要看时才探 —— 三个端点最坏 2.5 秒，别拖慢首屏 */
+  if(e.target.checked && !MDL_SRC.length) loadModels();
+});
+[].slice.call($("#segSrc").children).forEach(b => {
+  b.addEventListener("click", () => showPane(b.dataset.v));
+});
+$("#haveBtn").addEventListener("click", useHave);
+$("#testBtn").addEventListener("click", testApi);
+$("#apiSave").addEventListener("click", saveApi);
+$("#apiPreset").addEventListener("change", () => {
+  const o = $("#apiPreset").selectedOptions[0];
+  if(o && o.dataset.base) $("#apiBase").value = o.dataset.base;
 });
 $("#pullBtn").addEventListener("click", startPull);
 $("#doneBtn").addEventListener("click", saveThenEnter);
