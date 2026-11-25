@@ -3,7 +3,7 @@
 <head>
 <!-- 页面版本戳：服务端拿它跟包里那份比，旧了会自动备份并换新。
      改这个文件时把日期往后挪一格，别原地不动，否则老机器收不到。 -->
-<meta name="moshan-page" content="2026-11-25c">
+<meta name="moshan-page" content="2026-11-25g">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
@@ -1699,6 +1699,46 @@ body.st-colmoving *{cursor:grabbing!important}
   word-break:break-all;opacity:.9}
 .imp-mrow{display:flex;align-items:center;gap:9px;margin-top:10px;flex-wrap:wrap}
 .imp-hint{font-size:10.5px;color:var(--tx3)}
+
+/* ---- 配置面弹窗：五面在一处看（分组 / 任务 / 插件 / Skill / MCP） ----
+   比导入弹窗宽一档，因为它要放「名字 + 副标题 + 右侧计数」三列。 */
+.cfg-modal{width:min(560px,calc(100vw - 24px))}
+.cfg-agents{display:flex;gap:5px;flex-wrap:wrap;margin:0 0 10px}
+.cfg-ag{height:26px;padding:0 10px;border:1px solid var(--line);border-radius:999px;
+  background:transparent;color:var(--tx2);font:inherit;font-size:11.5px;font-weight:560;
+  cursor:pointer;white-space:nowrap;transition:border-color .14s var(--ease),background .14s var(--ease),color .14s var(--ease)}
+.cfg-ag:hover{border-color:var(--pri);color:var(--pri)}
+.cfg-ag.on{background:var(--pri-soft);border-color:transparent;color:var(--pri)}
+.cfg-ag i{font-style:normal;opacity:.6;margin-left:4px;font-size:10px}
+/* 全机汇总一行：五面加起来是多少，比逐家点进去看更先回答「一共多少」 */
+.cfg-tot{font-size:11px;color:var(--tx3);margin:-3px 0 8px;line-height:1.6}
+.cfg-tot b{color:var(--tx2);font-weight:620;font-variant-numeric:tabular-nums}
+.cfg-facets{display:flex;gap:4px;flex-wrap:wrap;padding-bottom:9px;border-bottom:1px solid var(--line2)}
+.cfg-fc{height:24px;padding:0 9px;border:0;border-radius:7px;background:var(--card2);
+  color:var(--tx3);font:inherit;font-size:11.5px;font-weight:560;cursor:pointer;white-space:nowrap}
+.cfg-fc:hover{color:var(--tx)}
+.cfg-fc.on{background:var(--pri-soft);color:var(--pri)}
+.cfg-fc b{font-weight:640;margin-left:4px;font-variant-numeric:tabular-nums}
+.cfg-list{max-height:330px;overflow:auto;margin-top:4px;overscroll-behavior:contain}
+.cfg-row{display:flex;align-items:flex-start;gap:10px;padding:8px 2px;
+  border-bottom:1px solid var(--line2)}
+.cfg-row:last-child{border-bottom:0}
+.cfg-meta{flex:1;min-width:0}
+.cfg-name{font-size:12.5px;font-weight:600;color:var(--tx);display:flex;
+  align-items:center;gap:6px;flex-wrap:wrap;word-break:break-all;line-height:1.5}
+.cfg-sub{color:var(--tx3);font-size:11px;line-height:1.5;margin-top:2px;word-break:break-all}
+.cfg-cnt{flex:0 0 auto;font-size:11.5px;color:var(--tx3);font-variant-numeric:tabular-nums;
+  padding-top:1px;white-space:nowrap}
+.cfg-tag{font-size:9.5px;font-weight:500;padding:0 5px;border-radius:4px;
+  border:1px solid var(--line);color:var(--tx3);white-space:nowrap}
+.cfg-tag.ok{color:var(--ok);border-color:var(--ok)}
+.cfg-tag.off{opacity:.55}
+.cfg-tag.warn{color:var(--warn,#c98a1b);border-color:currentColor}
+.cfg-note{font-size:10.5px;color:var(--tx3);line-height:1.6;margin-top:8px}
+.cfg-note b{color:var(--tx2)}
+.cfg-at{font-size:10.5px;color:var(--tx3);margin-right:auto;align-self:center}
+.cfg-more{text-align:center;font-size:11px;color:var(--tx3);padding:9px 0 3px}
+
 /* 时间范围 chip：跟卡头同高，不抢标题 */
 .hw-rng{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;
   margin-right:8px;vertical-align:middle}
@@ -1713,6 +1753,65 @@ body.st-colmoving *{cursor:grabbing!important}
   .card[data-card="hwkpi"] .card-h>.r{width:100%;margin-left:0;flex-wrap:wrap}
   .card[data-card="hwkpi"] .card-h>.r>.hw-rng{margin-right:auto}
 }
+
+/* ---- 「这台机器」卡内的折叠栏（2026-11-25）----
+   机器规格 / 磁盘文件本来是巡检页两张独立卡，这里给一份能收起来的：
+   收起只占一行（图标 + 名字 + 一句摘要），展开就在卡内剩余空间里往下铺，
+   铺不完自己滚 —— 卡片高度不变，不会把下面的卡推走。 */
+.card[data-card="hwkpi"]{position:relative}
+.hwk-gear{width:22px;height:22px;border:1px solid transparent;border-radius:6px;
+  background:transparent;color:var(--tx3);padding:0;cursor:pointer;display:inline-grid;
+  place-items:center;vertical-align:middle;margin-right:8px;flex:0 0 auto}
+.hwk-gear svg{width:13px;height:13px;display:block}
+.hwk-gear:hover{background:var(--card2);color:var(--tx2);border-color:var(--line)}
+.hwk-gear[aria-pressed="true"]{background:var(--pri-soft);color:var(--pri);border-color:var(--pri-line)}
+/* 指标块按内容高度（不再吃满，也不许被折叠栏挤扁），剩下的交给折叠栏 ——
+   收起时下面就是原来那片空白，展开就在这里面往下铺、铺不下自己滚。 */
+.card[data-card="hwkpi"] > #hwkBody{flex:0 0 auto;min-height:0}
+.card[data-card="hwkpi"] > .hwk-subs{flex:0 1 auto;min-height:0;overflow:auto;
+  padding:0 13px 10px;display:flex;flex-direction:column;gap:6px;overscroll-behavior:contain}
+.hwk-sub{border:1px solid var(--line);border-radius:9px;background:var(--card2);flex:0 0 auto}
+.hwk-sub[hidden],.hwk-subs[hidden]{display:none!important}
+.hwk-sub>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:7px;
+  padding:6px 9px;font-size:11.5px;color:var(--tx2);user-select:none}
+.hwk-sub>summary::-webkit-details-marker{display:none}
+.hwk-sub>summary:hover{color:var(--tx)}
+.hwk-sub>summary .ci{display:inline-grid;place-items:center;width:14px;height:14px;
+  flex:0 0 auto;color:var(--tx3)}
+.hwk-sub>summary .ci svg{width:14px;height:14px;display:block}
+.hwk-sub>summary .t{font-weight:560}
+.hwk-sub>summary .sum{margin-left:auto;font-size:10.5px;color:var(--tx3);min-width:0;
+  font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hwk-sub>summary .ar{width:12px;height:12px;color:var(--tx3);flex:0 0 auto;
+  transition:transform .18s var(--ease)}
+.hwk-sub[open]>summary .ar{transform:rotate(90deg)}
+.hwk-sub[open]>summary{border-bottom:1px solid var(--line);color:var(--tx)}
+.hwk-sbody{padding:9px 10px 10px}
+.hwk-sbody .hw-tabbar{margin-bottom:6px}
+/* 折叠栏里窄，规格表一律单列；独立卡那套按容器宽拆两列的规则在这儿不要 */
+.hwk-sbody .mskv{grid-template-columns:max-content minmax(0,1fr);font-size:11px;gap:5px 10px}
+.hwk-sbody .mshero .bx{width:30px;height:30px;font-size:9.5px}
+.hwk-sbody .mshero .nm{font-size:13.5px}
+/* 那三颗「看清单 / brew / 常驻服务」是独立卡的 tab 入口，在这儿点了不会切档
+   （折叠栏里只有规格这一档），所以不摆出来，免得点了没反应 */
+.hwk-sbody .msov{display:none}
+/* 上限之后还要滚：macOS 默认的浮层滚动条不划不出现，这里让它常显 */
+.hwk-subs::-webkit-scrollbar{width:9px}
+.hwk-subs::-webkit-scrollbar-track{background:transparent}
+.hwk-subs::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--tx3) 30%,transparent);
+  border-radius:99px;border:2px solid transparent;background-clip:padding-box}
+.hwk-sbody .dk-row{grid-template-columns:minmax(0,1fr) 54px 62px 26px;gap:6px}
+.hwk-sbody .dk-row.app,.hwk-sbody .dk-row.type{grid-template-columns:minmax(0,1fr) 54px 62px}
+/* 齿轮的设置面板：贴在卡头下沿，卡是 overflow:hidden，所以不会飘出去 */
+.hwk-set{position:absolute;z-index:30;right:11px;top:36px;width:236px;
+  background:var(--card);border:1px solid var(--line);border-radius:10px;
+  box-shadow:var(--sh2);padding:10px 11px;font-size:11.5px}
+.hwk-set[hidden]{display:none!important}
+.hwk-set .t{font-size:10.5px;color:var(--tx3);margin-bottom:6px;letter-spacing:.03em}
+.hwk-set label{display:flex;align-items:center;gap:7px;padding:4px 0;cursor:pointer;color:var(--tx2)}
+.hwk-set label:hover{color:var(--tx)}
+.hwk-set input{accent-color:var(--pri);width:13px;height:13px;margin:0;flex:0 0 auto}
+.hwk-set .n{margin:7px 0 0;font-size:10px;line-height:1.55;color:var(--tx3)}
 
 /* ---- 机器规格（mspec）：抬头 + 键值表 + 可滚的清单 ----
    三个 tab 各有一个 .hwb，而 .hwb 是 display:flex，[hidden] 打不过它，
@@ -4815,7 +4914,7 @@ body.v-more .more-wrap > .card[data-card="transfer"].tf-none .tf-body{height:180
       <span class="r"><span class="hwcap" id="whCap" hidden>
         <a class="hcp" id="capDisk" data-cap="disk" href="#" title="磁盘占用 · 点进巡检看「这台机器」"><i>磁盘</i><b>—</b></a>
         <a class="hcp" id="capMem" data-cap="mem" href="#" title="内存占用 · 点进巡检看「这台机器」"><i>内存</i><b>—</b></a>
-      </span><span id="whStat">—</span><button type="button" class="wh-imp" id="whImp" title="从本机其它 AI 客户端导入历史账"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5v11"/><path d="M7.8 10.4L12 14.6l4.2-4.2"/><path d="M4 17.5v1.2A2.3 2.3 0 0 0 6.3 21h11.4A2.3 2.3 0 0 0 20 18.7v-1.2"/></svg>导入数据</button></span>
+      </span><span id="whStat">—</span><button type="button" class="wh-imp" id="whCfg" title="各家的分组 / 任务 / 插件 / Skill / MCP 一眼看完"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h9"/><path d="M17 7h3"/><circle cx="15" cy="7" r="2"/><path d="M4 17h3"/><path d="M11 17h9"/><circle cx="9" cy="17" r="2"/></svg>配置面</button><button type="button" class="wh-imp" id="whImp" title="从本机其它 AI 客户端导入历史账"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5v11"/><path d="M7.8 10.4L12 14.6l4.2-4.2"/><path d="M4 17.5v1.2A2.3 2.3 0 0 0 6.3 21h11.4A2.3 2.3 0 0 0 20 18.7v-1.2"/></svg>导入数据</button></span>
     </div>
     <div class="wl-bar">
       <!-- 筛选条由数据现生成：客户端名来自 /api/dash 的 worklog.clients，
@@ -4949,9 +5048,54 @@ body.v-more .more-wrap > .card[data-card="transfer"].tf-none .tf-body{height:180
       这台机器
       <span class="r"><span class="hw-rng" id="hwRng" role="group" aria-label="时间范围"></span>
         <a class="hl" id="hmachGo" href="#" title="谁在吃内存 / CPU —— 进程榜在本机工作页">进程榜 ↗</a>
+        <button type="button" class="hwk-gear" id="hwkGear" aria-pressed="false"
+          title="这张卡下面显示哪些栏目" aria-label="卡片设置">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.1"/><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1.03 1.56V21a2 2 0 11-4 0v-.11A1.7 1.7 0 008.4 19.3a1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.7 1.7 0 004 15a1.7 1.7 0 00-1.56-1.03H2.3a2 2 0 110-4h.11A1.7 1.7 0 004 8.94a1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06A1.7 1.7 0 009.3 4.6h.1A1.7 1.7 0 0010.4 3.04V2.9a2 2 0 114 0v.11a1.7 1.7 0 001.03 1.56 1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06A1.7 1.7 0 0020 8.94v.11a1.7 1.7 0 001.56 1.03h.14a2 2 0 110 4h-.11A1.7 1.7 0 0019.4 15z"/></svg>
+        </button>
         <span id="hwkStat">—</span></span>
     </div>
     <div class="hwb" id="hwkBody"></div>
+    <!-- 下面两个折叠栏（2026-11-25）：机器规格 / 磁盘文件，本来各是巡检页一张独立卡。
+         用户要「在空白处能收起来看一眼」—— 所以这里给的是同一份内容、同一份数据：
+         规格吃 HR.data（零额外请求），磁盘走 /api/disk/*（展开才拉）。
+         独立卡还在，两处各自渲染、互不影响（见 mountDiskbrowse）。
+         显示与否由卡头那颗齿轮决定，存 dash_hwksub，默认两个都开。 -->
+    <div class="hwk-subs" id="hwkSubs">
+      <details class="hwk-sub" data-hwksub="mspec">
+        <summary>
+          <span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1.8"/><path d="M9.5 2.5v3M14.5 2.5v3M9.5 18.5v3M14.5 18.5v3M2.5 9.5h3M2.5 14.5h3M18.5 9.5h3M18.5 14.5h3"/></svg></span>
+          <span class="t">机器规格</span>
+          <span class="sum" data-hwksum="mspec">—</span>
+          <svg class="ar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 5l7 7-7 7"/></svg>
+        </summary>
+        <div class="hwk-sbody" data-hwkbox="mspec"></div>
+      </details>
+      <details class="hwk-sub" data-hwksub="diskbrowse">
+        <summary>
+          <span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.8" y="5" width="18.4" height="8.2" rx="2"/><rect x="2.8" y="15" width="18.4" height="4" rx="1.6"/><circle cx="17" cy="9.1" r="1.1" fill="currentColor" stroke="none"/></svg></span>
+          <span class="t">磁盘文件</span>
+          <span class="sum" data-hwksum="diskbrowse">—</span>
+          <svg class="ar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 5l7 7-7 7"/></svg>
+        </summary>
+        <div class="hwk-sbody" data-dkcard="1">
+          <div class="hw-tabbar">
+            <div class="wl-view" data-dk="mode" role="group" aria-label="结构 / 应用 / 类型">
+              <button type="button" data-dkmode="struct" class="on" aria-pressed="true">结构</button>
+              <button type="button" data-dkmode="apps" aria-pressed="false">应用</button>
+              <button type="button" data-dkmode="types" aria-pressed="false">类型</button>
+            </div>
+            <div class="wl-view" data-dk="vols" role="group" aria-label="磁盘"></div>
+          </div>
+          <div class="hwb dk-body" data-dk="body"></div>
+        </div>
+      </details>
+    </div>
+    <div class="hwk-set" id="hwkSet" hidden>
+      <div class="t">这张卡下面显示</div>
+      <label><input type="checkbox" data-hwkshow="mspec" checked> 机器规格</label>
+      <label><input type="checkbox" data-hwkshow="diskbrowse" checked> 磁盘文件</label>
+      <p class="n">巡检页另有同名独立卡（那边规格还带软件 / 服务两档），两边互不影响。</p>
+    </div>
   </section>
 
   <!-- 机器规格（2026-11-21 新增）：巡检要能说清「这是台什么机器、上面有什么」。
@@ -4984,17 +5128,17 @@ body.v-more .more-wrap > .card[data-card="transfer"].tf-none .tf-body{height:180
     <div class="card-h">
       <span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.8" y="5" width="18.4" height="8.2" rx="2"/><rect x="2.8" y="15" width="18.4" height="4" rx="1.6"/><circle cx="17" cy="9.1" r="1.1" fill="currentColor" stroke="none"/></svg></span>
       磁盘文件
-      <span class="r"><span id="dkStat">—</span></span>
+      <span class="r"><span data-dk="stat">—</span></span>
     </div>
     <div class="hw-tabbar">
-      <div class="wl-view" id="dkMode" role="group" aria-label="结构 / 应用 / 类型">
+      <div class="wl-view" data-dk="mode" role="group" aria-label="结构 / 应用 / 类型">
         <button type="button" data-dkmode="struct" class="on" aria-pressed="true">结构</button>
         <button type="button" data-dkmode="apps" aria-pressed="false">应用</button>
         <button type="button" data-dkmode="types" aria-pressed="false">类型</button>
       </div>
-      <div class="wl-view" id="dkVols" role="group" aria-label="磁盘"></div>
+      <div class="wl-view" data-dk="vols" role="group" aria-label="磁盘"></div>
     </div>
-    <div class="hwb dk-body" id="dkBody"></div>
+    <div class="hwb dk-body" data-dk="body"></div>
   </section>
 
   <!-- 花费与用量（2026-11-21 合并）：原来是「Token 与折算」和「用量走势」两张卡，
@@ -5928,6 +6072,29 @@ body.v-more .more-wrap > .card[data-card="transfer"].tf-none .tf-body{height:180
   <div class="md-f">
     <button class="md-b2" id="impCancel">取消</button>
     <button class="md-b2 pri" id="impGo">导入数据</button>
+  </div>
+</div>
+
+<!-- 配置面：分组 / 任务 / 插件 / Skill / MCP。数据走 /api/agent/config/scan，
+     不碰会话正文，只读各家自己的清单文件和小库。 -->
+<div class="modal cfg-modal" id="cfgModal" role="dialog" aria-modal="true" aria-label="配置面" hidden>
+  <div class="md-h">
+    配置面
+    <button class="icon" id="cfgX" title="关闭" aria-label="关闭">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="md-b">
+    <div class="cfg-agents" id="cfgAgents"></div>
+    <div class="cfg-tot" id="cfgTot"></div>
+    <div class="cfg-facets" id="cfgFacets"></div>
+    <div class="cfg-list" id="cfgList"><div class="imp-empty">正在读各家配置…</div></div>
+    <div class="cfg-note" id="cfgNote"></div>
+  </div>
+  <div class="md-f">
+    <span class="cfg-at" id="cfgAt"></span>
+    <button class="md-b2" id="cfgRefresh">重新扫一遍</button>
+    <button class="md-b2 pri" id="cfgClose">关闭</button>
   </div>
 </div>
 
@@ -10619,6 +10786,144 @@ function renderHWKpi() {
   $('hwkStat').textContent = (m.cpus || '—') + ' 核 · 读于 ' + String(d.now || '').slice(11, 16);
 }
 
+/* ---- 「这台机器」卡内那两个折叠栏（2026-11-25）----
+   用户要的是：这张卡下面那块空白别浪费，机器规格和磁盘文件能收起来看一眼。
+   做法是把巡检页那两张卡的内容搬进来，但不是复制一份代码 ——
+   规格传个容器给 renderMSHw（同一份 HR.data，零额外请求），
+   磁盘把 mountDiskbrowse 挂在折叠栏的容器上（展开才 boot，收起不扫盘）。
+   独立卡照旧存在，两边各自持有状态，互不干扰。
+   显示哪几个由卡头的齿轮决定，存 dash_hwksub；默认两个都开。 */
+const HWS = { mspec: 1, diskbrowse: 1 };
+(function loadHwkSubs() {
+  try {
+    const o = JSON.parse(localStorage.getItem('dash_hwksub') || '{}');
+    ['mspec', 'diskbrowse'].forEach(k => {
+      if (o[k] === 0 || o[k] === false) HWS[k] = 0;
+    });
+  } catch (e) { /* 读不出来就按「都显示」 */ }
+})();
+
+function saveHwkSubs() {
+  try {
+    localStorage.setItem('dash_hwksub', JSON.stringify(
+      { mspec: HWS.mspec, diskbrowse: HWS.diskbrowse }));
+  } catch (e) { /* 隐私模式 */ }
+}
+
+function applyHwkSubs() {
+  const box = $('hwkSubs');
+  if (!box) return;
+  [].forEach.call(box.querySelectorAll('[data-hwksub]'), el => {
+    el.hidden = !HWS[el.dataset.hwksub];
+  });
+  [].forEach.call(document.querySelectorAll('#hwkSet [data-hwkshow]'), el => {
+    el.checked = !!HWS[el.dataset.hwkshow];
+  });
+  // 两个都关掉就整块收掉，不然还占着 padding
+  box.hidden = !HWS.mspec && !HWS.diskbrowse;
+}
+
+/* 收起那一行右边的摘要：不展开也知道这台是什么、盘还剩多少 */
+function paintHwkSum() {
+  const d = HR.data || {};
+  const s1 = document.querySelector('[data-hwksum="mspec"]');
+  if (s1) {
+    const sp = d.spec || {}, ch = sp.chip || {}, me = sp.mem || {};
+    s1.textContent = [ch.name, me.total_gb ? me.total_gb + ' GB' : '']
+      .filter(Boolean).join(' · ') || (HR.at ? '—' : '读取中…');
+  }
+  const s2 = document.querySelector('[data-hwksum="diskbrowse"]');
+  if (s2) {
+    const m = d.machine || {}, dk = m.disk || {};
+    s2.textContent = dk.disk_pct != null
+      ? '主盘剩 ' + dk.free_gb + ' / ' + dk.total_gb + ' GB'
+      : (HR.at ? '—' : '读取中…');
+  }
+}
+
+/* 展开那一刻才真正去取数：收起状态下画了也没人看 */
+function onHwkSubToggle(k, open) {
+  if (!open) { fitHwkSubs(); return; }
+  if (k === 'mspec') {
+    const box = document.querySelector('#hwkSubs [data-hwkbox="mspec"]');
+    if (box && HR.data) renderMSHw(HR.data, box);
+  } else if (k === 'diskbrowse') {
+    const card = document.querySelector('#hwkSubs [data-dkcard="1"]');
+    if (!card) return;
+    const m = mountDiskbrowse(card);
+    if (m && card.dataset.dkBoot !== '1') { card.dataset.dkBoot = '1'; m.boot(); }
+  }
+  fitHwkSubs();
+}
+
+/* 「向下展开卷轴」：展开时卡片跟着长高，而不是在 150px 的小窗口里滚。
+   高度按内容实算，但有上限（14 行 ≈ 一屏），再多的部分才在卡内滚 ——
+   两个都展开时不至于把页面顶到天上去。
+   只在 --hcell 上临时加，不动 data-h：那是拖拽存档，收起就能原样还原。 */
+const HWK_ROW = 72, HWK_MAX_ROWS = 14;
+function fitHwkSubs() {
+  const card = document.querySelector('[data-card="hwkpi"]');
+  if (!card) return;
+  const base = Number(card.dataset.h || 6) || 6;
+  if (!card.querySelector('[data-hwksub][open]')) {
+    card.style.setProperty('--hcell', String(base));
+    return;
+  }
+  const headEl = card.querySelector('.card-h'), bodyEl = card.querySelector('#hwkBody');
+  const head = headEl ? headEl.getBoundingClientRect().height : 44;
+  const body = bodyEl ? bodyEl.getBoundingClientRect().height : 0;
+  const subs = card.querySelector('#hwkSubs');
+  // scrollHeight 只算内容，不受「现在被压成多高」影响，所以能反复算不抖
+  const need = head + body + (subs ? subs.scrollHeight : 0) + 10;
+  const rows = Math.min(HWK_MAX_ROWS, Math.max(base, Math.ceil(need / HWK_ROW)));
+  card.style.setProperty('--hcell', String(rows));
+}
+
+/* renderHW 每轮都会走到这里：摘要跟着数走，展开着的那份规格也跟着刷新 */
+function renderHwkSubs() {
+  paintHwkSum();
+  if (!HR.data) return;
+  const box = document.querySelector('#hwkSubs [data-hwkbox="mspec"]');
+  const det = box && box.closest('details');
+  if (det && det.open) renderMSHw(HR.data, box);
+}
+
+/* 齿轮 + 设置面板。面板贴在卡头下沿，点外面或按 Esc 收起。 */
+(function hwkSetInit() {
+  const gear = $('hwkGear'), panel = $('hwkSet'), box = $('hwkSubs');
+  if (!gear || !panel || !box) return;
+  const close = () => { panel.hidden = true; gear.setAttribute('aria-pressed', 'false'); };
+  applyHwkSubs();
+  gear.addEventListener('click', e => {
+    e.stopPropagation();
+    const open = panel.hidden;
+    panel.hidden = !open;
+    gear.setAttribute('aria-pressed', open ? 'true' : 'false');
+  });
+  panel.addEventListener('click', e => e.stopPropagation());
+  [].forEach.call(panel.querySelectorAll('[data-hwkshow]'), el => {
+    el.addEventListener('change', () => {
+      const k = el.dataset.hwkshow;
+      HWS[k] = el.checked ? 1 : 0;
+      saveHwkSubs();
+      applyHwkSubs();
+      // 刚打开的如果是磁盘那份，顺手把它扫出来（不用再点一次）
+      if (el.checked) onHwkSubToggle(k, true);
+    });
+  });
+  document.addEventListener('click', () => { if (!panel.hidden) close(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !panel.hidden) close(); });
+  [].forEach.call(box.querySelectorAll('[data-hwksub]'), el => {
+    el.addEventListener('toggle', () => onHwkSubToggle(el.dataset.hwksub, el.open));
+  });
+  // 磁盘那份内容是异步来的（要等 /api/disk/*），渲染完高度会变 —— 跟着重算一次，
+  // 不然卡片停在「估算时内容还空着」的高度上，展开就只剩半截。
+  if (window.ResizeObserver) {
+    const ro = new ResizeObserver(() => fitHwkSubs());
+    [].forEach.call(box.querySelectorAll('.hwk-sbody'), el => ro.observe(el));
+  }
+})();
+
 /* ---- 谁在干活：客户端 → 类别（模型/工具/专家/技能/脚本）→ 明细 ---- */
 function renderHWWho() {
   if (whView !== 'who') return;    // renderHW 每轮都会调到这里，别的视图不该被它改
@@ -10878,8 +11183,10 @@ function renderMSpec() {
     .filter(Boolean).join(' · ') || '—';
 }
 
-function renderMSHw(d) {
-  const box = $('mspecBody');
+/* box 可以传：巡检页独立卡用 #mspecBody，「这台机器」折叠栏里传它自己的容器。
+   换个容器只是换落点，取数还是 HR.data（同一份 /api/overview，不额外请求）。 */
+function renderMSHw(d, box) {
+  box = box || $('mspecBody');
   if (!box) return;
   const sp = d.spec || {}, mo = sp.model || {}, ch = sp.chip || {}, cp = sp.cpu || {},
         gp = sp.gpu || {}, me = sp.mem || {}, os = sp.os || {}, dk = sp.disk || {};
@@ -11947,6 +12254,7 @@ function renderHW() {
   renderHWGloss();
   renderHWBil();             // 计费账号：官方余额 / 账单 + 跟估算对账
   renderMSpec();
+  renderHwkSubs();           // 「这台机器」卡下面那两个折叠栏（规格摘要 / 展开的规格表）
   renderHWPocket();
   paintHostCaps();           // 本机工作卡头那两枚胶囊（磁盘/内存）—— 同一份机器数据
 }
@@ -17805,6 +18113,180 @@ async function impOpen() {
 }
 
 $('whImp').addEventListener('click', function (e) { e.preventDefault(); impOpen(); });
+
+/* ---- 配置面：分组 / 任务 / 插件 / Skill / MCP ----
+   和数据面（导入数据那个弹窗）分开两个口：那边是「跑过多少活」，这边是
+   「被怎么配的」。五面在一处，切人、切面都不重新请求 —— 一次扫完都缓存住。 */
+const CGO = { data: null, agent: '', facet: 'groups', busy: false };
+const CFG_FACETS = [['groups', '分组'], ['tasks', '任务'], ['plugins', '插件'],
+                    ['skills', 'Skill'], ['mcp', 'MCP']];
+
+function cfgCur() {
+  const list = (CGO.data && CGO.data.agents) || [];
+  return list.find(function (a) { return a.id === CGO.agent; }) ||
+         list.find(function (a) { return a.installed; }) || list[0] || null;
+}
+
+function cfgPaintAgents() {
+  const list = ((CGO.data && CGO.data.agents) || []).filter(function (a) { return a.installed; });
+  $('cfgAgents').innerHTML = list.map(function (a) {
+    const g = (a.counts || {}).groups || 0;
+    return '<button type="button" class="cfg-ag' + (a.id === CGO.agent ? ' on' : '') +
+           '" data-cga="' + impEsc(a.id) + '">' + impEsc(a.name) +
+           (g ? '<i>' + g + ' 组</i>' : '') + '</button>';
+  }).join('') || '<span class="cfg-at">本机没找到已装的客户端</span>';
+}
+
+function cfgPaintFacets() {
+  const a = cfgCur();
+  if (!a) { $('cfgFacets').innerHTML = ''; return; }
+  $('cfgFacets').innerHTML = CFG_FACETS.map(function (f) {
+    const n = (a.counts || {})[f[0]] || 0;
+    return '<button type="button" class="cfg-fc' + (f[0] === CGO.facet ? ' on' : '') +
+           '" data-cgf="' + f[0] + '">' + f[1] + '<b>' + n + '</b></button>';
+  }).join('');
+}
+
+function cfgRow(name, sub, right, tag) {
+  return '<div class="cfg-row"><div class="cfg-meta"><div class="cfg-name">' +
+    impEsc(name) + (tag ? '<span class="cfg-tag ' + (tag.cls || '') + '">' +
+    impEsc(tag.text) + '</span>' : '') + '</div>' +
+    (sub ? '<div class="cfg-sub">' + impEsc(sub) + '</div>' : '') +
+    '</div>' + (right ? '<div class="cfg-cnt">' + impEsc(right) + '</div>' : '') + '</div>';
+}
+
+function cfgPaintList() {
+  const a = cfgCur();
+  const box = $('cfgList');
+  $('cfgNote').innerHTML = '';
+  if (!a) { box.innerHTML = '<div class="imp-empty">没有可看的客户端</div>'; return; }
+
+  let rows = [];
+  if (CGO.facet === 'groups') {
+    rows = (a.groups || []).map(function (g) {
+      // from=cwd 的那些，名字本身就是真路径，副行再打一遍目录名是重复噪音；
+      // from=slug 的（TRAE/千问）名字是猜出来的，才需要把原始目录名摊开。
+      const sub = [g.last ? '最后 ' + g.last : '',
+                   g.from === 'cwd' ? '' : (g.path || '')].filter(Boolean).join(' · ');
+      return cfgRow(g.name, sub, g.count ? g.count + ' 个会话' : '',
+                    g.from === 'slug' ? { text: '名不全', cls: 'warn' } : null);
+    });
+  } else if (CGO.facet === 'tasks') {
+    const t = a.tasks || {};
+    rows = (t.items || []).map(function (x) {
+      const sub = [x.group ? '会话 ' + x.group : '', x.at, x.note].filter(Boolean).join(' · ');
+      return cfgRow(x.name, sub, '',
+                    x.status ? { text: x.status, cls: /完成|completed/i.test(x.status) ? 'ok' : '' } : null);
+    });
+    if (t.by_status && Object.keys(t.by_status).length) {
+      $('cfgNote').innerHTML = '按状态：' + Object.keys(t.by_status).map(function (k) {
+        return '<b>' + impEsc(k) + '</b> ' + t.by_status[k];
+      }).join(' · ') + (t.runs ? '<br>执行记录：' + Object.keys(t.runs).map(function (k) {
+        return '<b>' + impEsc(k) + '</b> ' + t.runs[k];
+      }).join(' · ') : '');
+    }
+  } else if (CGO.facet === 'plugins') {
+    rows = (a.plugins || []).map(function (p) {
+      const d = p.desc && p.desc.length > 70 ? p.desc.slice(0, 70) + '…' : (p.desc || '');
+      const sub = [p.market, p.ver ? 'v' + p.ver : '', d].filter(Boolean).join(' · ');
+      return cfgRow(p.name, sub, '', { text: p.on === false ? '关闭' : '启用',
+                                       cls: p.on === false ? 'off' : 'ok' });
+    });
+  } else if (CGO.facet === 'skills') {
+    rows = (a.skills || []).map(function (s) {
+      // 技能说明普遍是一整段，全摊开一行能占四五行，截断到两句
+      let d = s.desc || s.path || '';
+      if (d.length > 96) d = d.slice(0, 96) + '…';
+      const sub = [s.src, d].filter(Boolean).join(' · ');
+      const right = s.used ? '用过 ' + s.used + ' 次' : (s.at || '');
+      return cfgRow(s.name, sub, right, s.last_used ? { text: s.last_used, cls: 'off' } : null);
+    });
+  } else {
+    rows = (a.mcp || []).map(function (m) {
+      return cfgRow(m.name, m.target, m.tools ? m.tools + ' 个工具' : '',
+                    m.kind ? { text: m.kind, cls: 'off' } : null);
+    });
+  }
+
+  if (!rows.length) {
+    const why = (a.notes || []).join('；') || '这家没有这一面（或还没接过）';
+    box.innerHTML = '<div class="imp-empty">' + impEsc(why) + '</div>';
+    return;
+  }
+  const cap = 40;
+  box.innerHTML = rows.slice(0, cap).join('') +
+    (rows.length > cap ? '<div class="cfg-more">还有 ' + (rows.length - cap) + ' 项，没全列</div>' : '');
+}
+
+function cfgPaint() {
+  cfgPaintAgents();
+  cfgPaintFacets();
+  cfgPaintList();
+  const t = (CGO.data && CGO.data.totals) || {};
+  const unit = { groups: ' 组', tasks: ' 任务', plugins: ' 插件',
+                 skills: ' 技能', mcp: ' MCP' };
+  $('cfgTot').innerHTML = CGO.data && t.installed
+    ? '全机合计 ' + CFG_FACETS.map(function (f) {
+        return '<b>' + (t[f[0]] || 0) + '</b>' + unit[f[0]];
+      }).join(' · ')
+    : '';
+  $('cfgAt').textContent = CGO.data
+    ? (CGO.data.cached ? '缓存 ' : '扫描 ') + (CGO.data.at || '') + ' · ' + (CGO.data.ms || 0) + 'ms'
+    : '';
+}
+
+async function cfgLoad(force) {
+  if (CGO.busy) return;
+  CGO.busy = true;
+  $('cfgList').innerHTML = '<div class="imp-empty">正在读各家配置…</div>';
+  try {
+    const d = await api('/api/agent/config/scan' + (force ? '?force=1' : ''));
+    if (!d || !d.ok) throw new Error((d && d.error) || '扫不出来');
+    CGO.data = d;
+    const inst = (d.agents || []).filter(function (a) { return a.installed; });
+    if (!inst.some(function (a) { return a.id === CGO.agent; })) {
+      CGO.agent = inst.length ? inst[0].id : '';
+      CGO.facet = 'groups';
+    }
+    cfgPaint();
+  } catch (e) {
+    $('cfgList').innerHTML = '<div class="imp-empty">读失败：' + impEsc(e.message) + '</div>';
+  } finally {
+    CGO.busy = false;
+  }
+}
+
+async function cfgOpen() {
+  const m = $('cfgModal');
+  m.hidden = false;
+  m.classList.add('on');
+  await cfgLoad(false);
+}
+
+function cfgClose() {
+  const m = $('cfgModal');
+  m.classList.remove('on');
+  setTimeout(function () { m.hidden = true; }, 180);
+}
+
+$('whCfg').addEventListener('click', function (e) { e.preventDefault(); cfgOpen(); });
+$('cfgX').addEventListener('click', cfgClose);
+$('cfgClose').addEventListener('click', cfgClose);
+$('cfgRefresh').addEventListener('click', function () { cfgLoad(true); });
+$('cfgAgents').addEventListener('click', function (e) {
+  const b = e.target.closest('[data-cga]');
+  if (!b) return;
+  CGO.agent = b.dataset.cga;
+  cfgPaint();
+});
+$('cfgFacets').addEventListener('click', function (e) {
+  const b = e.target.closest('[data-cgf]');
+  if (!b) return;
+  CGO.facet = b.dataset.cgf;
+  cfgPaintFacets();
+  cfgPaintList();
+});
+
 $('impX').addEventListener('click', impClose);
 $('impCancel').addEventListener('click', impClose);
 
@@ -18260,7 +18742,8 @@ paintCardGo();                    // 每张卡的标题先变成入口，别等�
 paintCrossLinks();                // 跨页深链（这台机器 → 进程榜）
 applyHWTab();                     // 花费 / 用量 的选中态与显隐（本地记着上次那一档）
 applyPKTab();                     // 口袋卡 任务 / 脚本 同上
-if (MORE || VIEW_PAGE) buildMorePage(); else { applyLayout(); homeGate(); settlePos(); initCardSw(); }
+if (MORE || VIEW_PAGE) { buildMorePage(); }
+else { applyLayout(); homeGate(); settlePos(); initCardSw(); }
 applyWlView();      // 视图按钮的选中态先定下来，别等数据回来才跳
 applyWhView();
 loadAll();
@@ -18478,11 +18961,19 @@ window.addEventListener('beforeunload', e => {
      apps   应用各自的体积（.app 是目录，必须单独递归，否则显示 0）；
      types  按扩展名归类，回答「这块盘里都是些什么」。
    一切走 /api/disk/*，服务端有 90 秒缓存，来回切 tab 不会重复扫盘。 */
-(function () {
-  const card = document.querySelector('[data-card="diskbrowse"]');
-  if (!card) return;
-  const body = $('dkBody'), stat = $('dkStat'), volsBox = $('dkVols'), modeBox = $('dkMode');
-  if (!body || !volsBox || !modeBox) return;
+/* 一份代码挂多处（2026-11-25）：
+   巡检页有独立卡，「这台机器」卡内的折叠栏里还有一份。以前是 IIFE + 写死 id，
+   只能存在一个。现在改成 mount(容器)：元素靠 [data-dk="…"] 在容器里找，
+   每个实例自带一份 DK 状态（各自选卷、各自路径，互不影响）。
+   容器用 data-card="diskbrowse" 的那份还会被布局 / 可见性逻辑当卡片数，
+   所以折叠栏那份挂的是 data-dkcard="1" —— 别给它加 data-card。 */
+function mountDiskbrowse(card) {
+  if (!card) return null;
+  if (card._dk) return card._dk;               // 同一个容器只挂一次，反复调拿到同一个实例
+  const q = s => card.querySelector('[data-dk="' + s + '"]');
+  const body = q('body'), stat = q('stat'), volsBox = q('vols'), modeBox = q('mode');
+  if (!body || !volsBox || !modeBox) return null;
+  card.dataset.dkOn = '1';
   const DK = { vol: '', mode: 'struct', path: '', vols: [], home: '', data: null, seq: 0 };
 
   const GB = 1024 * 1024 * 1024;
@@ -18699,9 +19190,31 @@ window.addEventListener('beforeunload', e => {
     pickMount(DK.vols[0].mount);
   }
 
-  // 这卡只在巡检页出现；首页那份是隐藏的，别在首页白扫一次盘
-  if (VIEW_PAGE === 'ops') boot();
-})();
+  // 这不自动扫盘：是否现在开机由调用方决定 —— 独立卡在巡检页进来就 boot，
+  // 折叠栏里那份等用户展开再 boot（收起不花这一次请求）。
+  const inst = { boot: boot, DK: DK, card: card };
+  card._dk = inst;
+  return inst;
+}
+
+/* 页面上现在有几份磁盘卡就挂几份（独立卡 + 折叠栏）。已经挂过的跳过，
+   所以这个函数可以反复调 —— 页面视图切换、折叠栏展开都走它。 */
+function mountDisks() {
+  [].forEach.call(document.querySelectorAll('[data-card="diskbrowse"], [data-dkcard="1"]'),
+    c => {
+      const m = mountDiskbrowse(c);
+      if (!m) return;
+      // 独立卡：进了巡检页就扫一次；折叠栏那份由展开动作自己 boot，这里不碰
+      if (c.dataset.card === 'diskbrowse' && VIEW_PAGE === 'ops' && c.dataset.dkBoot !== '1') {
+        c.dataset.dkBoot = '1';
+        m.boot();
+      }
+    });
+}
+
+/* 这一块的函数定义在页面最后一个 script 里，比上面那段初始化晚执行，
+   所以挂载放在这儿自己做 —— 页面视图那时已经把卡搬好位置了。 */
+if (MORE || VIEW_PAGE) mountDisks();
 </script>
 </body>
 </html>
