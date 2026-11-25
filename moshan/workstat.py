@@ -29,6 +29,11 @@
   · 每条提示词耗时 = 这一轮（rid）的首末跨度；没有提示词的手工操作不算分母。
   · 平均 token / 条 = 窗口内总 token ÷ 提示词条数（token 是请求级的，提示词是
     提问级的，两者本来就不一一对应，这个比值回答的是「平均一问烧多少」）。
+  · 「字数」= 提示词原文的**字符数**：一个汉字、一个字母、一个标点各算 1（不是
+    字节，也不是 token）。卡上那颗「token」按钮切的是同一段原文按 DeepSeek 官方
+    口径折出来的估数（中文 0.6 / 其他 0.3），跟上面那个「总 token」不是一回事：
+    usage 里的 inputTokens 是整个上下文（每条几百万，含缓存重发与几十轮工具调用），
+    拿它当「这条提示词多长」会差三个数量级。
 """
 from __future__ import annotations
 
@@ -81,6 +86,15 @@ _RE_IMG = re.compile(r"@image#\d+:|<image_local_path>")
 
 # 提示词字数的分档（前端直方图用同一份边界）
 LENS = (20, 50, 100, 200, 500, 1000)
+# 提示词的小时桶：n / 字数 / 链接 / 图片 + 字数直方图，末尾再追加一格「折算 token」。
+# 追加项一律放在**直方图后面** —— 老桶没有这一格时读成 0，不会把直方图串位。
+_B_HIST = 4                                   # 字数直方图起点
+_B_PTOK = _B_HIST + len(LENS) + 1             # 折算 token（追加项）
+_B_LEN = _B_PTOK + 1
+# 折算口径用 DeepSeek 官方那句：1 个中文字符 ≈ 0.6 token，1 个英文字符 ≈ 0.3。
+# 中文字符是**逐字数**出来的（不是拿总字数乘常数），所以中英混排也准。
+PTOK_CJK = 0.6
+PTOK_OTHER = 0.3
 
 _S = {"data": None, "at": 0.0, "busy": False, "err": "", "took": 0.0}
 _LOCK = threading.Lock()
@@ -137,6 +151,23 @@ def _len_bucket(n: int) -> int:
         if n < hi:
             return i
     return len(LENS)
+
+
+def _ptok(s: str) -> int:
+    """把一条提示词的原文折成 token 数（中文 0.6 / 其他 0.3，DeepSeek 口径）。
+
+    为什么是折不是真分词：会话流水里只留了提示词的**原文**，没有平台侧的 token
+    计数（usage 里的 inputTokens 是整个上下文，几百万，跟「这句话多长」不是一回事）。
+    真要精确就得在这儿挂一个分词器，还得跟各家模型的词表对齐 —— 一张卡不值得。
+    所以逐字数中文字符再按官方换算率折，误差在 ±10% 量级，卡上写清是折算值。
+    """
+    cjk = 0
+    for ch in s:
+        o = ord(ch)
+        if (0x3400 <= o <= 0x9FFF or 0xF900 <= o <= 0xFAFF
+                or 0x3000 <= o <= 0x303F or 0xFF00 <= o <= 0xFFEF):
+            cjk += 1
+    return int(round(cjk * PTOK_CJK + (len(s) - cjk) * PTOK_OTHER))
 
 
 # ---------------------------------------------------------------- 「AI 在跑」的分钟格
@@ -280,17 +311,21 @@ def _scan_file(path: Path, prev: dict | None, am: dict) -> dict:
             q = _RE_Q.search(raw)
             if rid and tsm and q:
                 text = _unesc(q.group(1))
-                n = len(text.strip())
+                body = text.strip()
+                n = len(body)
                 key = _hour_of(int(tsm.group(1)))
                 if key:
                     b = fph.get(key)
                     if b is None:
-                        b = fph[key] = [0] * (4 + len(LENS) + 1)
+                        b = fph[key] = [0] * _B_LEN
+                    elif len(b) < _B_LEN:       # 老缓存里的短桶（没折算格）就地补长
+                        b.extend([0] * (_B_LEN - len(b)))
                     b[0] += 1
                     b[1] += n
                     b[2] += len(_RE_LINK.findall(text))
                     b[3] += len(_RE_IMG.findall(text))
-                    b[4 + _len_bucket(n)] += 1
+                    b[_B_PTOK] += _ptok(body)
+                    b[_B_HIST + _len_bucket(n)] += 1
                 r = reqs.get(rid.group(1).decode())
                 if r is None:
                     r = reqs[rid.group(1).decode()] = [int(tsm.group(1)), 0,
@@ -779,13 +814,14 @@ def _other_agents(since_ms: int) -> list[dict]:
 HOUR_COLS = ("ai", "human", "tok", "tin", "tout", "prompts", "chars", "links", "imgs")
 # 一天一条记录的形状（存档文件里也是它，`cols` 那行记着每个小时桶的列序）
 DAY_COLS = ("ai", "human", "tok", "tin", "tout", "prompts", "chars", "links",
-            "imgs", "reqs")
+            "imgs", "reqs", "ptok")
 
 
 def _blank_day(d: str) -> dict:
     return {
         "d": d, "ai": 0.0, "human": 0.0, "tok": 0, "tin": 0, "tout": 0,
         "prompts": 0, "chars": 0, "links": 0, "imgs": 0, "reqs": 0,
+        "ptok": 0,                      # 提示词按 DeepSeek 口径折的 token（估数）
         "has": 0,                       # 那天有没有屏幕记录
         "hours": [[0] * len(HOUR_COLS) for _ in range(24)],
         "apps": {},                     # App 名 → 秒
@@ -906,6 +942,7 @@ def _fold(state: dict, since_day: str) -> dict:
             rw = dayrec(d)
             rw["prompts"] += int(b[0] or 0)
             rw["chars"] += int(b[1] or 0)
+            rw["ptok"] += int(b[_B_PTOK] or 0) if len(b) > _B_PTOK else 0
             rw["links"] += int(b[2] or 0)
             rw["imgs"] += int(b[3] or 0)
             addh(d, h, "prompts", int(b[0] or 0))
@@ -916,8 +953,8 @@ def _fold(state: dict, since_day: str) -> dict:
             a["prompts"] += int(b[0] or 0)
             a["chars"] += int(b[1] or 0)
             for i in range(len(LENS) + 1):
-                if 4 + i < len(b):
-                    rw["hist"][i] += int(b[4 + i] or 0)
+                if _B_HIST + i < len(b):
+                    rw["hist"][i] += int(b[_B_HIST + i] or 0)
 
     # 别家 agent：只有轮次（和偶尔有的耗时），没有 token
     marks = state.get("am")
@@ -1166,7 +1203,8 @@ def _absorb(new_days: dict, force: bool = False) -> dict:
 def _row_out(rec: dict, d: str) -> dict:
     r = {"d": d, "ai": round(float(rec.get("ai") or 0), 1),
          "human": round(float(rec.get("human") or 0), 1)}
-    for k in ("tok", "tin", "tout", "prompts", "chars", "links", "imgs", "reqs"):
+    for k in ("tok", "tin", "tout", "prompts", "chars", "links", "imgs", "reqs",
+              "ptok"):
         r[k] = int(rec.get(k) or 0)
     return r
 
@@ -1231,6 +1269,7 @@ def view(days: int = 30, day: str = "", fresh: bool = False,  # noqa: FBT001
         "links": sum(r["links"] for r in rows),
         "imgs": sum(r["imgs"] for r in rows),
         "reqs": sum(r["reqs"] for r in rows),
+        "ptok": sum(r["ptok"] for r in rows),
     }
     active_days = sum(1 for r in rows if r["prompts"] or r["reqs"])
     human_days = sum(1 for r in rows if days_map.get(r["d"], {}).get("has"))

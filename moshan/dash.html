@@ -3,7 +3,7 @@
 <head>
 <!-- 页面版本戳：服务端拿它跟包里那份比，旧了会自动备份并换新。
      改这个文件时把日期往后挪一格，别原地不动，否则老机器收不到。 -->
-<meta name="moshan-page" content="2026-11-25a2">
+<meta name="moshan-page" content="2026-11-25a3">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
@@ -5346,7 +5346,10 @@ body.v-more .more-wrap > .card[data-card="transfer"].tf-none .tf-body{height:180
     <div class="card-h">
       <span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v11H12l-4.5 3.5v-3.5H4z"/><path d="M8 9.5h8M8 12.6h5"/></svg></span>
       提示词
-      <span class="r"><span class="hw-rng" id="hwRng3" role="group" aria-label="时间范围"></span>
+      <span class="r"><span class="hw-rng" id="prmUnit" role="group" aria-label="按字还是按 token">
+          <button type="button" class="hw-rg on" data-prmu="字" aria-pressed="true">字</button>
+          <button type="button" class="hw-rg" data-prmu="tok" aria-pressed="false">token</button>
+        </span><span class="hw-rng" id="hwRng3" role="group" aria-label="时间范围"></span>
         <span id="hwprmStat">—</span></span>
     </div>
     <div class="hwb" id="hwprmBody"></div>
@@ -12070,16 +12073,48 @@ function renderHWChart() {
 /* ---- 提示词（2026-11-25）：说了多少字 / 平均每条多长 / 多少天在说话 ----
    数据是 /api/overview 的 prompts 段，服务端由 workstat.view() 派生 ——
    跟 /hostwork「提示词」那一页同一份聚合，不在这儿另算。
-   用户要求「输入的字单独一张卡」，所以不并进「花费与用量」。 */
-function hwPrmSvg(rows) {
+   用户要求「输入的字单独一张卡」，所以不并进「花费与用量」。
+
+   两个口径（2026-11-25 18:0x 用户问「数的是汉字还是 token」）：
+     · 字   = 原文的**字符数**：一个汉字 / 一个字母 / 一个标点各算 1（不是字节）
+     · token = 同一段原文按 DeepSeek 官方换算率折的**估数**（中文 0.6 / 其他 0.3），
+       逐字数中文字符再折，服务端在扫描时算好（workstat._ptok），这儿只负责切换。
+       注意它跟「每条 token」那张卡不是一回事 —— 那张是 usage 里的实测 inputTokens，
+       一条几百万（含缓存重发与几十轮工具调用），答的是「一问烧多少」，不是「这句话多长」。 */
+const PRM = { unit: '字' };
+try { if (localStorage.getItem('dash_prmunit') === 'tok') PRM.unit = 'tok'; } catch (e) { }
+function paintPrmUnit() {
+  const box = $('prmUnit');
+  if (!box) return;
+  [].forEach.call(box.querySelectorAll('[data-prmu]'), x => {
+    const on = x.getAttribute('data-prmu') === PRM.unit;
+    x.classList.toggle('on', on);
+    x.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+}
+function setPrmUnit(u) {
+  PRM.unit = u === 'tok' ? 'tok' : '字';
+  try { localStorage.setItem('dash_prmunit', PRM.unit); } catch (e) { }
+  paintPrmUnit();
+  renderHWPrm();          // 数据同一份，只重画这张卡，不重新拉接口
+}
+/* 挂 document 上：卡片会被页面视图搬来搬去，绑在卡里的监听会丢 */
+document.addEventListener('click', e => {
+  const b = e.target && e.target.closest ? e.target.closest('[data-prmu]') : null;
+  if (!b) return;
+  setPrmUnit(b.getAttribute('data-prmu'));
+});
+/* 一条提示词摊到多少「单位」：字口径取 c，token 口径取 t（服务端折好的） */
+function prmVals(rows, tokMode) {
+  return rows.map(r => (r.n ? (tokMode ? (r.t || 0) : (r.c || 0)) / r.n : 0));
+}
+function hwPrmSvg(vals) {
   const w = 600, h = 132, padB = 8;
-  const vals = rows.map(r => (r.n ? r.c / r.n : 0));
   const max = Math.max.apply(null, vals.concat([1]));
-  const bw = w / Math.max(1, rows.length);
+  const bw = w / Math.max(1, vals.length);
   const iw = Math.max(1.4, bw - 2);
   let out = '';
-  rows.forEach((r, i) => {
-    const v = vals[i];
+  vals.forEach((v, i) => {
     const bh = (h - padB) * Math.min(1, v / max);
     const x = i * bw + (bw - iw) / 2;
     out += '<rect x="' + x.toFixed(1) + '" y="' + (h - padB - bh).toFixed(1)
@@ -12088,12 +12123,13 @@ function hwPrmSvg(rows) {
   });
   // 字不放 SVG 里：这张图横向拉伸，字会被拉扁（横轴标签用 HTML 摆）
   return '<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none" '
-    + 'style="height:' + h + 'px;width:100%" role="img" aria-label="每天平均每条多少字">'
+    + 'style="height:' + h + 'px;width:100%" role="img" aria-label="每天平均每条多少">'
     + out + '</svg>';
 }
 function renderHWPrm() {
   const box = $('hwprmBody');
   if (!box) return;
+  paintPrmUnit();
   const wait = hwWait();
   if (wait) { box.innerHTML = wait; $('hwprmStat').textContent = '—'; return; }
   const pr = (HR.data || {}).prompts;
@@ -12106,21 +12142,33 @@ function renderHWPrm() {
   $('hwprmStat').textContent = hrN(pr.n) + ' 条 · '
     + pr.active_days + '/' + pr.days + ' 天';
   const rows = (pr.by_day || []).slice();
+  const tokMode = PRM.unit === 'tok';
+  const unit = tokMode ? 'token' : '字';
+  const per = tokMode ? (Number(pr.per_tok) || 0) : (Number(pr.per) || 0);
+  const big = tokMode ? (Number(pr.ptok) || 0) : (Number(pr.chars) || 0);
+  const num = v => tokMode ? hwTokN(Math.round(v)) : hrN(Math.round(v));
+  // token 那边常常是几十上百，留一位小数反而好读（96.4）；上千就走 K/M
+  const perTxt = tokMode ? (per >= 1000 ? hwTokN(per) : String(per)) : String(per);
+  // 汉字后面不加空格（「15.1万字」），token 是拉丁字得留一格（「63K token」）
+  const gap = tokMode ? ' ' : '';
   let html = '<div class="hw-prm">'
-    + '<div><b>' + esc(String(pr.per || 0)) + '<em>字/条</em></b>'
-    + '<i>平均每条提示词</i></div>'
+    + '<div><b>' + esc(perTxt) + '<em>' + unit + '/条</em></b>'
+    + '<i>' + (tokMode ? '按原文折算 · 中文 0.6/字' : '平均每条提示词') + '</i></div>'
     + '<div><b>' + hrN(pr.n) + '<em>条</em></b>'
-    + '<i>' + esc(pr.days + ' 天共 ' + hrN(pr.chars) + '字') + '</i></div>'
+    + '<i>' + esc(pr.days + ' 天共 ' + num(big) + gap + unit) + '</i></div>'
     + '<div><b>' + pr.active_days + '<em>/' + pr.days + ' 天</em></b>'
     + '<i>活跃 · 那天平均 ' + esc(String(pr.per_active || 0)) + ' 条</i></div>'
     + '</div>';
   if (rows.length) {
-    const peak = rows.reduce((a, r) => Math.max(a, r.n ? r.c / r.n : 0), 0);
+    const vals = prmVals(rows, tokMode);
+    const peak = vals.reduce((a, v) => Math.max(a, v), 0);
     html += '<div class="hw-chart"><div class="cap">'
-      + '<span>每天平均每条多少字</span>'
-      + '<span>峰值 ' + esc(String(Math.round(peak))) + ' 字</span></div>'
-      + '<div class="box">' + hwPrmSvg(rows) + '</div>'
+      + '<span>每天平均每条多少' + gap + unit + '</span>'
+      + '<span>峰值 ' + esc(num(peak)) + ' ' + unit + '</span></div>'
+      + '<div class="box">' + hwPrmSvg(vals) + '</div>'
       + '<div class="hw-prm-x"><span>' + esc(String((rows[0] || {}).d || '').slice(5)) + '</span>'
+      + '<span>' + (tokMode ? '折算值 · 非实测' : '原文长度')
+      + '</span>'
       + '<span>' + esc(String((rows[rows.length - 1] || {}).d || '').slice(5)) + '</span></div>'
       + '</div>';
   }

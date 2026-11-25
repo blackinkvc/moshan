@@ -2718,18 +2718,24 @@ def _prompts_brief(days: int) -> dict:
     # 口径跟 workstat 的 tot / active_days 完全一致：就是窗口内那几天相加
     n = sum(int(r.get("prompts") or 0) for r in rows)
     chars = sum(int(r.get("chars") or 0) for r in rows)
+    # 折算 token（中文 0.6 / 其他 0.3，workstat 里逐字数出来的）。卡上那颗「token」
+    # 按钮用的就是它 —— **不是** tot 里那个几百万的实测 inputTokens。
+    ptok = sum(int(r.get("ptok") or 0) for r in rows)
     active = sum(1 for r in rows if int(r.get("prompts") or 0) or int(r.get("reqs") or 0))
     d = {
         "ok": True,
         "days": win_n,
         "n": n,
         "chars": chars,
+        "ptok": ptok,
         "per": round(chars / max(1, n), 1),
+        "per_tok": round(ptok / max(1, n), 1),
         "per_active": round(n / max(1, active), 1),
         "active_days": active,
-        # 每天一条，只留三个字段 —— 「用量」那一档要画「每天平均多少字」
+        # 每天一条，只留四个字段 —— 「用量」那一档要画「每天平均多少字 / 多少 token」
         "by_day": [{"d": r.get("d"), "n": int(r.get("prompts") or 0),
-                    "c": int(r.get("chars") or 0)} for r in rows],
+                    "c": int(r.get("chars") or 0),
+                    "t": int(r.get("ptok") or 0)} for r in rows],
     }
     _PRM_CACHE.update({"at": now, "days": int(days), "data": d})
     return d
