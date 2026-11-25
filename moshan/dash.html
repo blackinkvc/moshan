@@ -1,6 +1,9 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
+<!-- 页面版本戳：服务端拿它跟包里那份比，旧了会自动备份并换新。
+     改这个文件时把日期往后挪一格，别原地不动，否则老机器收不到。 -->
+<meta name="moshan-page" content="2026-11-25c">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
@@ -1668,6 +1671,34 @@ body.st-colmoving *{cursor:grabbing!important}
 .hcp.bad{border-color:var(--bad)}
 .hcp.bad b,.hcp.bad i{color:var(--bad)}
 .hcp.off{opacity:.45}
+/* 卡头那颗「导入数据」：跟磁盘/内存胶囊同高，宁可窄也别把卡头撑高一行 */
+.wh-imp{display:inline-flex;align-items:center;gap:3px;margin-left:6px;
+  border:1px solid var(--line);background:transparent;color:var(--tx2);
+  border-radius:999px;padding:0 8px 0 6px;font:inherit;font-size:10.5px;
+  line-height:1.7;cursor:pointer;white-space:nowrap;vertical-align:middle}
+.wh-imp svg{width:11px;height:11px;flex:0 0 auto}
+.wh-imp:hover{border-color:var(--pri);color:var(--pri)}
+
+/* ---- 导入数据弹窗：一行一个客户端，勾哪几个导哪几个 ---- */
+.imp-list{max-height:268px;overflow:auto;border:1px solid var(--line2);
+  border-radius:10px;background:var(--card2)}
+.imp-empty{padding:22px 12px;text-align:center;color:var(--tx3);font-size:12px}
+.imp-row{display:flex;align-items:flex-start;gap:9px;padding:9px 11px;
+  border-bottom:1px solid var(--line2)}
+.imp-row:last-child{border-bottom:0}
+.imp-row.off{opacity:.5}
+.imp-row input{width:15px;height:15px;accent-color:var(--pri-solid);margin:2px 0 0;flex:0 0 auto}
+.imp-meta{flex:1;min-width:0}
+.imp-name{font-weight:640;font-size:12.5px;color:var(--tx);display:flex;
+  align-items:center;gap:6px;flex-wrap:wrap}
+.imp-tag{font-size:9.5px;font-weight:500;padding:0 5px;border-radius:4px;
+  border:1px solid var(--line);color:var(--tx3);white-space:nowrap}
+.imp-tag.ok{color:var(--ok);border-color:var(--ok)}
+.imp-sub{color:var(--tx3);font-size:11px;line-height:1.55;margin-top:2px}
+.imp-path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;
+  word-break:break-all;opacity:.9}
+.imp-mrow{display:flex;align-items:center;gap:9px;margin-top:10px;flex-wrap:wrap}
+.imp-hint{font-size:10.5px;color:var(--tx3)}
 /* 时间范围 chip：跟卡头同高，不抢标题 */
 .hw-rng{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;
   margin-right:8px;vertical-align:middle}
@@ -4777,14 +4808,14 @@ body.v-more .more-wrap > .card[data-card="transfer"].tf-none .tf-body{height:180
   <!-- 本机工作：这台电脑除了口袋还在干什么。
        WorkBuddy 一轮一问一条 —— 任务就是当时那句话，明细是改了哪些文件、走了几步；
        pocket 折成一天一条 —— 它在左边那格已经有细账，这一格只需要认得出这个名字。 -->
-  <section class="card whost" data-card="hostwork" data-title="本机工作">
+  <section class="card whost" data-card="hostwork" data-title="Agent 监控">
     <div class="card-h">
       <span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M2 20h20"/><path d="M9.5 8.5h5"/><path d="M9.5 12h3"/></svg></span>
-      本机工作
+      Agent 监控
       <span class="r"><span class="hwcap" id="whCap" hidden>
         <a class="hcp" id="capDisk" data-cap="disk" href="#" title="磁盘占用 · 点进巡检看「这台机器」"><i>磁盘</i><b>—</b></a>
         <a class="hcp" id="capMem" data-cap="mem" href="#" title="内存占用 · 点进巡检看「这台机器」"><i>内存</i><b>—</b></a>
-      </span><span id="whStat">—</span></span>
+      </span><span id="whStat">—</span><button type="button" class="wh-imp" id="whImp" title="从本机其它 AI 客户端导入历史账"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5v11"/><path d="M7.8 10.4L12 14.6l4.2-4.2"/><path d="M4 17.5v1.2A2.3 2.3 0 0 0 6.3 21h11.4A2.3 2.3 0 0 0 20 18.7v-1.2"/></svg>导入数据</button></span>
     </div>
     <div class="wl-bar">
       <!-- 筛选条由数据现生成：客户端名来自 /api/dash 的 worklog.clients，
@@ -5876,6 +5907,29 @@ body.v-more .more-wrap > .card[data-card="transfer"].tf-none .tf-body{height:180
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- ===== 导入数据：把本机其它 AI 客户端的历史账折进来 ===== -->
+<div class="modal" id="impModal" role="dialog" aria-modal="true" aria-label="导入数据" hidden>
+  <div class="md-h">
+    导入数据
+    <button class="icon" id="impX" title="关闭" aria-label="关闭">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="md-b">
+    <p class="md-l">本机找到的客户端 <span class="md-n" id="impCnt">正在识别…</span></p>
+    <div class="imp-list" id="impList"><div class="imp-empty">正在识别…</div></div>
+    <div class="imp-mrow">
+      <button type="button" class="btn-line" id="impPick">＋ 手动选择目录</button>
+      <span class="imp-hint">不在列表里的、或者数据在移动盘上，手选那个目录</span>
+    </div>
+    <div class="md-res" id="impOut"></div>
+  </div>
+  <div class="md-f">
+    <button class="md-b2" id="impCancel">取消</button>
+    <button class="md-b2 pri" id="impGo">导入数据</button>
+  </div>
+</div>
 
 <script>
 /* ---- 令牌：与口袋页面共用同一个 localStorage 键，从 ?k= 进来一次就够 ---- */
@@ -17685,6 +17739,120 @@ $('btnOpenRoot').addEventListener('click', async () => {
   } catch (e) { toast('打不开：' + e.message); }
 });
 
+/* ---- 导入数据弹窗：自动识别本机 agent → 勾选 → 导入 ---- */
+const IMO = { data: null, pick: [], busy: false };
+const impEsc = function (s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
+};
+
+function impPaint() {
+  const box = $('impList');
+  const all = (IMO.data && IMO.data.agents) || [];
+  const inst = all.filter(function (a) { return a.installed; });
+  if (!inst.length && !IMO.pick.length) {
+    box.innerHTML = '<div class="imp-empty">本机没找到这些客户端的数据目录。<br>可以点下面「手动选择目录」把它指过来。</div>';
+    $('impCnt').textContent = '';
+    return;
+  }
+  const t = (IMO.data && IMO.data.totals) || {};
+  $('impCnt').textContent = inst.length + ' 个 · 共 ' + (t.size || '—');
+  let h = inst.map(function (a) {
+    const ok = !!a.parsable;
+    const bits = [a.size, a.files + ' 个文件', a.last ? '最后 ' + a.last : ''].filter(Boolean);
+    return '<label class="imp-row' + (ok ? '' : ' off') + '">'
+      + '<input type="checkbox" data-imp="' + impEsc(a.name) + '"' + (ok ? ' checked' : ' disabled') + '>'
+      + '<div class="imp-meta"><div class="imp-name">' + impEsc(a.name)
+      + '<span class="imp-tag' + (ok ? ' ok' : '') + '">' + (ok ? '可导入' : '仅登记路径') + '</span></div>'
+      + '<div class="imp-sub">' + impEsc(bits.join(' · ')) + '</div>'
+      + '<div class="imp-sub imp-path">' + impEsc(a.path) + '</div>'
+      + '</div></label>';
+  }).join('');
+  h += IMO.pick.map(function (p, i) {
+    return '<label class="imp-row">'
+      + '<input type="checkbox" data-imppick="' + i + '" checked>'
+      + '<div class="imp-meta"><div class="imp-name">' + impEsc(p.name || '手选目录')
+      + '<span class="imp-tag">仅登记</span></div>'
+      + '<div class="imp-sub">' + impEsc(p.size || '') + ' · ' + (p.files || 0) + ' 个文件</div>'
+      + '<div class="imp-sub imp-path">' + impEsc(p.path) + '</div></div></label>';
+  }).join('');
+  box.innerHTML = h;
+}
+
+function impClose() {
+  const m = $('impModal');
+  m.classList.remove('on');
+  setTimeout(function () { m.hidden = true; }, 180);   // 让淡出跑完再藏
+}
+
+async function impOpen() {
+  const m = $('impModal');
+  m.hidden = false;
+  m.classList.add('on');
+  $('impList').innerHTML = '<div class="imp-empty">正在识别本机的 AI 客户端…</div>';
+  $('impCnt').textContent = '正在识别…';
+  $('impOut').textContent = '';
+  IMO.pick = [];
+  try {
+    IMO.data = await api('/api/agent/import/detect');
+  } catch (e) {
+    $('impList').innerHTML = '<div class="imp-empty">识别失败：' + impEsc(e.message) + '</div>';
+    $('impCnt').textContent = '';
+    return;
+  }
+  impPaint();
+}
+
+$('whImp').addEventListener('click', function (e) { e.preventDefault(); impOpen(); });
+$('impX').addEventListener('click', impClose);
+$('impCancel').addEventListener('click', impClose);
+
+$('impPick').addEventListener('click', async function () {
+  let p = '';
+  try {
+    const r = await api('/api/pick/dir', { method: 'POST', body: '{}' });
+    if (r && r.ok) p = r.path;
+    else if (r && r.cancelled) return;
+  } catch (e) { /* 弹不出来就走手输 */ }
+  if (!p) p = (prompt('客户端数据目录的绝对路径：', '~/Library/Application Support/') || '').trim();
+  if (!p) return;
+  const pr = await api('/api/agent/probe', { method: 'POST', body: JSON.stringify({ path: p }) });
+  if (!pr.ok) { toast(pr.error || '这个路径读不了'); return; }
+  IMO.pick.push({ path: pr.path, size: pr.size, files: pr.files, name: pr.path.split('/').pop() });
+  impPaint();
+});
+
+$('impGo').addEventListener('click', async function () {
+  if (IMO.busy) return;
+  const names = [].slice.call(document.querySelectorAll('#impList input[data-imp]:checked'))
+    .map(function (el) { return el.getAttribute('data-imp'); });
+  const paths = [].slice.call(document.querySelectorAll('#impList input[data-imppick]:checked'))
+    .map(function (el) { return IMO.pick[+el.getAttribute('data-imppick')].path; })
+    .filter(Boolean);
+  if (!names.length && !paths.length) { toast('先勾一个能导入的来源'); return; }
+  const b = $('impGo');
+  IMO.busy = true; b.disabled = true; b.textContent = '导入中…';
+  $('impOut').textContent = '';
+  try {
+    const r = await api('/api/agent/import', {
+      method: 'POST', body: JSON.stringify({ sources: names, paths: paths }) });
+    if (!r.ok) { $('impOut').textContent = r.error || '没导进去'; return; }
+    const ok = (r.imported || []).join(' / ') || '无';
+    $('impOut').innerHTML = '已导入 <b>' + impEsc(ok) + '</b>，共 ' + r.lines + ' 条基线账'
+      + (r.registered && r.registered.length
+         ? '；登记了 ' + r.registered.length + ' 个目录（格式还没支持，先记着）' : '');
+    toast('导入完成：' + ok);
+    await loadHostRes(true, true);
+    if (typeof renderHost === 'function') renderHost();
+    setTimeout(function () { IMO.data = null; }, 800);
+  } catch (e) {
+    $('impOut').textContent = '导入失败：' + e.message;
+  } finally {
+    IMO.busy = false; b.disabled = false; b.textContent = '再导一次';
+  }
+});
+
 /* ---- AI 历史账：先扫描看数字，确认再写进数据根 ---- */
 let impData = null;
 function impRender() {
@@ -17864,7 +18032,7 @@ const PAGES = {
   // 「用量走势」并进「花费与用量」了，这一页只剩六张
   // 口袋是「同一张卡」：首页摆着它，这一页也列着它（页面视图搬过去而已）。
   // 任务清单已并进 hostwork 卡当第四档视图，不再是独立一张。
-  host: { title: '本机工作', ids: ['hostwork', 'hwtime', 'hwhour', 'hwstrat', 'hwindex', 'hwtok', 'hwbill', 'hwproc', 'pocketwork'] },
+  host: { title: 'Agent 监控', ids: ['hostwork', 'hwtime', 'hwhour', 'hwstrat', 'hwindex', 'hwtok', 'hwbill', 'hwproc', 'pocketwork'] },
   // 机器指标（hwkpi）2026-11-21 从本机工作挪到巡检：它答的是「机器还撑得住吗」，
   // 跟服务的死活是同一个问题；「谁在吃内存」另有进程榜（hwproc）留在本机工作。
   // 机器规格（mspec）2026-11-21 新增：巡检要说得清「这是台什么机器、上面装了些什么」

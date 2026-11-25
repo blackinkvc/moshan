@@ -3415,7 +3415,7 @@ BUILTIN_APPS = [
     # 本机工作：2026-11-20 起没有独立端口了（采集线程并进口袋），这一行只剩
     # 「顶栏一颗药丸」的作用 —— port 留空就不探活、不标离线，点一下由 PAGE_OF
     # 送到 ?v=host 那一页（原来点它会新开 8775 的标签页）。
-    {"id": "hostwork", "name": "本机工作", "scope": "view", "port": None,
+    {"id": "hostwork", "name": "Agent 监控", "scope": "view", "port": None,
      "url": "/dash?v=host", "note": "进程 / 磁盘内存 / token 折算",
      "glyph": "hostwork", "group": "plugin"},
     # Token 价格追踪：API / 套餐 / 本地部署 三维度成本 + 多源交叉校验。数据在 13-算价/。
