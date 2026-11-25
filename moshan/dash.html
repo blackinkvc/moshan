@@ -3,7 +3,7 @@
 <head>
 <!-- 页面版本戳：服务端拿它跟包里那份比，旧了会自动备份并换新。
      改这个文件时把日期往后挪一格，别原地不动，否则老机器收不到。 -->
-<meta name="moshan-page" content="2026-11-25s">
+<meta name="moshan-page" content="2026-11-25a2">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
@@ -2222,6 +2222,48 @@ html[data-theme="dark"] .hw-tbl .hw-mdl{color:var(--mcd,var(--tx))}
 }
 /* 提示词那张卡：跟 hwtok 一样走竖向 flex，body 撑满后自己滚 */
 .card[data-card="hwprm"]{container-type:inline-size;display:flex;flex-direction:column}
+
+/* ---- 逐日 / 逐时那七张（2026-11-25）----
+   都只有一条主图 + 一句读数，所以共用一套很薄的版式：顶上一句大头，
+   底下一排柱子或格子。不引第二套配色，全靠 --pri 的深浅表达多寡。 */
+.card[data-card="hwcal"],.card[data-card="hwhod"],.card[data-card="hwscreen"],
+.card[data-card="hwphr"],.card[data-card="hwlink"],.card[data-card="hwptok"],
+.card[data-card="hwpsec"]{container-type:inline-size;display:flex;flex-direction:column}
+.hs-top{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;flex:0 0 auto}
+.hs-top .n{font-size:19px;font-weight:700;letter-spacing:-.03em;line-height:1;
+  color:var(--pri);font-variant-numeric:tabular-nums}
+.hs-top .n em{font-style:normal;font-size:10px;font-weight:600;color:var(--tx3);margin-left:3px}
+.hs-top .s{font-size:10.5px;color:var(--tx3);line-height:1.45}
+/* 日历格：26 列 × 7 行，列宽自己分，行高也自己分 —— 卡多高就铺多满 */
+.cal-grid{display:flex;gap:3px;flex:1 1 auto;min-height:0;overflow:hidden}
+.cal-w{display:flex;flex-direction:column;gap:3px;flex:1 1 0;min-width:0}
+.cal-c{flex:1 1 0;min-height:4px;border-radius:2px;background:var(--pri);opacity:.07}
+.cal-c.off{background:var(--line2);opacity:1}
+/* 24 小时柱：每根柱子上下两段（AI / 人），高度按当小时合计占峰值的比例 */
+.hs-bars{display:flex;align-items:flex-end;gap:3px;flex:1 1 auto;min-height:0;
+  padding-top:2px;overflow:hidden}
+.hs-bar{flex:1 1 0;min-width:0;display:flex;flex-direction:column;justify-content:flex-end;
+  height:100%;border-radius:2px 2px 0 0;overflow:hidden;position:relative}
+.hs-bar>i{display:block;width:100%;flex:0 0 auto}
+.hs-bar .a{background:var(--pri);opacity:.85}
+.hs-bar .h{background:var(--pri);opacity:.32}
+.hs-bar .g{background:var(--line2);opacity:1}
+.hs-bar.idle>i{background:var(--line2);opacity:1}
+.hs-x{display:flex;justify-content:space-between;font-size:9px;color:var(--tx3);
+  font-variant-numeric:tabular-nums;flex:0 0 auto}
+/* 屏幕时间 / 每条耗时：一行应用 = 名字 + 长条 + 时长 */
+.hs-rows{display:flex;flex-direction:column;gap:5px;flex:1 1 auto;min-height:0;overflow:auto}
+.hs-grp{font-size:9.5px;color:var(--tx3);letter-spacing:.04em;margin:3px 0 -1px}
+.hs-grp:first-child{margin-top:0}
+.hs-row{display:grid;grid-template-columns:minmax(52px,92px) minmax(0,1fr) auto;gap:8px;
+  align-items:center;font-size:10.5px;min-width:0}
+.hs-row .nm{color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hs-row .bb{height:7px;border-radius:999px;background:var(--line2);overflow:hidden;min-width:0}
+.hs-row .bb>i{display:block;height:100%;border-radius:999px;background:var(--pri);opacity:.72}
+.hs-row .vv{color:var(--tx3);font-variant-numeric:tabular-nums;white-space:nowrap}
+@media (max-width:520px){
+  .hs-row{grid-template-columns:minmax(44px,74px) minmax(0,1fr) auto}
+}
 .hw-prm-x{display:flex;justify-content:space-between;font-size:9px;color:var(--tx3);
   font-variant-numeric:tabular-nums}
 .hw-tbl{width:100%;border-collapse:collapse;font-size:11px;font-variant-numeric:tabular-nums}
@@ -5308,6 +5350,98 @@ body.v-more .more-wrap > .card[data-card="transfer"].tf-none .tf-body{height:180
         <span id="hwprmStat">—</span></span>
     </div>
     <div class="hwb" id="hwprmBody"></div>
+  </section>
+
+  <!-- ===== 逐日 / 逐时的七张（2026-11-25）=====
+       用户 11-25 00:04 给过一份清单，17:37 又定「都单独一张卡，不要合并」，
+       所以这些不并 tab、不塞进「花费与用量」，一指标一张卡。
+       数据同一份 /api/workstat?days=180（跟 /hostwork 详情页同一份聚合）：
+       一次拉、七张卡共用 —— 各拉一遍会把同一个聚合算七次，还会几张卡对不上数。 -->
+
+  <!-- 提示词分时：24 个钟点各发了几条、每条平均多少字（长条是条数，色深是字数）。 -->
+  <section class="card" data-card="hwphr" data-hostonly="host" data-title="提示词分时" data-h="5">
+    <div class="card-h">
+      <span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.4"/><path d="M12 7.4V12l3.4 2"/></svg></span>
+      提示词分时
+      <span class="r"><span id="phrStat">—</span></span>
+    </div>
+    <div class="hwb" id="phrBody"></div>
+  </section>
+
+  <!-- 链接与图片：提示词里带出去的链接、贴进来的图，一天各多少。 -->
+  <section class="card" data-card="hwlink" data-hostonly="host" data-title="链接与图片" data-h="5">
+    <div class="card-h">
+      <span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13.6a3.6 3.6 0 0 0 5.1 0l2.6-2.6a3.6 3.6 0 1 0-5.1-5.1L11.4 7.1"/><path d="M14 10.4a3.6 3.6 0 0 0-5.1 0l-2.6 2.6a3.6 3.6 0 1 0 5.1 5.1l1.2-1.2"/></svg></span>
+      链接与图片
+      <span class="r"><span id="lnkStat">—</span></span>
+    </div>
+    <div class="hwb" id="lnkBody"></div>
+  </section>
+
+  <!-- 活跃度：GitHub 那种「一天一格」。切四种口径，178 天一次铺开。 -->
+  <section class="card" data-card="hwcal" data-hostonly="host" data-title="活跃度" data-h="5">
+    <div class="card-h">
+      <span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="4" height="4" rx="1"/><rect x="10" y="4.5" width="4" height="4" rx="1"/><rect x="16.5" y="4.5" width="4" height="4" rx="1"/><rect x="3.5" y="10" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/><rect x="16.5" y="10" width="4" height="4" rx="1"/><rect x="3.5" y="15.5" width="4" height="4" rx="1"/><rect x="10" y="15.5" width="4" height="4" rx="1"/></svg></span>
+      活跃度
+      <span class="r"><span class="hw-rng" id="calRng" role="group" aria-label="看哪个口径">
+        <button type="button" class="hw-rg on" data-cal="ai">AI 时长</button>
+        <button type="button" class="hw-rg" data-cal="human">人在电脑前</button>
+        <button type="button" class="hw-rg" data-cal="prompts">提示词</button>
+        <button type="button" class="hw-rg" data-cal="chars">字数</button></span>
+        <span id="calStat">—</span></span>
+    </div>
+    <div class="hwb" id="calBody"></div>
+  </section>
+
+  <!-- 分小时：一天 24 个钟点，AI 干了多久 / 我在电脑前多久（秒来自 workstat.hours）。 -->
+  <section class="card" data-card="hwhod" data-hostonly="host" data-title="分小时" data-h="5">
+    <div class="card-h">
+      <span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V9.5"/><path d="M9 20V4.5"/><path d="M14 20v-7"/><path d="M19 20v-11"/><path d="M3 20h18"/></svg></span>
+      分小时
+      <span class="r"><span id="hodStat">—</span></span>
+    </div>
+    <div class="hwb" id="hodBody"></div>
+  </section>
+
+  <!-- 屏幕时间：每个软件分开，像手机上那份。数据是 knowledgeC 的系统库。 -->
+  <section class="card" data-card="hwscreen" data-hostonly="host" data-title="屏幕时间" data-h="4">
+    <div class="card-h">
+      <span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12.5" rx="1.8"/><path d="M8.5 20h7M12 16.5V20"/></svg></span>
+      屏幕时间
+      <span class="r"><span id="scrStat">—</span></span>
+    </div>
+    <div class="hwb" id="scrBody"></div>
+  </section>
+
+  <!-- 每条 token：一条提示词摊到多少 token（含缓存读入，口径写在卡上）。 -->
+  <section class="card" data-card="hwptok" data-hostonly="host" data-title="每条 token" data-h="4">
+    <div class="card-h">
+      <span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5v17"/><path d="M17 7.2H9.6a2.9 2.9 0 0 0 0 5.8h4.8a2.9 2.9 0 0 1 0 5.8H6.5"/></svg></span>
+      每条 token
+      <span class="r"><span id="ptkStat">—</span></span>
+    </div>
+    <div class="hwb" id="ptkBody"></div>
+  </section>
+
+  <!-- 每条耗时：一条提示词从发出去到收尾花多久，分成 agent / 专家 / 插件三段看。 -->
+  <section class="card" data-card="hwpsec" data-hostonly="host" data-title="每条耗时" data-h="5">
+    <div class="card-h">
+      <span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="7.6"/><path d="M12 9.6V13l2.6 1.7"/><path d="M9.4 3.4h5.2"/></svg></span>
+      每条耗时
+      <span class="r"><span id="psecStat">—</span></span>
+    </div>
+    <div class="hwb" id="psecBody"></div>
+  </section>
+
+  <!-- 分 agent：每个 agent 各占多少条、多少时长、多少 token（按 token 排）。
+       「花费与用量」里已经有分基础模型的表，这张只补 agent 这一维。 -->
+  <section class="card" data-card="hwagent" data-hostonly="host" data-title="分 agent" data-h="5">
+    <div class="card-h">
+      <span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.6" y="7" width="16.8" height="12.4" rx="2.4"/><path d="M12 3.4V7"/><circle cx="8.6" cy="13" r="1.1"/><circle cx="15.4" cy="13" r="1.1"/></svg></span>
+      分 agent
+      <span class="r"><span id="agtStat">—</span></span>
+    </div>
+    <div class="hwb" id="agtBody"></div>
   </section>
 
   <!-- 时间投入：一天里真正坐在电脑前多久。
@@ -11993,6 +12127,389 @@ function renderHWPrm() {
   box.innerHTML = html;
 }
 
+/* ================= Agent 监控页：逐日 / 逐时的七张（2026-11-25）=================
+   用户 11-25 00:04 列了一串指标（每日、分小时、活跃度格子、屏幕时间、token、
+   提示词条数与字数、链接图片、每条 token、每条耗时），17:37 又定「都单独一张卡，
+   不要合并」。所以这里是七张独立卡，一个指标一张，不并 tab。
+   数据同一份 /api/workstat?days=180 —— 跟 /hostwork 详情页同一份聚合，
+   一次拉、七张卡共用：各拉一遍会把同一个聚合算七次，还会几张卡对不上数。 */
+const HS = { at: 0, data: null, err: '', loading: false, loadingAt: 0, lens: 'ai', painted: false };
+
+async function loadHS(force) {
+  // 单飞锁照样要看门狗：标签被挂起时请求可能永远不落地
+  if (HS.loading) {
+    if (Date.now() - (HS.loadingAt || 0) < 20000) return;
+    HS.loading = false;
+  }
+  if (!force && HS.at && Date.now() - HS.at < 60000) {
+    // 数据还在手里、但卡还没画过（刚从别的页切过来）：补画一次，别留空卡
+    if (!HS.painted) renderHS();
+    return;
+  }
+  HS.loading = true; HS.loadingAt = Date.now();
+  try {
+    const ctl = new AbortController();
+    const to = setTimeout(() => ctl.abort(), 9000);
+    HS.data = await api('/api/workstat?days=180', { signal: ctl.signal });
+    clearTimeout(to);
+    if (!HS.data || HS.data.ok === false) {
+      throw new Error((HS.data && HS.data.error) || '统计层返回失败');
+    }
+    HS.err = '';
+  } catch (e) {
+    HS.data = null;
+    HS.err = e.name === 'AbortError' ? '9 秒没响应'
+      : (/fetch|Network|load failed|HTTP 5/i.test(e.message) ? '口袋没响应' : e.message);
+  }
+  HS.at = Date.now();
+  HS.loading = false;
+  renderHS();
+}
+
+function hsSecs(v) { return Math.max(0, Number(v) || 0); }
+/* 秒 → 「2 小时 13 分」：读数用，别让人自己换算 */
+function hsHm(sec) {
+  const m = Math.round(hsSecs(sec) / 60);
+  if (m >= 60) return Math.floor(m / 60) + ' 小时 ' + (m % 60) + ' 分';
+  return m + ' 分';
+}
+/* 秒 → 「5.2h」：柱子上那一行窄，用紧凑写法 */
+function hsHM(sec) {
+  const h = hsSecs(sec) / 3600;
+  return h >= 1 ? h.toFixed(1) + 'h' : Math.round(h * 60) + 'm';
+}
+function hsWait(box) {
+  box.innerHTML = HS.loading
+    ? '<div class="hr-empty"><span>读取中…</span></div>'
+    : '<div class="hr-empty"><span>' + esc(HS.err || '读取中…') + '</span></div>';
+}
+/* 没有数据就把话说在卡里，不要把卡留成空白（用户会以为是没做完） */
+function hsNeed(box, statId) {
+  if (HS.data) return true;
+  hsWait(box);
+  const s = statId && $(statId);
+  if (s) s.textContent = '—';
+  return false;
+}
+
+/* ---- 1. 活跃度：GitHub 那种一天一格 ---- */
+function calCells() {
+  const d = HS.data || {};
+  const chars = {};
+  (d.rows || []).forEach(r => { chars[r.d] = Number(r.chars) || 0; });
+  return ((d.heat || {}).cells || []).map(c => ({
+    d: c.d, has: Number(c.has) || 0,
+    ai: hsSecs(c.ai), human: hsSecs(c.human),
+    prompts: Number(c.prompts) || 0, chars: chars[c.d] || 0
+  }));
+}
+function calVal(c) {
+  if (HS.lens === 'human') return c.human;
+  if (HS.lens === 'prompts') return c.prompts;
+  if (HS.lens === 'chars') return c.chars;
+  return c.ai;
+}
+function calTxt(v) {
+  if (HS.lens === 'prompts') return v + ' 条';
+  if (HS.lens === 'chars') return hrN(v) + ' 字';
+  return hsHm(v);
+}
+function renderCal() {
+  const box = $('calBody');
+  if (!box) return;
+  if (!hsNeed(box, 'calStat')) return;
+  const cells = calCells();
+  if (!cells.length) { hsWait(box); return; }
+  const vals = cells.map(calVal);
+  const max = Math.max.apply(null, vals.concat([1]));
+  // 按周一开头：第一段空位补上，否则整块会往前串一天
+  const wd = (new Date(cells[0].d + 'T00:00:00').getDay() + 6) % 7;
+  const arr = new Array(wd).fill(null).concat(cells);
+  const weeks = [];
+  for (let i = 0; i < arr.length; i += 7) weeks.push(arr.slice(i, i + 7));
+  let html = '<div class="cal-grid">';
+  weeks.forEach(w => {
+    html += '<div class="cal-w">';
+    for (let i = 0; i < 7; i++) {
+      const c = w[i];
+      if (!c) { html += '<i class="cal-c off" style="opacity:0"></i>'; continue; }
+      const v = calVal(c);
+      if (!v) {
+        html += '<i class="cal-c off" title="' + esc(c.d + ' · 没有记录') + '"></i>';
+        continue;
+      }
+      // 开方压过：不然只有最忙那天看得见，其余全是一片淡
+      const op = (0.16 + Math.sqrt(v / max) * 0.84).toFixed(2);
+      html += '<i class="cal-c" style="opacity:' + op + '" title="'
+        + esc(c.d + ' · ' + calTxt(v) + ' · ' + c.prompts + ' 条') + '"></i>';
+    }
+    html += '</div>';
+  });
+  html += '</div>';
+  let act = 0, run = 0, best = 0;
+  cells.forEach(c => {
+    if (calVal(c) > 0) { act++; run++; if (run > best) best = run; } else run = 0;
+  });
+  const last = cells[cells.length - 1] || {};
+  html += '<div class="hs-x"><span>' + esc(String(cells[0].d).slice(5)) + ' 起 · '
+    + cells.length + ' 天</span><span>今天 ' + esc(calTxt(calVal(last)))
+    + '</span><span>淡 → 深 = 少 → 多</span></div>';
+  box.innerHTML = html;
+  $('calStat').textContent = '活跃 ' + act + '/' + cells.length + ' 天 · 连续 ' + best + ' 天';
+}
+
+/* ---- 2. 分小时：AI 与人分开（AI 在下、人在上）---- */
+function renderHod() {
+  const box = $('hodBody');
+  if (!box) return;
+  if (!hsNeed(box, 'hodStat')) return;
+  // hours_win = 整窗各天相加（长期作息）；hours 是今天那 24 桶。
+  // 这张卡看的是「我习惯几点干活」，所以优先用整窗那份，缺了才退回今天。
+  const h = ((HS.data || {}).hours_win || (HS.data || {}).hours) || [];
+  if (h.length !== 24) { box.innerHTML = '<div class="hr-empty"><span>还没有账</span></div>'; return; }
+  const winDays = Number((HS.data || {}).hours_win_days) || 0;
+  const scope = winDays ? (winDays + ' 天累计') : '今天';
+  const ai = h.map(x => hsSecs(x.ai)), hu = h.map(x => hsSecs(x.human));
+  const tot = ai.map((v, i) => v + hu[i]);
+  const max = Math.max.apply(null, tot.concat([1]));
+  let peak = 0;
+  tot.forEach((v, i) => { if (v > tot[peak]) peak = i; });
+  let html = '<div class="hs-bars">';
+  for (let i = 0; i < 24; i++) {
+    html += '<div class="hs-bar' + (tot[i] ? '' : ' idle') + '" title="'
+      + esc(i + ' 点 · AI ' + hsHm(ai[i]) + ' · 人 ' + hsHm(hu[i])) + '">'
+      + (tot[i]
+        ? '<i class="h" style="height:' + (hu[i] / max * 100).toFixed(1) + '%"></i>'
+          + '<i class="a" style="height:' + (ai[i] / max * 100).toFixed(1) + '%"></i>'
+        : '<i class="g" style="height:2px"></i>')
+      + '</div>';
+  }
+  html += '</div><div class="hs-x"><span>0</span><span>6</span><span>12</span>'
+    + '<span>18</span><span>23</span></div>';
+  const sumA = ai.reduce((x, y) => x + y, 0), sumH = hu.reduce((x, y) => x + y, 0);
+  box.innerHTML = '<div class="hs-top"><span class="n">' + peak + '<em>点 最忙</em></span>'
+    + '<span class="s">深 = AI <b style="color:var(--tx)">' + hsHm(sumA) + '</b> · 淡 = 人 '
+    + hsHm(sumH) + '（' + esc(scope) + '）</span></div>' + html;
+  $('hodStat').textContent = '峰值 ' + peak + ' 点';
+}
+
+/* ---- 3. 屏幕时间：每个软件分开，像手机上那份 ---- */
+function renderScr() {
+  const box = $('scrBody');
+  if (!box) return;
+  if (!hsNeed(box, 'scrStat')) return;
+  const s = (HS.data || {}).screen || {};
+  if (!s.ok) {
+    $('scrStat').textContent = '—';
+    box.innerHTML = '<div class="hr-empty"><span>'
+      + esc(s.why || '系统使用时间读不到（要给 Python 授「完全磁盘访问」）') + '</span></div>';
+    return;
+  }
+  const apps = (s.apps || []).map(a => [String(a[0] || '?'), hsSecs(a[1])])
+    .sort((a, b) => b[1] - a[1]);
+  if (!apps.length) {
+    $('scrStat').textContent = '今天还没记录';
+    box.innerHTML = '<div class="hr-empty"><span>今天还没有屏幕使用记录</span></div>';
+    return;
+  }
+  const total = apps.reduce((x, a) => x + a[1], 0);
+  const topN = apps.slice(0, 6), rest = apps.slice(6);
+  const restSum = rest.reduce((x, a) => x + a[1], 0);
+  const rows = topN.map(a => '<div class="hs-row" title="' + esc(a[0] + ' · ' + hsHm(a[1])) + '">'
+    + '<span class="nm">' + esc(a[0]) + '</span>'
+    + '<span class="bb"><i style="width:' + (a[1] / total * 100).toFixed(1) + '%"></i></span>'
+    + '<span class="vv">' + esc(hsHm(a[1])) + '</span></div>');
+  if (restSum > 0) {
+    rows.push('<div class="hs-row" title="' + esc('其余 ' + rest.length + ' 个应用') + '">'
+      + '<span class="nm">其余 ' + rest.length + ' 个</span>'
+      + '<span class="bb"><i style="width:' + (restSum / total * 100).toFixed(1) + '%"></i></span>'
+      + '<span class="vv">' + esc(hsHm(restSum)) + '</span></div>');
+  }
+  box.innerHTML = '<div class="hs-top"><span class="n">' + hsHM(total) + '<em>今天合计</em></span>'
+    + '<span class="s">' + esc((s.day || '今天') + ' · ' + apps.length + ' 个应用 · 系统库'
+      + (s.from_store ? ' + 存档' : '')) + '</span></div>'
+    + '<div class="hs-rows">' + rows.join('') + '</div>';
+  $('scrStat').textContent = '今天 ' + hsHM(total);
+}
+
+/* ---- 4. 提示词分时：24 个钟点各几条、每条多少字 ---- */
+function renderPhr() {
+  const box = $('phrBody');
+  if (!box) return;
+  if (!hsNeed(box, 'phrStat')) return;
+  const h = ((HS.data || {}).hours_win || (HS.data || {}).hours) || [];
+  if (h.length !== 24) { box.innerHTML = '<div class="hr-empty"><span>还没有账</span></div>'; return; }
+  const winDays = Number((HS.data || {}).hours_win_days) || 0;
+  const n = h.map(x => Number(x.prompts) || 0);
+  const ch = h.map(x => Number(x.chars) || 0);
+  const per = n.map((v, i) => (v ? ch[i] / v : 0));
+  const max = Math.max.apply(null, n.concat([1]));
+  let peak = 0;
+  n.forEach((v, i) => { if (v > n[peak]) peak = i; });
+  let html = '<div class="hs-bars">';
+  for (let i = 0; i < 24; i++) {
+    // 高度 = 条数。原来还想用颜色深浅表示「这一小时每条多少字」，实测各小时
+    // 差得不多（40～200 字），深浅肉眼分不出，反而把整排柱子压淡了 —— 字数
+    // 留在 tooltip 和顶部读数里，图只画条数这一个量。
+    html += '<div class="hs-bar' + (n[i] ? '' : ' idle') + '" title="'
+      + esc(i + ' 点 · ' + n[i] + ' 条 · 每条 ' + Math.round(per[i]) + ' 字') + '">'
+      + (n[i]
+        ? '<i style="height:' + (n[i] / max * 100).toFixed(1) + '%;background:var(--pri);opacity:.72"></i>'
+        : '<i class="g" style="height:2px"></i>')
+      + '</div>';
+  }
+  html += '</div><div class="hs-x"><span>0</span><span>6</span><span>12</span>'
+    + '<span>18</span><span>23</span></div>';
+  const sumN = n.reduce((x, y) => x + y, 0);
+  const sumC = ch.reduce((x, y) => x + y, 0);
+  box.innerHTML = '<div class="hs-top"><span class="n">' + peak + '<em>点 最多</em></span>'
+    + '<span class="s">' + n[peak] + ' 条 · 每条 ' + Math.round(per[peak])
+    + ' 字 ｜ 全窗 ' + hrN(sumN) + ' 条 · 每条 ' + Math.round(sumN ? sumC / sumN : 0) + ' 字</span></div>'
+    + html;
+  $('phrStat').textContent = '峰值 ' + peak + ' 点 · ' + n[peak] + ' 条';
+}
+
+/* ---- 5. 链接与图片：每天各多少（近 30 天）---- */
+function renderLink() {
+  const box = $('lnkBody');
+  if (!box) return;
+  if (!hsNeed(box, 'lnkStat')) return;
+  const rows = ((HS.data || {}).rows || []).slice(-30);
+  if (!rows.length) { box.innerHTML = '<div class="hr-empty"><span>还没有账</span></div>'; return; }
+  const lk = rows.map(r => Number(r.links) || 0);
+  const im = rows.map(r => Number(r.imgs) || 0);
+  const max = Math.max.apply(null, rows.map((_, i) => lk[i] + im[i]).concat([1]));
+  let html = '<div class="hs-bars">';
+  rows.forEach((r, i) => {
+    html += '<div class="hs-bar' + ((lk[i] + im[i]) ? '' : ' idle') + '" title="'
+      + esc(r.d + ' · ' + lk[i] + ' 链接 · ' + im[i] + ' 图') + '">'
+      + ((lk[i] + im[i])
+        ? '<i class="h" style="height:' + (im[i] / max * 100).toFixed(1) + '%"></i>'
+          + '<i class="a" style="height:' + (lk[i] / max * 100).toFixed(1) + '%"></i>'
+        : '<i class="g" style="height:2px"></i>')
+      + '</div>';
+  });
+  html += '</div><div class="hs-x"><span>' + esc(String(rows[0].d).slice(5)) + '</span>'
+    + '<span>深 = 链接 / 淡 = 图片</span>'
+    + '<span>' + esc(String(rows[rows.length - 1].d).slice(5)) + '</span></div>';
+  const sumL = lk.reduce((x, y) => x + y, 0), sumI = im.reduce((x, y) => x + y, 0);
+  box.innerHTML = '<div class="hs-top"><span class="n">' + sumL + '<em>链接</em></span>'
+    + '<span class="s">近 30 天 · 图 <b style="color:var(--tx)">' + sumI
+    + '</b> 张 · 每天平均 ' + (sumI / rows.length).toFixed(1) + ' 张</span></div>' + html;
+  $('lnkStat').textContent = sumL + ' 链接 · ' + sumI + ' 图';
+}
+
+/* ---- 6. 每条 token：一条提示词摊到多少 ---- */
+function renderPtk() {
+  const box = $('ptkBody');
+  if (!box) return;
+  if (!hsNeed(box, 'ptkStat')) return;
+  const t = (HS.data || {}).tot || {};
+  const n = Number(t.prompts) || 0;
+  if (!n) { box.innerHTML = '<div class="hr-empty"><span>还没有提示词记录</span></div>'; return; }
+  const tin = Number(t.tin) || 0, tout = Number(t.tout) || 0;
+  const per = (v) => hwTokN(Math.round(v / n));
+  box.innerHTML = '<div class="hw-prm">'
+    + '<div><b>' + per(tin) + '<em>入/条</em></b><i>含缓存重发</i></div>'
+    + '<div><b>' + per(tout) + '<em>出/条</em></b><i>真实新写出来的</i></div>'
+    + '<div><b>' + per(tin + tout) + '<em>合计/条</em></b><i>' + hrN(n) + ' 条摊下来</i></div>'
+    + '</div>'
+    + '<div class="hs-x"><span>180 天：入 ' + hwTokN(tin) + ' · 出 ' + hwTokN(tout) + '</span>'
+    + '<span>缓存读入也算「入」</span></div>';
+  $('ptkStat').textContent = per(tin + tout) + '/条';
+}
+
+/* ---- 7. 每条耗时：分 agent / 专家 / 插件 ---- */
+function renderPsec() {
+  const box = $('psecBody');
+  if (!box) return;
+  if (!hsNeed(box, 'psecStat')) return;
+  const d = HS.data || {};
+  const a = d.avg || {};
+  const sec = Number(a.sec_per_prompt) || 0;
+  const groups = [
+    ['分 agent', (d.agents || []).filter(x => Number(x.prompts) > 0 && Number(x.avg_sec) > 0)
+      .sort((x, y) => y.avg_sec - x.avg_sec).slice(0, 3).map(x => [x.name, x.avg_sec])],
+    ['分专家', (d.experts || []).filter(x => Number(x.avg_sec) > 0)
+      .sort((x, y) => y.avg_sec - x.avg_sec).slice(0, 3).map(x => [x.label || x.name, x.avg_sec])],
+    ['分插件 / MCP', (d.mcps || []).filter(x => Number(x.avg_sec) > 0)
+      .sort((x, y) => y.avg_sec - x.avg_sec).slice(0, 3).map(x => [x.name, x.avg_sec])]
+  ];
+  const flat = groups.reduce((acc, g) => acc.concat(g[1]), []);
+  if (!flat.length) {
+    $('psecStat').textContent = '—';
+    box.innerHTML = '<div class="hr-empty"><span>还没有够细的耗时账</span></div>';
+    return;
+  }
+  const max = Math.max.apply(null, flat.map(x => Number(x[1]) || 0).concat([1]));
+  let rows = '';
+  groups.forEach(g => {
+    if (!g[1].length) return;
+    rows += '<div class="hs-grp">' + esc(g[0]) + '</div>';
+    g[1].forEach(x => {
+      const v = Number(x[1]) || 0;
+      rows += '<div class="hs-row" title="' + esc(x[0] + ' · 每条 ' + hsHm(v)) + '">'
+        + '<span class="nm">' + esc(x[0]) + '</span>'
+        + '<span class="bb"><i style="width:' + (v / max * 100).toFixed(1) + '%"></i></span>'
+        + '<span class="vv">' + esc(hsHm(v)) + '</span></div>';
+    });
+  });
+  box.innerHTML = '<div class="hs-top"><span class="n">'
+    + (sec >= 60 ? (sec / 60).toFixed(1) + '<em>分钟/条</em>' : Math.round(sec) + '<em>秒/条</em>')
+    + '</span><span class="s">从发出去到收尾 · 分请求 ' + hsHm(a.sec_per_req)
+    + '（一条提示词常带好几轮工具调用）</span></div>'
+    + '<div class="hs-rows">' + rows + '</div>';
+  $('psecStat').textContent = (sec >= 60 ? (sec / 60).toFixed(1) + ' 分' : Math.round(sec) + ' 秒') + '/条';
+}
+
+/* ---- 8. 分 agent：谁在干活、各占多少（按 token 排）---- */
+function renderAgt() {
+  const box = $('agtBody');
+  if (!box) return;
+  if (!hsNeed(box, 'agtStat')) return;
+  const list = ((HS.data || {}).agents || [])
+    .filter(x => (Number(x.tok) || 0) > 0 || (Number(x.secs) || 0) > 0)
+    .slice().sort((a, b) => (Number(b.tok) || 0) - (Number(a.tok) || 0));
+  if (!list.length) {
+    $('agtStat').textContent = '—';
+    box.innerHTML = '<div class="hr-empty"><span>还没有 agent 记录</span></div>';
+    return;
+  }
+  const max = Math.max.apply(null, list.map(x => Number(x.tok) || 0).concat([1]));
+  const rows = list.slice(0, 6).map(x => {
+    const tok = Number(x.tok) || 0;
+    return '<div class="hs-row" title="' + esc(x.name + ' · ' + x.prompts + ' 条 · '
+      + hsHm(x.secs) + ' · ' + hwTokN(tok) + ' token') + '">'
+      + '<span class="nm">' + esc(x.name) + '</span>'
+      + '<span class="bb"><i style="width:' + (tok / max * 100).toFixed(1) + '%"></i></span>'
+      + '<span class="vv">' + esc(hsHM(x.secs) + ' · ' + hwTokN(tok)) + '</span></div>';
+  }).join('');
+  const sumP = list.reduce((s, x) => s + (Number(x.prompts) || 0), 0);
+  box.innerHTML = '<div class="hs-top"><span class="n">' + list.length + '<em>个 agent</em></span>'
+    + '<span class="s">共 ' + hrN(sumP) + ' 条 · 时间 = 本轮从发到收尾 · token 含缓存读入</span></div>'
+    + '<div class="hs-rows">' + rows + '</div>';
+  $('agtStat').textContent = list.length + ' 个 · ' + hrN(sumP) + ' 条';
+}
+
+function renderHS() {
+  renderCal(); renderHod(); renderScr(); renderPhr(); renderLink(); renderPtk(); renderPsec(); renderAgt();
+  HS.painted = true;
+}
+
+/* 活跃度卡的口径 chip：挂 document 上，卡片被页面视图搬来搬去也不丢 */
+document.addEventListener('click', e => {
+  const b = e.target && e.target.closest ? e.target.closest('[data-cal]') : null;
+  if (!b) return;
+  HS.lens = b.getAttribute('data-cal') || 'ai';
+  const box = $('calRng');
+  if (box) [].forEach.call(box.querySelectorAll('[data-cal]'), x => {
+    const on = x === b;
+    x.classList.toggle('on', on);
+    x.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  renderCal();
+});
+
 /* ---- 24 小时：逐小时堆叠柱 ----
    会话日志的粒度到分钟，所以「每小时烧了多少」是真能算出来的；按天柱状图看不出
    「凌晨三点还在跑」这种事，这张图能。同一份数据两种劈法：
@@ -12632,6 +13149,10 @@ function renderHW() {
   renderHWRange();
   renderHWKpi(); renderHWWho(); renderHWTol(); renderHWProc(); renderHWChart();
   renderHWPrm();             // 提示词：字数 / 条数 / 活跃天数（单独一张卡）
+  // 逐日 / 逐时那七张（活跃度 / 分小时 / 屏幕时间 / 提示词分时 / 链接与图片 /
+  // 每条 token / 每条耗时）：吃 /api/workstat，一次拉 180 天，七张共用。
+  // 只在 Agent 监控页拉 —— 首页和巡检页没这七张卡，不该替它们付这份开销。
+  if (VIEW_PAGE === 'host') loadHS();
   renderHWHour();
   renderHWQuota();
   renderHWGloss();
@@ -16047,7 +16568,11 @@ const PAGE_SZ = {
   // 本机工作：六张全宽卡（花费与用量两 tab 共用一份高度，按高的那个「花费」给）
   // 进程消耗 2026-11-21 长高了：上面一条时间轴折线 + 下面十行排行，矮了就得卡内滚动
   host: { hostwork: [6, 10], hwtok: [6, 7], hwbill: [6, 8],
-          hwproc: [6, 8], pocketwork: [6, 7] },
+          hwproc: [6, 8], pocketwork: [6, 7],
+          // 2026-11-25 逐日/逐时那七张：一条主图 + 一句读数，五到六行够用
+          hwprm: [6, 5], hwcal: [6, 6], hwhod: [6, 5], hwscreen: [6, 5],
+          hwphr: [6, 5], hwlink: [6, 5], hwptok: [6, 3], hwpsec: [6, 5],
+          hwagent: [6, 5] },
   // 内容页：待办/行程/日记/备忘/趋势/插件
   //   简报给 6×9：五段标题栏（每段 34px）+ 第一段默认展开的五条 + 卡头 + 按钮栏。
   //   矮了就会在卡里滚 —— 早上扫一眼的东西不该还要滚一下才能看完。
@@ -18899,7 +19424,10 @@ const PAGES = {
   // 「用量走势」并进「花费与用量」了，这一页只剩六张
   // 口袋是「同一张卡」：首页摆着它，这一页也列着它（页面视图搬过去而已）。
   // 任务清单已并进 hostwork 卡当第四档视图，不再是独立一张。
-  host: { title: 'Agent 监控', ids: ['hostwork', 'hwprm', 'hwtime', 'hwhour', 'hwstrat', 'hwindex', 'hwtok', 'hwbill', 'hwproc', 'pocketwork'] },
+  host: { title: 'Agent 监控', ids: ['hostwork', 'hwcal', 'hwhod', 'hwscreen', 'hwtime', 'hwhour',
+        'hwprm', 'hwphr', 'hwlink',
+        'hwptok', 'hwpsec', 'hwagent', 'hwtok', 'hwbill',
+        'hwstrat', 'hwindex', 'hwproc', 'pocketwork'] },
   // 机器指标（hwkpi）2026-11-21 从本机工作挪到巡检：它答的是「机器还撑得住吗」，
   // 跟服务的死活是同一个问题；「谁在吃内存」另有进程榜（hwproc）留在本机工作。
   // 机器规格（mspec）2026-11-21 新增：巡检要说得清「这是台什么机器、上面装了些什么」
