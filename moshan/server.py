@@ -1105,7 +1105,7 @@ async def model_save(request: Request) -> dict:
     log({"event": "model_save", "kind": conf["kind"],
          "base": conf["base"], "model": conf["model"]})
     return {"ok": True, "current": conf}
-_PAGE_READY = {"done": False}
+_PAGE_READY = {"key": None}
 _PAGE_STAMP_RE = re.compile(r'<meta\s+name="moshan-page"\s+content="([^"]*)"')
 
 
@@ -1123,22 +1123,27 @@ def _ensure_page(p) -> None:
 
     现在按页内的 `moshan-page` 戳判断：
       · 数据根没有 → 铺一份；
-      · 戳比包里旧 → 备份成 dash.html.bak-<时间> 再覆盖（用户的手改不会凭空
+      · 戳不一样 → 备份成 dash.html.bak-<时间> 再覆盖（用户的手改不会凭空
         消失，但也不会自动生效 —— 备份就在旁边）；
-      · 戳相同或更新 → 一个字节都不动。
-    只在进程内第一次访问 /dash 时做一次，不在每个请求上读两个 1MB 文件。
+      · 戳相同 → 一个字节都不动。
+
+    判重键是**包里那份的 (mtime, size)**，不是「本进程做过了没」：早先写的
+    是一次性开关，结果换个 dash.html 不重启服务就永远拿旧页 —— 开发时踩，
+    用户那边则是「装了新版却还是旧界面」。现在每次热路径只多一次 stat。
     """
-    if _PAGE_READY["done"]:
-        return
     src = paths.resource("dash.html")
     try:
-        if not src.exists():
-            _PAGE_READY["done"] = True
-            return
+        st = src.stat()
+    except OSError:
+        return
+    key = (st.st_mtime_ns, st.st_size)
+    if _PAGE_READY["key"] == key:
+        return
+    try:
         if not p.exists():
             p.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, p)
-            _PAGE_READY["done"] = True
+            _PAGE_READY["key"] = key
             return
         want = _page_stamp(src.read_text(encoding="utf-8", errors="replace"))
         have = _page_stamp(p.read_text(encoding="utf-8", errors="replace"))
@@ -1158,7 +1163,7 @@ def _ensure_page(p) -> None:
                   file=sys.stderr, flush=True)
     except OSError:
         pass
-    _PAGE_READY["done"] = True
+    _PAGE_READY["key"] = key
 
 
 @app.get("/dash", response_class=HTMLResponse)
