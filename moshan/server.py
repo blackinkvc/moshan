@@ -78,6 +78,8 @@ import ai_trends_runner
 import heartbeat
 import ocr_runner
 import diskscan
+import modelcfg          # 对话模型来源：本机 Ollama / 本地网关 / OpenAI 兼容 API
+import modelui           # 设置抽屉里的「对话模型」入口（注入，不改 dash.html）
 import wechat_guard
 import tls as tlsmod
 from agent import GatewayClient, GatewayError, SYSTEM_PROMPT
@@ -1065,6 +1067,44 @@ def status() -> dict:
     }
 
 
+# —— 对话模型来源（2026-11-25）—————————————————————————————
+# 为什么要让用户选：这台机上跑的可能不是 4B，EVO 上就有个 35B 的专家模型；
+# 也可能只想接一个云 API。原来模型名写死在 config.json 里，改一次得手改文件重启。
+
+@app.get("/api/model", dependencies=[Depends(auth)])
+def model_state() -> dict:
+    """当前用的是什么 + 这台机上还有哪些能选（含各自跑没跑、有哪些模型）。"""
+    return modelcfg.state(CFG, GW.model)
+
+
+@app.post("/api/model/test", dependencies=[Depends(auth)])
+async def model_test(request: Request) -> dict:
+    """探一个端点能不能连通、能列出哪些模型。只读，不落盘。"""
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    base = str(body.get("base") or CFG.get("gateway_base") or "")
+    key = str(body.get("key") or "").strip() or str(CFG.get("gateway_api_key") or "")
+    return modelcfg.probe(base, key)
+
+
+@app.post("/api/model/save", dependencies=[Depends(auth)])
+async def model_save(request: Request) -> dict:
+    """选定来源并立即生效 —— 贴到正在跑的网关客户端上，不重启进程。"""
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    try:
+        conf = modelcfg.save(CFG, CFG_PATH, body if isinstance(body, dict) else {})
+    except modelcfg.ModelConfigError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    modelcfg.apply_to(GW, CFG)
+    log({"event": "model_save", "kind": conf["kind"],
+         "base": conf["base"], "model": conf["model"]})
+    return {"ok": True, "current": conf}
 _PAGE_READY = {"done": False}
 _PAGE_STAMP_RE = re.compile(r'<meta\s+name="moshan-page"\s+content="([^"]*)"')
 
@@ -1147,6 +1187,9 @@ def workbench() -> HTMLResponse:
     # 走抽屉（drawer=True），抽屉里那组「关于」多一行版本 + 检查更新。
     if aboutmod is not None:              # 更新入口：塞进设置抽屉的「关于」组
         html = aboutmod.inject(html, drawer=True)
+    # 对话模型：注入而不是改 dash.html —— 数据根那份一旦存在就不会被新版覆盖，
+    # 改页面只有全新安装的人看得到（理由见 modelui.py 顶部）
+    html = modelui.inject(html)
     if "</head>" in html:
         html = html.replace("</head>", boot + "</head>", 1)
     else:
