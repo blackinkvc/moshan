@@ -1231,14 +1231,25 @@ def _ensure_page(p) -> None:
             return
         want = _page_stamp(src.read_text(encoding="utf-8", errors="replace"))
         have = _page_stamp(p.read_text(encoding="utf-8", errors="replace"))
-        if want and want != have:
+        # 戳相同也再比一遍内容：戳是人手写的，忘 bump 一次就等于「这半天的界面改动
+        # 一个都没送到浏览器」—— 2026-11-25 真出过：数据根那份比包里落后 620 行，
+        # 戳却一样，用户看到的还是旧页面（折叠栏展开被裁就是这么报上来的）。
+        # 比内容只在「包里的文件变了」那一刻做一次（上面 key 已经挡掉了热路径），
+        # 1MB 读两遍不值一提，换的是「改了就一定生效」。
+        replace = bool(want and want != have)
+        if not replace:
+            try:
+                replace = src.read_bytes() != p.read_bytes()
+            except OSError:
+                replace = False
+        if replace:
             backup = _page_backup(p)
             shutil.copy2(src, p)
             try:
                 os.chmod(p, 0o644)
             except OSError:
                 pass
-            print(f"[dash] 页面已从 {have or '(无戳)'} 换到 {want}"
+            print(f"[dash] 页面已从 {have or '(无戳)'} 换到 {want or '(同戳不同内容)'}"
                   + (f"，旧的备份在 {backup.name}" if backup else ""),
                   file=sys.stderr, flush=True)
     except OSError:
