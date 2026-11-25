@@ -5595,9 +5595,21 @@ body.v-more .more-wrap > .card[data-card="transfer"].tf-none .tf-body{height:180
       </div>
     </div>
     <div class="set-grp">
+      <div class="set-t">AI 历史账</div>
+      <div class="set-row">
+        <div class="sl"><b>导入已有历史</b><span id="impHint">把 WorkBuddy / Cherry Studio 的历史会话折成基线账写进数据根 —— 换电脑只拷了数据根、源目录不在了，也还能看见</span></div>
+        <button class="btn-line" id="btnImpScan">扫描</button>
+      </div>
+      <div class="set-row" id="impRow" hidden>
+        <div class="sl"><b id="impSum">—</b><span id="impDetail">只读扫描，还没写任何东西</span></div>
+        <button class="btn-line" id="btnImpDo">导入</button>
+      </div>
+    </div>
+    <div class="set-grp">
       <div class="set-t">关于</div>
       <div class="set-row">
         <div class="sl"><b>数据根</b><span id="setRoot" style="word-break:break-all">—</span></div>
+        <button class="btn-line" id="btnOpenRoot">在访达中打开</button>
       </div>
       <div class="set-row">
         <div class="sl"><b>快捷</b><span>Esc 关抽屉；布局编辑中再按一次退出</span></div>
@@ -17677,6 +17689,68 @@ $('scrim').addEventListener('click', closeDrawer);
 $('btnLayout').addEventListener('click', () => { editing ? exitEdit() : enterEdit(); });
 $('btnLayoutFromSet').addEventListener('click', () => { closeDrawer(); setTimeout(enterEdit, 300); });
 $('btnResetLayout').addEventListener('click', resetLayout);
+
+/* ---- 数据根：在访达里打开（只开 root / state 两个固定目标）---- */
+$('btnOpenRoot').addEventListener('click', async () => {
+  try {
+    const r = await api('/api/reveal', { method: 'POST', body: JSON.stringify({ target: 'root' }) });
+    if (!r.ok) { toast(r.error || '打不开'); return; }
+    toast('已在' + (navigator.platform.indexOf('Mac') >= 0 ? '访达' : '文件管理器') + '里打开');
+  } catch (e) { toast('打不开：' + e.message); }
+});
+
+/* ---- AI 历史账：先扫描看数字，确认再写进数据根 ---- */
+let impData = null;
+function impRender() {
+  const row = $('impRow'), sum = $('impSum'), det = $('impDetail');
+  if (!impData) { row.hidden = true; return; }
+  if (!impData.ok) {
+    row.hidden = false;
+    sum.textContent = '扫描失败';
+    det.textContent = impData.error || '采集层没给出原因';
+    $('btnImpDo').disabled = true;
+    return;
+  }
+  const src = impData.sources || [];
+  const good = src.filter(s => s.ok);
+  sum.textContent = (impData.totals.calls || 0) + ' 次调用 · '
+    + hrN(impData.totals.tokens || 0) + ' token';
+  det.textContent = src.map(s => s.ok
+    ? (s.name + '：' + [s.sessions ? s.sessions + ' 会话' : '', s.calls ? s.calls + ' 次调用' : '']
+        .filter(Boolean).join(' · '))
+    : (s.name + '：' + (s.err || '没有数据'))
+  ).join('；') || '没有可导入的来源';
+  row.hidden = false;
+  $('btnImpDo').disabled = !good.length;
+}
+$('btnImpScan').addEventListener('click', async () => {
+  const b = $('btnImpScan');
+  b.disabled = true; b.textContent = '扫描中…';
+  try {
+    impData = await api('/api/agent/import/scan');
+    impRender();
+  } catch (e) {
+    toast('扫描失败：' + e.message);
+  } finally {
+    b.disabled = false; b.textContent = '重新扫描';
+  }
+});
+$('btnImpDo').addEventListener('click', async () => {
+  const b = $('btnImpDo');
+  b.disabled = true; b.textContent = '导入中…';
+  try {
+    const r = await api('/api/agent/import', { method: 'POST', body: JSON.stringify({}) });
+    if (!r.ok) { toast(r.error || '没导进去'); return; }
+    toast('已导入 ' + (r.imported || []).join(' / ') + '，共 ' + r.lines + ' 条基线账');
+    $('impHint').textContent = '已写入 ' + r.path + '；卡片刷新后可见';
+    await loadHostRes(true, true);
+    if (typeof renderHost === 'function') renderHost();
+  } catch (e) {
+    toast('导入失败：' + e.message);
+  } finally {
+    b.disabled = false; b.textContent = '再导一次';
+  }
+});
 $('ebDone').addEventListener('click', exitEdit);
 $('ebReset').addEventListener('click', () => {
   if (document.body.classList.contains('v-more')) resetPageSizes(); else resetLayout();
