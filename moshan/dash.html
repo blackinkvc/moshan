@@ -3,7 +3,7 @@
 <head>
 <!-- 页面版本戳：服务端拿它跟包里那份比，旧了会自动备份并换新。
      改这个文件时把日期往后挪一格，别原地不动，否则老机器收不到。 -->
-<meta name="moshan-page" content="2026-11-25l">
+<meta name="moshan-page" content="2026-11-25m">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
@@ -1756,8 +1756,9 @@ body.st-colmoving *{cursor:grabbing!important}
 
 /* ---- 「这台机器」卡内的折叠栏（2026-11-25）----
    机器规格 / 磁盘文件本来是巡检页两张独立卡，这里给一份能收起来的：
-   收起只占一行（图标 + 名字 + 一句摘要），展开就在卡内剩余空间里往下铺，
-   铺不完自己滚 —— 卡片高度不变，不会把下面的卡推走。 */
+   收起只占一行（图标 + 名字 + 一句摘要）；展开时卡片跟着长高（JS 改 --hcell，
+   见 fitHwkSubs），下面那些卡顺着往下让 —— 像拉开的卷轴。真到 40 行还装不下，
+   卡内自己滚（overflow:auto 兜底）。 */
 .card[data-card="hwkpi"]{position:relative}
 .hwk-gear{width:22px;height:22px;border:1px solid transparent;border-radius:6px;
   background:transparent;color:var(--tx3);padding:0;cursor:pointer;display:inline-grid;
@@ -1770,6 +1771,12 @@ body.st-colmoving *{cursor:grabbing!important}
 .card[data-card="hwkpi"] > #hwkBody{flex:0 0 auto;min-height:0}
 .card[data-card="hwkpi"] > .hwk-subs{flex:0 1 auto;min-height:0;overflow:auto;
   padding:0 13px 10px;display:flex;flex-direction:column;gap:6px;overscroll-behavior:contain}
+/* 收起时（没有展开的栏）下沿那 10px 内边距是白占的：卡本来就矮，这一截正好把
+   第二行压掉一条边。间距也从 6 收到 4 —— 两行各 31/32px，6 行卡刚好只给 67px。
+   展开时都留着，当「卷轴」的收尾留白。 */
+.card[data-card="hwkpi"] > .hwk-subs:not(:has([data-hwksub][open])){padding-bottom:0;gap:4px}
+/* 挂着折叠栏时，指标区那 10px 下内边距让出来 —— 不然两行收起正好贴在卡沿上 */
+.card[data-card="hwkpi"]:has(> .hwk-subs:not([hidden])) > #hwkBody{padding-bottom:2px}
 .hwk-sub{border:1px solid var(--line);border-radius:9px;background:var(--card2);flex:0 0 auto}
 .hwk-sub[hidden],.hwk-subs[hidden]{display:none!important}
 .hwk-sub>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:7px;
@@ -11069,25 +11076,83 @@ function onHwkSubToggle(k, open) {
 
 /* 「向下展开卷轴」：展开时卡片跟着长高，而不是在 150px 的小窗口里滚。
    高度按内容实算 —— 两个都展开也不设小上限（实测 19 行左右），顶到页面就整页滚，
-   这才像「拉开的卷轴」。24 行是防异常内容的兜底：真到那一步卡内自己滚。
-   只在 --hcell 上临时加，不动 data-h：那是拖拽存档，收起就能原样还原。 */
-const HWK_ROW = 72, HWK_MAX_ROWS = 24;
+   这才像「拉开的卷轴」。40 行是防异常内容的兜底（跟 data-h 上限一致）。
+
+   2026-11-25 二改（用户报「展开被挡住」）—— 原来只写 --hcell，有两个漏：
+   ① 位置存档会在卡身上留 inline `grid-row: 起 / span 几`，它的优先级高于 --hcell。
+      卡被这么钉住之后，--hcell 加多少都不生效，内容全裁在卡边界外。
+      所以展开期间也把 span 直接写在卡上（收起时原样还回去）。
+   ② 行高按常量 72 估。行高 / 行距其实是 CSS 里的 --row 和 gap，换皮肤或
+      改字号都会变，估错一行就正好裁掉一行。
+   现在改成：行距实测 + 落一次再量一遍，没装下就按差的像素补行（最多三轮）。
+   磁盘那份是异步扫出来的，字体也可能晚到 —— 一次算准是不现实的，量准才行。 */
+const HWK_MAX_ROWS = 40;
+function hwkPitch() {
+  const cs = getComputedStyle(document.documentElement);
+  const row = parseFloat(cs.getPropertyValue('--row')) || 56;
+  const grid = document.querySelector('main');
+  const gap = grid ? parseFloat(getComputedStyle(grid).rowGap) : 0;
+  return row + (gap || 16);
+}
+function hwkSetRows(card, rows) {
+  card.style.setProperty('--hcell', String(rows));
+  // 只在展开时接管 span：首页位置存档写的是「起点 / 跨几格」，收起要还原
+  if (card.dataset.hwkGrid == null) card.dataset.hwkGrid = card.style.gridRow || '';
+  card.style.gridRow = 'span ' + rows;
+}
+function hwkRestoreRows(card, base) {
+  card.style.setProperty('--hcell', String(base));
+  if (card.dataset.hwkGrid != null) {
+    card.style.gridRow = card.dataset.hwkGrid;
+    delete card.dataset.hwkGrid;
+  }
+}
 function fitHwkSubs() {
   const card = document.querySelector('[data-card="hwkpi"]');
   if (!card) return;
   const base = Number(card.dataset.h || 6) || 6;
-  if (!card.querySelector('[data-hwksub][open]')) {
-    card.style.setProperty('--hcell', String(base));
-    return;
+  const subs = card.querySelector('#hwkSubs');
+  // 内容高度按「两个折叠栏各自的自然高度」相加，不用 scrollHeight —— 后者在卡偏高时
+  // 会等于 clientHeight，越量越大，卡片会一轮一轮往上长（真踩过）。
+  // .hwk-sub 是 flex:0 0 auto，撑不下时溢出而不缩，所以量到的就是它要多少。
+  let subsNeed = 0;
+  if (subs) {
+    const csS = getComputedStyle(subs);
+    let vis = 0;
+    [].forEach.call(subs.children, el => {
+      if (el.hidden) return;
+      subsNeed += el.getBoundingClientRect().height; vis++;
+    });
+    if (vis > 1) subsNeed += (parseFloat(csS.rowGap) || 0) * (vis - 1);
+    subsNeed += (parseFloat(csS.paddingTop) || 0) + (parseFloat(csS.paddingBottom) || 0);
   }
+  const pitch = hwkPitch();
+  // N 行卡片的实际高度是 N*56+(N-1)*16 = 72N-16（最后一行后面没有间距），
+  // 所以换算成一共有几行时要把那个 16 补回来，不然恒定少算 16px 内的零头
+  const gap = pitch - (parseFloat(getComputedStyle(document.documentElement)
+    .getPropertyValue('--row')) || 56);
+  const rowsFor = px => Math.min(HWK_MAX_ROWS, Math.max(1, Math.ceil((px + gap) / pitch)));
   const headEl = card.querySelector('.card-h'), bodyEl = card.querySelector('#hwkBody');
   const head = headEl ? headEl.getBoundingClientRect().height : 44;
   const body = bodyEl ? bodyEl.getBoundingClientRect().height : 0;
-  const subs = card.querySelector('#hwkSubs');
-  // scrollHeight 只算内容，不受「现在被压成多高」影响，所以能反复算不抖
-  const need = head + body + (subs ? subs.scrollHeight : 0) + 10;
-  const rows = Math.min(HWK_MAX_ROWS, Math.max(base, Math.ceil(need / HWK_ROW)));
-  card.style.setProperty('--hcell', String(rows));
+  const need = head + body + subsNeed + 12;   // 12 = 卡片容器自己的上下留白
+  if (!card.querySelector('[data-hwksub][open]')) {
+    // 收起也有底线：那两行被顶到卡外面，就一行都点不着（窄屏、指标块换行时尤其）。
+    // 只在「真被裁掉一大截」时补高，3~5px 的零头不动卡 —— 不跟用户拖好的高度打架。
+    const lack = subs ? subs.scrollHeight - subs.clientHeight : 0;
+    hwkRestoreRows(card, lack > 24 ? Math.max(base, rowsFor(need)) : base);
+    return;
+  }
+  let rows = Math.min(HWK_MAX_ROWS, Math.max(base, rowsFor(need)));
+  hwkSetRows(card, rows);
+  // 校正：落下去之后看「实际还差几像素」，差就补行 —— 不靠估，靠量
+  for (let i = 0; i < 3 && subs && rows < HWK_MAX_ROWS; i++) {
+    void card.offsetHeight;                       // 强制排版，下一句才量得到新尺寸
+    const lack = subs.scrollHeight - subs.clientHeight;
+    if (lack <= 2) break;                         // 装下了
+    rows = Math.min(HWK_MAX_ROWS, rows + Math.max(1, Math.ceil(lack / pitch)));
+    hwkSetRows(card, rows);
+  }
 }
 
 /* renderHW 每轮都会走到这里：摘要跟着数走，展开着的那份规格也跟着刷新 */
@@ -11127,12 +11192,21 @@ function renderHwkSubs() {
   [].forEach.call(box.querySelectorAll('[data-hwksub]'), el => {
     el.addEventListener('toggle', () => onHwkSubToggle(el.dataset.hwksub, el.open));
   });
+  // 窗口一变窄，一格里装得下的内容就变了 —— 展开着的话重算一次
+  window.addEventListener('resize', () => {
+    if (box.querySelector('[data-hwksub][open]')) fitHwkSubs();
+  });
   // 磁盘那份内容是异步来的（要等 /api/disk/*），渲染完高度会变 —— 跟着重算一次，
   // 不然卡片停在「估算时内容还空着」的高度上，展开就只剩半截。
   if (window.ResizeObserver) {
     const ro = new ResizeObserver(() => fitHwkSubs());
     [].forEach.call(box.querySelectorAll('.hwk-sbody'), el => ro.observe(el));
+    // 指标块（4 个盒子 + 那条外置盘）在数据到了、窗口变窄时会换行变高，
+    // 把收起的那两行顶出卡外 —— 一变就重算一次。
+    const bodyEl = $('hwkBody');
+    if (bodyEl) ro.observe(bodyEl);
   }
+  fitHwkSubs();
 })();
 
 /* ---- 谁在干活：客户端 → 类别（模型/工具/专家/技能/脚本）→ 明细 ---- */
