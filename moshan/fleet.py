@@ -2,7 +2,7 @@
 """多机监控：各机 agent 上报，主端汇总。
 
 ⚠️ 2026-11-21 起这份是**备份**。真正的服务已经搬到
-   <数据根>/16-多机/nest_srv.py（独立进程、独立端口、独立配置），
+   <数据根>/16-虫巢思维/nest_srv.py（独立进程、独立端口、独立配置），
    server.py 里的挂载也已注释掉。留着它只为回滚：把 server.py 那三行放开、
    停掉 nest 服务即可 —— 但两边共用同一个 fleet.db，绝不能同时挂载，
    否则自采线程会重复写同一条设备记录。
@@ -24,7 +24,7 @@
 4. **保留 7 天，且 24 小时外的快照把进程表清空**。进程表占空间的大头，
    历史趋势只需要 cpu/内存/磁盘这几列，没必要拖着几万个进程名。
 
-数据落 `<数据根>/16-多机/fleet.db`，页面落同目录 `fleet_ui.html`（改完刷新即生效）。
+数据落 `<数据根>/16-虫巢思维/fleet.db`，页面落同目录 `fleet_ui.html`（改完刷新即生效）。
 """
 from __future__ import annotations
 
@@ -83,7 +83,7 @@ def _root(cfg: dict) -> Path:
 
 
 def data_dir(cfg: dict) -> Path:
-    d = _root(cfg) / "16-多机"
+    d = _root(cfg) / "16-虫巢思维"
     try:
         d.mkdir(parents=True, exist_ok=True)
     except OSError:

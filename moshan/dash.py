@@ -1622,7 +1622,7 @@ def _auto_worklog(cfg: dict) -> list[dict]:
 #
 # 这张卡原来叫「口袋在做的事」，账只从 pocket.jsonl 来。可中台不止口袋：
 # 虫巢能远程锁屏 / 卸软件 / 换 agent，设备能开关灯，游戏能记时长 —— 它们各自
-# 在自己的目录里记账（16-多机/fleet.db 的 oplog、13-设备/使用记录.jsonl、
+# 在自己的目录里记账（16-虫巢思维/fleet.db 的 oplog、13-设备/使用记录.jsonl、
 # 17-游戏/记录.jsonl），以前只有口袋那份被读进来。现在这几本账都翻成和口袋
 # 一样的 item，多带一个 plugin 字段，卡片按插件分栏。
 #
@@ -1671,7 +1671,7 @@ def _pg_item(plugin: str, task: str, status: str, start: str, end: str,
     return it
 
 
-# 动作译名照抄 16-多机/fleet.py 的 CAP_NAME（那边是英文 key → 中文按钮名），
+# 动作译名照抄 16-虫巢思维/fleet.py 的 CAP_NAME（那边是英文 key → 中文按钮名），
 # 补上 kind=config 那几种。不 import fleet：那个模块一进来就连库、起线程。
 _NEST_ACT = {
     "lock": "锁定屏幕", "logout": "注销", "reboot": "重启",
@@ -1684,7 +1684,7 @@ _NEST_ACT = {
 def _nest_items(cfg: dict, urls: dict) -> list[dict]:
     """虫巢思维：fleet.db 的 oplog 是一本只追加的账 —— 谁在什么时候想把什么
     操作发到哪台机器、成没成、花了多久。"""
-    db = _root(cfg) / "16-多机" / "fleet.db"
+    db = _root(cfg) / "16-虫巢思维" / "fleet.db"
     if not db.exists():
         return []
     con = None
@@ -1977,7 +1977,7 @@ def _plugin_items(cfg: dict) -> list[dict]:
     urls = {p["id"]: p["url"] for p in plugin_manifest(cfg) if p.get("url")}
     # 多机（虫巢）那本账默认不并进来（2026-11-22 按用户口径）：被控机干的活是
     # 那台机器自己的账，不该跟本机的事排在同一张「中台在做的事」里。
-    # 数据一条不少 —— 全在 16-多机/fleet.db，看的地方是虫巢思维自己的页面。
+    # 数据一条不少 —— 全在 16-虫巢思维/fleet.db，看的地方是虫巢思维自己的页面。
     # 以后要搬进中台：config.json 里 dash.nest_in_flow 改 true，这里自动并回来。
     fns = [_device_items, _game_items, _media_items, _app_items]
     if bool((cfg.get("dash") or {}).get("nest_in_flow")):
