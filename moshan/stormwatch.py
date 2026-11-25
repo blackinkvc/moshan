@@ -67,6 +67,28 @@ def _parse_at(s: str) -> float:
         return 0.0
 
 
+def _term_of(row: dict) -> tuple[float, list]:
+    """一条采样里终端占多少 MB、都是谁。
+
+    采样器从 2026-11-25 起会带 `terms`（全量筛出来的，空转的 conhost 也算），
+    优先用它；老文件没有这个字段，退回从 top15 里凑 —— 那份必然漏掉空转的，
+    所以只看老文件时数值会偏小，这是已知的、只对历史数据成立的偏差。
+    """
+    tm = row.get("terms")
+    if isinstance(tm, dict) and tm.get("n") is not None:
+        return float(tm.get("mb") or 0), list(tm.get("top") or [])
+    total, detail = 0.0, []
+    for it in row.get("top") or []:
+        try:
+            name, mem = str(it[0]), float(it[2])
+        except (IndexError, TypeError, ValueError):
+            continue
+        if _is_term(name):
+            total += mem
+            detail.append([name, round(mem, 1)])
+    return total, detail
+
+
 def _rows(path: Path, since: float) -> list[dict]:
     """读采样文件，只要 since 之后的。文件可能几十万行，从尾部倒着读。"""
     if not path.exists():
@@ -89,7 +111,8 @@ def _rows(path: Path, since: float) -> list[dict]:
             continue
         if t < since:
             break                      # 倒序读，早于窗口就停
-        out.append({"at": d.get("at"), "ts": t, "top": d.get("top") or []})
+        out.append({"at": d.get("at"), "ts": t, "top": d.get("top") or [],
+                    "terms": d.get("terms")})
     out.reverse()
     return out
 
@@ -105,15 +128,7 @@ def scan(path: Path | None = None, since: float | None = None) -> list[dict]:
     rows = _rows(p, since)
     hot: list[dict] = []
     for r in rows:
-        total, detail = 0.0, []
-        for it in r["top"]:
-            try:
-                name, mem = str(it[0]), float(it[2])
-            except (IndexError, TypeError, ValueError):
-                continue
-            if _is_term(name):
-                total += mem
-                detail.append([name, round(mem, 1)])
+        total, detail = _term_of(r)
         if total >= STORM_MB:
             hot.append({"at": r["at"], "ts": r["ts"], "mb": total, "procs": detail})
     if not hot:
@@ -241,6 +256,36 @@ def _hostname() -> str:
         return socket.gethostname().split(".")[0] or "本机"
     except OSError:
         return "本机"
+
+
+def payload(limit: int = 8) -> dict:
+    """给工作台看的那一份：最近的账 + 此刻终端占多少（卡片上要「现在是好是坏」）。"""
+    own = own_dir()
+    doc = _load(own / "异常.json")
+    items = [x for x in (doc.get("items") or []) if isinstance(x, dict)]
+    items.sort(key=lambda x: str(x.get("end") or ""), reverse=True)
+    now_mb, base_mb, at = 0.0, 0.0, ""
+    rows = _rows(own / "进程.jsonl", time.time() - 3 * 3600)
+    if rows:
+        at = rows[-1]["at"]
+        now_mb = round(_term_of(rows[-1])[0], 1)
+        # 基线只拿「带 terms 的采样」算：老文件没这个字段，推算出来必然是漏的，
+        # 掺进来只会把基线压到 0，看着像「这台机器从来没有终端」。
+        tv = [float(r["terms"].get("mb") or 0) for r in rows
+              if isinstance(r.get("terms"), dict)]
+        if tv:
+            base_mb = round(min(tv), 1)
+    return {
+        "items": items[:limit],
+        "total": len(items),
+        "now_mb": now_mb,
+        "base_mb": base_mb,
+        "at": at,
+        "sampled": bool(at),      # 有采样 ≠ 有终端进程：Mac 上常常一个都没有
+        "host": _hostname(),
+        "threshold_mb": STORM_MB,
+        "updated_at": doc.get("updated_at") or 0,
+    }
 
 
 def scheduler_loop(cfg: dict | None = None, on_done=None,
