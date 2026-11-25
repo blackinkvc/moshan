@@ -1098,6 +1098,11 @@ def workbench() -> HTMLResponse:
     boot = appmod.bootstrap(CFG, href="/__appearance.css")
     # 插件胶囊 + 拖拽安装 + 更新提示：注入而不是改 dash.html（理由见 pluginui.py 顶部）
     html = pluginui.inject(html)
+    # 角落里的「关于 / 新版本」：以前只注入口袋首页（/），0.3.6 把启动落点改成
+    # /dash 之后，更新入口就只剩「插件」面板里一条链接 —— 用户在 /dash 上根本
+    # 找不到它。两处都挂上，点进去才是 /about。
+    if aboutmod is not None:
+        html = aboutmod.inject(html)
     if "</head>" in html:
         html = html.replace("</head>", boot + "</head>", 1)
     else:

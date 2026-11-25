@@ -370,7 +370,7 @@ $('btn-apply').onclick = async () => {
   }catch(e){
     // 没校验值的包要人再点一次（服务端 409），不做静默放行
     const m = String(e.message || '');
-    if(m.indexOf('校验') >= 0 && confirm(m + '\n\n仍然要打开这个安装包吗？')) {
+    if(m.indexOf('校验') >= 0 && confirm(m + '\\n\\n仍然要打开这个安装包吗？')) {
       try{
         const d = await j('/api/update/apply?force=1', {method: 'POST'});
         tag($('state'), d.hint || '已打开安装包（未校验，已由你确认）', 'ok');
@@ -745,9 +745,16 @@ _BADGE = """
 
 
 def inject(html: str) -> str:
-    """把关于入口拼进首页。已经拼过就不重复拼（同一进程内多次渲染也安全）。"""
+    """把关于入口拼进首页。已经拼过就不重复拼（同一进程内多次渲染也安全）。
+
+    必须拼在**最后一个** </body> 前：dash.html 里有一句
+    `document.write('…<body …>正在启动…')`，第一个 </body> 出现在那行 JS 字符串
+    中间。按第一个拼会把整段 HTML 塞进单引号字符串里，整页脚本当场 SyntaxError，
+    中台一张卡都画不出来（2026-11-25 踩过）。
+    """
     if "mosh-about" in html:
         return html
-    if "</body>" in html:
-        return html.replace("</body>", _BADGE + "</body>", 1)
+    i = html.rfind("</body>")
+    if i >= 0:
+        return html[:i] + _BADGE + html[i:]
     return html + _BADGE
