@@ -23,6 +23,9 @@ from __future__ import annotations
 CSS = r"""
 <style id="mpk-css">
 /* 全部走工作台自己的变量：换皮肤时这里不用跟着改 */
+/* 右下角这颗撤了（2026-11-25）：入口并到顶栏「＋插件」。节点留着 —— 下面的脚本还在
+   往 #mpk-launch-t 写更新数、切 .hot，删节点会让那几行抛错。 */
+#mpk-launch{display:none!important}
 #mpk-launch{position:fixed;right:16px;bottom:18px;z-index:9996;display:flex;align-items:center;gap:7px;
   height:34px;padding:0 13px;border-radius:99px;border:1px solid var(--line,#e5e8ef);
   background:var(--card,#fff);color:var(--tx2,#565f6e);cursor:pointer;
@@ -47,8 +50,8 @@ CSS = r"""
 #mpk-scrim{position:fixed;inset:0;z-index:9997;background:rgba(17,20,32,.34);
   opacity:0;pointer-events:none;transition:.2s}
 #mpk-scrim.on{opacity:1;pointer-events:auto}
-#mpk-panel{position:fixed;z-index:9998;right:16px;bottom:62px;width:min(432px,calc(100vw - 24px));
-  max-height:min(640px,calc(100vh - 100px));display:flex;flex-direction:column;
+#mpk-panel{position:fixed;z-index:9998;right:16px;top:56px;width:min(432px,calc(100vw - 24px));
+  max-height:min(640px,calc(100vh - 120px));display:flex;flex-direction:column;
   border-radius:16px;border:1px solid var(--line,#e5e8ef);background:var(--card,#fff);
   box-shadow:0 18px 48px -18px rgba(17,20,32,.34);overflow:hidden;
   opacity:0;transform:translateY(10px) scale(.985);pointer-events:none;transition:.2s;
@@ -170,6 +173,12 @@ HTML = r"""
                placeholder="https://…/llmcost.moshanplug">
         <button class="mpk-b pri" id="mpk-url-go" style="flex:none;padding:0 12px">去下载</button>
       </div>
+      <div class="mpk-row" style="margin-top:8px">
+        <button class="mpk-b" id="mpk-manual" title="服务已经在本机跑着了，只想在顶栏登记一行">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+            <path d="M12 5v14M5 12h14"/></svg>
+          手动填写名字 / 端口</button>
+      </div>
       <div class="mpk-hint">
         包里要有 <code>plugin.json</code>（id / name / version）。装完进
         <code>_插件/&lt;id&gt;/</code>，并登记到 <code>_工作台/plugins.json</code>；
@@ -270,6 +279,28 @@ JS = r"""
   SCRIM.addEventListener('click', close);
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && PANEL.classList.contains('on')) close();
+  });
+
+  /* ---------- 顶栏「＋插件」接管（2026-11-25） ----------
+     以前两处入口：顶栏「＋插件」开 dash 自己那个三 tab 弹窗（填名字/端口），
+     右下角胶囊开这个面板（装包/已装/更新）。同一件事摆两个门，用户找不到到底
+     点哪个。现在只留顶栏一处：点「＋插件」直接开这个面板，面板「装插件」页里
+     多一个「手动填写」按钮跳回原来那个表单（给已经在跑、只想登记一行的服务）。
+     用 capture 拦：dash 那边 #appBar 的冒泡监听会先开自己的弹窗，拦不住。 */
+  document.addEventListener('click', function (e) {
+    var t = e.target && e.target.closest ? e.target.closest('#btnAddApp') : null;
+    if (!t) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    open('install');
+  }, true);
+
+  /* 面板里的「手动填写」→ 原来的表单（openAppModal 在 dash.html 里是全局函数）。 */
+  document.addEventListener('click', function (e) {
+    if (!e.target || !e.target.closest || !e.target.closest('#mpk-manual')) return;
+    close();
+    if (typeof window.openAppModal === 'function') window.openAppModal('plugin');
+    else say('这个版本没有手动填写表单，用拖入或选文件装包');
   });
 
   /* ---------- 结果区 ---------- */

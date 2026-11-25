@@ -713,8 +713,10 @@ def register(app: FastAPI, cfg: dict, token: str) -> None:
 
 _BADGE = """
 <style>
-  /* 底部有标签栏，入口必须抬到它上面，否则会压住「归整」那一格（宽屏同样会压）。 */
-  #mosh-about{position:fixed;right:14px;bottom:72px;z-index:9998;
+  /* 底部有标签栏，入口必须抬到它上面，否则会压住「归整」那一格（宽屏同样会压）。
+     z-index 只给 39：中台的设置抽屉是 41、遮罩 40，给 9998 会让这颗胶囊浮在
+     抽屉和遮罩上面，正好压住抽屉页脚那行说明（2026-11-25 在小屏上就是这样）。 */
+  #mosh-about{position:fixed;right:14px;bottom:72px;z-index:39;
     font:12.5px/1 -apple-system,'PingFang SC',system-ui,sans-serif}
   #mosh-about a{display:inline-flex;align-items:center;gap:6px;
     padding:8px 12px;border-radius:99px;text-decoration:none;color:#f4f1ea;
@@ -744,17 +746,169 @@ _BADGE = """
 """
 
 
-def inject(html: str) -> str:
-    """把关于入口拼进首页。已经拼过就不重复拼（同一进程内多次渲染也安全）。
+# ---------------------------------------------------------------- 中台：塞进设置抽屉
+#
+# 中台设置抽屉里本来就有一组「关于」（数据根 / 快捷），更新放那儿最顺手。
+# dash.html 是**用户自己的界面文件**（数据根 `_工作台/dash.html`），改仓库那份对
+# 已经装过的人不生效，所以走注入：抽屉 HTML 是静态的、一直在 DOM 里（只是 hidden），
+# 脚本直接找「关于」那一组插一行进去。
+_DRAWER_ROW = """
+<style>
+  #mosh-upd-row .sl span{word-break:break-all}
+  #mosh-upd-b.hot{background:#a8641c;border-color:#a8641c;color:#fff}
+</style>
+<script>
+(function(){
+  var K = new URLSearchParams(location.search).get('k')
+        || localStorage.getItem('pocket_token') || '';
+  var ROW = null, BTN = null, SUB = null, TITLE = null, BUSY = false;
+
+  function j(path, opt){
+    opt = opt || {};
+    opt.headers = Object.assign({'X-Token': K, 'Content-Type': 'application/json'}, opt.headers || {});
+    return fetch(path, opt).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){
+        if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+        return d;
+      });
+    });
+  }
+
+  function paint(st){
+    // /api/update/state 是 {checked_at, info:{...}}，/api/update/check 是平铺的
+    // {has_update, current, latest} —— 两种都给，别指望形状一样。
+    var info = (st && st.info) || st || {};
+    var cur = info.current || '';
+    // checked_at 在**外层**（/api/update/state 的约定），info 里没有；读错会永远
+    // 显示「还没检查过」——明明刚查过。
+    var seen = (st && st.checked_at) || info.checked_at || 0;
+    TITLE.textContent = '版本' + (cur ? ' ' + cur : '');
+    BTN.classList.toggle('hot', !!info.has_update);
+    BTN.disabled = false;
+    if (info.has_update){
+      SUB.textContent = '有新版本 ' + info.latest;
+      BTN.textContent = st.path ? (st.in_place ? '立即更新并重启' : '打开安装包') : '下载更新';
+    } else if (seen){
+      SUB.textContent = '已是最新';
+      BTN.textContent = '检查更新';
+    } else {
+      SUB.textContent = '还没检查过';
+      BTN.textContent = '检查更新';
+    }
+  }
+
+  function poll(){
+    var n = 0;
+    (function tick(){
+      n++;
+      j('/api/update/state').then(function(st){
+        var p = st.phase || '';
+        if (p === 'downloading'){
+          SUB.textContent = '正在下载 ' + (st.msg || '…');
+        } else if (p === 'done'){
+          paint(st); SUB.textContent = '已下载，可以装了'; return;
+        } else if (p === 'error'){
+          SUB.textContent = '失败：' + (st.msg || '未知原因');
+          BTN.disabled = false; BTN.textContent = '重试'; return;
+        }
+        if (n < 240) setTimeout(tick, 1000);
+      }).catch(function(){ if (n < 240) setTimeout(tick, 1500); });
+    })();
+  }
+
+  function info2ver(st){
+    try { return ((st && st.info) || st || {}).current || ''; } catch (e) { return ''; }
+  }
+
+  function onClick(){
+    if (BUSY) return;
+    BUSY = true;
+    var label = BTN.textContent;
+    BTN.disabled = true;
+    if (label === '检查更新' || label === '重试' || label === '下载更新'){
+      SUB.textContent = '正在问 GitHub…';
+      j('/api/update/check', {method: 'POST', body: '{}'}).then(function(d){
+        // 查完再读一次 state 来画：check 的返回没有 checked_at，直接画会退回
+        // 「还没检查过」，明明刚查过。
+        return j('/api/update/state').then(function(st){
+          if (d && d.has_update){
+            paint(st);
+            return j('/api/update/download', {method: 'POST', body: '{}'}).then(function(){
+              SUB.textContent = '正在下载…'; poll();
+            });
+          }
+          BUSY = false; paint(st);
+          SUB.textContent = '已是最新 ' + (info2ver(st) || '');
+        });
+      }).catch(function(e){
+        BUSY = false; BTN.disabled = false; BTN.textContent = '重试';
+        SUB.textContent = '检查失败：' + e.message;
+      });
+      return;
+    }
+    // 「立即更新并重启」/「打开安装包」
+    j('/api/update/apply', {method: 'POST', body: '{}'}).then(function(d){
+      BUSY = false;
+      SUB.textContent = d.hint || '正在替换并重启，这个页面会断开几秒…';
+      BTN.disabled = true;
+    }).catch(function(e){
+      BUSY = false; BTN.disabled = false;
+      SUB.textContent = '装不上：' + e.message;
+    });
+  }
+
+  function mount(){
+    if (ROW || !document.getElementById('drawer')) return;
+    var t = null;
+    [].forEach.call(document.querySelectorAll('.set-t'), function(x){
+      if (!t && x.textContent.trim() === '关于') t = x;
+    });
+    if (!t) return;
+    var grp = t.parentNode;
+    ROW = document.createElement('div');
+    ROW.className = 'set-row';
+    ROW.id = 'mosh-upd-row';
+    ROW.innerHTML = '<div class="sl"><b id="mosh-upd-t">版本</b>'
+      + '<span id="mosh-upd-s">还没检查过</span></div>'
+      + '<button class="btn-line" id="mosh-upd-b" type="button">检查更新</button>';
+    var first = grp.querySelector('.set-row');
+    if (first) grp.insertBefore(ROW, first); else grp.appendChild(ROW);
+    TITLE = document.getElementById('mosh-upd-t');
+    SUB = document.getElementById('mosh-upd-s');
+    BTN = document.getElementById('mosh-upd-b');
+    BTN.addEventListener('click', onClick);
+    j('/api/update/state').then(paint).catch(function(){});
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
+  else mount();
+  // 抽屉是 hidden 常驻的，一次就够；万一那会儿 dash 还没画完，兜底再试两次
+  setTimeout(mount, 800); setTimeout(mount, 2500);
+})();
+</script>
+"""
+
+
+def inject(html: str, drawer: bool = False) -> str:
+    """把「关于」那点东西拼进页面。已经拼过就不重复拼（同一进程内多次渲染也安全）。
+
+    两种落点（2026-11-25 起）：
+      html 是口袋首页（/）      → 右下角一颗胶囊，点进 /about
+      html 是中台（/dash）      → 不挂胶囊，改成往**设置抽屉的「关于」组**里插一行
+                                  「版本 + 检查更新 / 立即更新并重启」
+
+    为什么要分：中台已经有一抽屉设置，再在角落挂一颗药丸，就是同一件事两个门，
+    用户找不到该点哪个；而口袋首页没有设置抽屉，只能挂胶囊。
 
     必须拼在**最后一个** </body> 前：dash.html 里有一句
     `document.write('…<body …>正在启动…')`，第一个 </body> 出现在那行 JS 字符串
     中间。按第一个拼会把整段 HTML 塞进单引号字符串里，整页脚本当场 SyntaxError，
     中台一张卡都画不出来（2026-11-25 踩过）。
     """
-    if "mosh-about" in html:
+    if "mosh-upd-row" in html or "mosh-about" in html:
         return html
+    badge = _DRAWER_ROW if drawer else _BADGE
     i = html.rfind("</body>")
     if i >= 0:
-        return html[:i] + _BADGE + html[i:]
-    return html + _BADGE
+        return html[:i] + badge + html[i:]
+    return html + badge
