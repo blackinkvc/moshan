@@ -1648,6 +1648,75 @@ async def trae_note(request: Request) -> dict:
     return await _self_note(request, forced_agent="TRAE")
 
 
+# —— 历史账导入（设置里的「导入 AI 数据」）———————————————————
+# 卡片上的账平时是现算的：去扫 ~/.workbuddy 和 Cherry 的库。换台机只拷了数据根时，
+# 源目录不在就永远是 0。这两个接口把它折成基线账写进数据根，卡片照旧读得到。
+
+@app.get("/api/agent/import/scan", dependencies=[Depends(auth)])
+def agent_import_scan() -> dict:
+    """只读扫描：两个客户端各有多少历史可导。不动任何文件。"""
+    try:
+        import agent_import                                 # noqa: PLC0415
+        return agent_import.scan()
+    except Exception as e:                                  # noqa: BLE001
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "sources": []}
+
+
+@app.post("/api/agent/import", dependencies=[Depends(auth)])
+async def agent_import_apply(request: Request) -> dict:
+    """把扫描结果写成基线账（追加进 Agent自述.jsonl，重复导入不叠加）。"""
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    names = None
+    if isinstance(body, dict) and isinstance(body.get("sources"), list):
+        names = [str(x) for x in body["sources"] if str(x).strip()]
+    try:
+        import agent_import                                 # noqa: PLC0415
+        r = agent_import.apply(names)
+    except Exception as e:                                  # noqa: BLE001
+        return JSONResponse({"ok": False, "error": f"{type(e).__name__}: {e}"},
+                            status_code=500)
+    if r.get("ok") and hwmod is not None:       # 让下一次取数立刻重算，别等缓存过期
+        cache = getattr(hwmod, "_PULSE_CACHE", None)
+        if isinstance(cache, dict):
+            cache["at"] = 0.0
+    return r
+
+
+@app.post("/api/reveal", dependencies=[Depends(auth)])
+async def reveal_api(request: Request) -> dict:
+    """在访达 / 资源管理器里打开数据根。
+
+    只认 root / state 两个固定目标 —— 不接受前端传任意路径，否则这就是一个
+    「拿令牌打开任意文件」的口子。
+    """
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    target = str((body or {}).get("target") or "root").strip() if isinstance(body, dict) else "root"
+    p = {"root": paths.data_root(), "state": paths.state_dir()}.get(target)
+    if p is None:
+        return JSONResponse({"ok": False, "error": "只支持 root / state"}, status_code=400)
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        return JSONResponse({"ok": False, "error": f"目录建不出来：{e}"}, status_code=500)
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", str(p)])
+        elif os.name == "nt":
+            os.startfile(str(p))            # type: ignore[attr-defined]
+        else:
+            subprocess.Popen(["xdg-open", str(p)])
+    except Exception as e:                                  # noqa: BLE001
+        return JSONResponse({"ok": False, "error": f"{type(e).__name__}: {e}",
+                             "path": str(p)}, status_code=500)
+    return {"ok": True, "path": str(p)}
+
+
 # ---------------------------------------------------------------------------
 # 主机推送更新（不走 GitHub）
 #   nucbox 那类机器连不上 github.com，也不该为了更新去外网拉包：更新包由主机
@@ -2350,10 +2419,16 @@ def overview_api(range: str = "7d", fresh: int = 0) -> dict:
             d = hwmod.overview(key, fresh=bool(fresh))
             if d.get("ok", True):
                 return _with_llm(d)
-            # 采集层自己报了错（EVO 上就是 os.statvfs 在 Windows 不存在）：
-            # 把它的错因带上，但照样给一份能看的机器指标，别整块空掉。
+            # 采集层自己报了错：把错因带上，但照样给一份能看的机器指标。
+            # 同时落一份完整堆栈到日志 —— 只把一句话回给前端，事后根本查不到哪一行。
+            log({"event": "overview_degraded", "range": key,
+                 "error": str(d.get("error") or "")[:300]})
             return _with_llm(_ov_fallback(key, str(d.get("error") or "采集层返回失败")))
         except Exception as e:                         # noqa: BLE001
+            import traceback                            # noqa: PLC0415
+            log({"event": "overview_error", "range": key,
+                 "error": f"{type(e).__name__}: {e}",
+                 "trace": traceback.format_exc()[-1500:]})
             return _with_llm(_ov_fallback(key, f"{type(e).__name__}: {e}"))
     return _with_llm(_ov_fallback(key, f"本机工作模块没装上（{_HW_IMPORT_ERR}）"))
 

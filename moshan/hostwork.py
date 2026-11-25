@@ -183,7 +183,9 @@ def _extra_disks(force: bool = False) -> list[dict]:
             continue
         try:
             st = os.statvfs(str(p))
-        except OSError:
+        except (OSError, AttributeError):
+            # AttributeError：Windows 上 os 根本没有 statvfs。这一条以前只 catch
+            # OSError，插入一个可推出盘就让整份 overview 降级（EVO 上真发生过）。
             continue
         total = st.f_blocks * st.f_frsize
         free = st.f_bavail * st.f_frsize
