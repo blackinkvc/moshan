@@ -3,7 +3,7 @@
 <head>
 <!-- 页面版本戳：服务端拿它跟包里那份比，旧了会自动备份并换新。
      改这个文件时把日期往后挪一格，别原地不动，否则老机器收不到。 -->
-<meta name="moshan-page" content="2026-11-25m">
+<meta name="moshan-page" content="2026-11-25n">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
@@ -5121,7 +5121,7 @@ body.v-more .more-wrap > .card[data-card="transfer"].tf-none .tf-body{height:180
       <span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7.5h.01M7 17h.01"/></svg></span>
       这台机器
       <span class="r"><span class="hw-rng" id="hwRng" role="group" aria-label="时间范围"></span>
-        <a class="hl" id="hmachGo" href="#" title="谁在吃内存 / CPU —— 进程榜在本机工作页">进程榜 ↗</a>
+        <a class="hl" id="hmachGo" href="#" title="谁在吃内存 / CPU —— 进程榜在 Agent 监控页">进程榜 ↗</a>
         <button type="button" class="hwk-gear" id="hwkGear" aria-pressed="false"
           title="这张卡下面显示哪些栏目" aria-label="卡片设置">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.1"/><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1.03 1.56V21a2 2 0 11-4 0v-.11A1.7 1.7 0 008.4 19.3a1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.7 1.7 0 004 15a1.7 1.7 0 00-1.56-1.03H2.3a2 2 0 110-4h.11A1.7 1.7 0 004 8.94a1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06A1.7 1.7 0 009.3 4.6h.1A1.7 1.7 0 0010.4 3.04V2.9a2 2 0 114 0v.11a1.7 1.7 0 001.03 1.56 1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06A1.7 1.7 0 0020 8.94v.11a1.7 1.7 0 001.56 1.03h.14a2 2 0 110 4h-.11A1.7 1.7 0 0019.4 15z"/></svg>
@@ -6135,7 +6135,7 @@ body.v-more .more-wrap > .card[data-card="transfer"].tf-none .tf-body{height:180
   <span class="eb-sep"></span>
   <button class="eb-b" id="ebGap" title="插一个空格子：布局不必每行填满">＋ 空位</button>
   <button class="eb-b" id="ebPin" title="把插件里的某张卡挂到主页上">＋ 插件卡片</button>
-  <button class="eb-b" id="ebAdd" title="把没摆在首页的卡片加回来：你自己收起的，加上本机工作 / 巡检两页的详情卡">＋ 加卡片 <b id="ebHiddenN">0</b></button>
+  <button class="eb-b" id="ebAdd" title="把没摆在首页的卡片加回来：你自己收起的，加上 Agent 监控 / 巡检两页的详情卡">＋ 加卡片 <b id="ebHiddenN">0</b></button>
   <button class="eb-b" id="ebReset">恢复默认</button>
   <button class="eb-b pri" id="ebDone">完成</button>
 </div>
@@ -7159,7 +7159,7 @@ const SMAP = {
      stops:[['60s 心跳','heartbeat 一轮'],['syscheck','探活全部服务'],
             ['拉起 · 重启','没开不算掉线'],['_巡检 · 修复记录','jsonl 追加'],
             ['报告','最近留 30 份'],['判定唯一处','importlib 复用']]},
-    {id:'host', name:'本机工作', color:'var(--c-host)', card:'本机工作', cardSub:'?v=host · 无端口', tag:'HOST',
+    {id:'host', name:'Agent 监控', color:'var(--c-host)', card:'Agent 监控', cardSub:'?v=host · 无端口', tag:'HOST',
      stops:[['会话流水','workbuddy/*.jsonl'],['hostwork 采样','三线程，并进口袋'],
             ['libproc','免 ps 取进程'],['/api/overview','25s 缓存'],
             ['六卡','机器 · 人 · Token'],['任务甘特','span 跨天']]},
@@ -7202,7 +7202,7 @@ const SMAP_OPEN = {
   ],
   panel:{
     name:'面板型',
-    items:'关注 8780 · 设备 8778 · 巡检 8774 · 传输 / 本机工作',
+    items:'关注 8780 · 设备 8778 · 巡检 8774 · 传输 / Agent 监控',
     note:'打开即全貌 —— 没有「最新一条」这回事',
   },
   cards:[
@@ -10496,7 +10496,7 @@ function hwBillForm() {
   const prov = list.find(p => p.id === f.provider) || list[0];
   if (!prov) {
     return '<div class="hwb-empty"><b>读不到供应商清单</b>'
-      + '<span>本机工作模块没接上，或 <code>billing.py</code> 抛错了。关掉再点一次「+ 录入账号」。</span>'
+      + '<span>Agent 监控模块没接上，或 <code>billing.py</code> 抛错了。关掉再点一次「+ 录入账号」。</span>'
       + '<button type="button" class="hwb-btn" data-hwbill="cancel">返回</button></div>';
   }
   const chips = list.map(p =>
@@ -15627,7 +15627,7 @@ function paintHiddenN() {
         // 带一枚来源标签：这些「没摆上首页」的卡里，既有我自己收起来的，也有
         // 本机工作 / 巡检两页的详情卡 —— 不标一下，加的时候分不清它是哪来的。
         const pg = c.getAttribute('data-hostonly');
-        const tag = pg === 'host' ? '本机工作' : (pg === 'ops' ? '巡检' : '');
+        const tag = pg === 'host' ? 'Agent 监控' : (pg === 'ops' ? '巡检' : '');
         return '<button type="button" data-show="' + c.dataset.card + '" title="点一下加到首页（跟普通卡一样能拖、能改大小）">'
           + (tag ? '<span class="hp-tag">' + tag + '</span>' : '')
           + '＋ ' + esc(c.dataset.title || c.dataset.card) + '</button>';
@@ -17494,7 +17494,7 @@ let appTimer = null;
    有端口/启动脚本的插件默认归内置插件。 */
 const APP_GROUPS = [
   ['tool', '小工具', '打开来用的：工作流水、日程、备忘录、行程、待办、便签、看图、阅读、影音…'],
-  ['plugin', '内置插件', '工作台自己的能力与运维：口袋、巡检、本机工作、关注…'],
+  ['plugin', '内置插件', '工作台自己的能力与运维：口袋、巡检、Agent 监控、关注…'],
   ['other', '其他插件', '自己写的、自带数据与页面的：Token 价格追踪、智能设备、界面评审、游戏记录、月相、玄枢号看板、股权投资分析'],
   ['third', '第三方插件', '从目录里装进来的开源程序：LocalSend、IINA、Syncthing…'],
   ['ext', '外部应用', '粘贴进来的 App / 网址']

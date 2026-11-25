@@ -3322,7 +3322,7 @@ _TITLE_TOPICS_SPEC = [
 ]
 # 泛化对象：只有当句子里没有具体词时才用它，避免「本机工作/workbuddy」盖掉「token」
 _TITLE_TOPICS_GENERIC = [
-    "本机工作", "口袋工作", "工作台", "页面", "卡片", "布局", "视图", "表格", "大小位置",
+    "agent 监控", "agent监控", "本机工作", "口袋工作", "工作台", "页面", "卡片", "布局", "视图", "表格", "大小位置",
     "任务名", "项目名称", "日期", "顶区", "agent", "workbuddy", "pocket", "trae",
 ]
 _TITLE_TOPICS = _TITLE_TOPICS_SPEC + _TITLE_TOPICS_GENERIC
