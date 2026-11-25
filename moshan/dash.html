@@ -3,7 +3,7 @@
 <head>
 <!-- 页面版本戳：服务端拿它跟包里那份比，旧了会自动备份并换新。
      改这个文件时把日期往后挪一格，别原地不动，否则老机器收不到。 -->
-<meta name="moshan-page" content="2026-11-25a3">
+<meta name="moshan-page" content="2026-11-25a5">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
@@ -2610,6 +2610,152 @@ html[data-theme="dark"] .hw-tbl .hw-mdl{color:var(--mcd,var(--tx))}
 }
 .gt-wins button.on{color:var(--pri);border-color:var(--pri-line);background:var(--pri-soft)}
 
+/* —— 母任务卡（2026-11-25）——
+   「任务清单」那张卡的母任务口径：会话按 WorkBuddy 的空间（侧栏那个分组）归并，
+   空间就是母任务，名下十几条会话是子任务，子任务再展开是那里面说过的话。
+   六个视角（列表 / 甘特 / 消耗 / 热图 / 成本 / 效率）共用一份 /api/tasks，
+   切视角只重画，不重新拉数。 */
+.card[data-card="hwtask"]{container-type:inline-size;display:flex;flex-direction:column}
+.card[data-card="hwtask"] > .hwb{padding:9px 0 0;gap:7px;overflow:hidden}
+.tsk-bar{display:flex;align-items:center;gap:8px;padding:0 13px;flex-wrap:wrap}
+.tsk-bar .wl-view button{padding:0 9px}
+.tsk-hint{margin-left:auto;font-size:9.5px;color:var(--tx3);font-variant-numeric:tabular-nums;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46%}
+.tsk-wrap{flex:1 1 auto;min-height:0;overflow:auto;padding:0 13px 10px;display:flex;
+  flex-direction:column;gap:6px;overscroll-behavior:contain}
+
+/* 列表：母任务 / 子任务 同一套网格，子任务只是缩进一格 —— 两类行的数字列要能对齐，
+   不然眼睛得重新找一遍列 */
+.tsk-tb{display:flex;flex-direction:column;gap:1px}
+.tsk-hd,.tsk-r{display:grid;align-items:center;
+  grid-template-columns:13px minmax(0,1fr) 42px 40px 42px 58px 62px;column-gap:4px}
+.tsk-hd{padding:0 2px 3px;font-size:9px;color:var(--tx3);font-weight:600;letter-spacing:.03em}
+.tsk-hd span:nth-child(n+3){text-align:right}
+.tsk-r{padding:3px 2px;border-radius:7px;cursor:default}
+.tsk-r:hover{background:var(--card2)}
+.tsk-r.tsk-m{cursor:pointer}
+.tsk-r.tsk-m.on{background:var(--card2)}
+.tsk-cv{font-size:8px;color:var(--tx3);text-align:center;transition:transform .12s var(--ease)}
+.tsk-m.on .tsk-cv{transform:rotate(90deg)}
+.tsk-cv.off{opacity:.25}
+.tsk-nm{font-size:11.5px;color:var(--tx);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;display:flex;align-items:center;gap:5px;min-width:0}
+.tsk-nm em{font-style:normal;font-size:9.5px;color:var(--tx3);font-weight:400;flex:0 0 auto}
+.tsk-r.tsk-s .tsk-nm{padding-left:13px;font-size:11px;color:var(--tx2)}
+.tsk-r.tsk-s .tsk-nm::before{content:'';flex:0 0 auto;width:6px;height:1px;
+  background:var(--line2);margin-right:1px}
+.tsk-n{font-size:10px;color:var(--tx3);text-align:right;font-variant-numeric:tabular-nums;
+  white-space:nowrap;overflow:hidden}
+.tsk-t{font-size:10.5px;color:var(--tx2);text-align:right;font-weight:560;
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.tsk-r.tsk-m .tsk-t{color:var(--tx);font-weight:660}
+.tsk-bw{height:5px;border-radius:3px;background:var(--line);overflow:hidden}
+.tsk-bw i{display:block;height:100%;border-radius:3px;background:var(--pri);opacity:.5}
+.tsk-r.tsk-m .tsk-bw i{opacity:.78}
+.tsk-r.tsk-m .tsk-bw{height:6px;background:var(--line2)}
+/* 在办 / 完成：一个小点，别加文案 —— 母任务那一行已经很挤了 */
+.tsk-dot{width:5px;height:5px;border-radius:50%;flex:0 0 auto;background:var(--line2)}
+.tsk-dot.w{background:var(--pri);box-shadow:0 0 0 2px var(--pri-soft)}
+/* 原话：整行跨过去，时间在前 */
+.tsk-k{display:flex;gap:7px;padding:2.5px 2px 2.5px 30px;font-size:10px;color:var(--tx3);
+  border-radius:6px}
+.tsk-k:hover{background:var(--card2);color:var(--tx2)}
+.tsk-k .at{flex:0 0 auto;font-variant-numeric:tabular-nums;opacity:.75;font-size:9.5px}
+.tsk-k .tx{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* 甘特：直接吃 .gt-* 那套（行 = 名字 / token / 轨道），这里只把名字列放宽、
+   子任务行缩进，母任务那根条更实 */
+.card[data-card="hwtask"] .gt-axis,
+.card[data-card="hwtask"] .gt-row{grid-template-columns:150px 62px minmax(0,1fr)}
+.card[data-card="hwtask"] .gt-name{font-size:11px;padding-left:2px}
+.card[data-card="hwtask"] .gt-row.tsk-gs .gt-name{padding-left:13px;color:var(--tx2);
+  font-size:10.5px}
+.card[data-card="hwtask"] .gt-row.tsk-gm{cursor:pointer}
+.card[data-card="hwtask"] .gt-row.tsk-gm .gt-name{font-weight:620;color:var(--tx)}
+.card[data-card="hwtask"] .gt-row.tsk-gm.on .gt-name{color:var(--pri)}
+.card[data-card="hwtask"] .gt-row.tsk-gm .gt-track .gt-cell.d{opacity:.9}
+.card[data-card="hwtask"] .gt-row.tsk-gm .gt-track .gt-cell.d.a1{opacity:.72}
+.card[data-card="hwtask"] .gt-row.tsk-gm .gt-track .gt-cell.d.a2{opacity:.82}
+.card[data-card="hwtask"] .gt-row.tsk-gm .gt-track .gt-cell.d.a3{opacity:1}
+.card[data-card="hwtask"] .gt-scroll{max-height:none;overflow:visible}
+/* 表头别再 sticky：这张卡自己不滚（滚动条在外层 .tsk-wrap），sticky 就变成
+   压在第一条母任务身上 —— 实测第一行「个人中台」整个被盖掉了 */
+.card[data-card="hwtask"] .gt-axis{position:static}
+
+/* 消耗排行：一条一条横比 */
+.tsk-rk{display:flex;flex-direction:column;gap:3px}
+.tsk-rk-r{display:grid;grid-template-columns:minmax(0,1fr) 66px;column-gap:8px;
+  align-items:center;padding:2px 0;cursor:default}
+.tsk-rk-r:hover{background:var(--card2);border-radius:6px}
+.tsk-rk-nm{font-size:11px;color:var(--tx2);display:flex;flex-direction:column;gap:3px;min-width:0}
+.tsk-rk-nm b{font-weight:560;color:var(--tx);font-size:11px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.tsk-rk-nm i{font-style:normal;font-size:8.5px;color:var(--tx3);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.tsk-rk-bb{height:5px;border-radius:3px;background:var(--line);overflow:hidden}
+.tsk-rk-bb i{display:block;height:100%;background:var(--pri);opacity:.66;border-radius:3px}
+.tsk-rk-v{font-size:10.5px;text-align:right;font-variant-numeric:tabular-nums;color:var(--tx2);
+  font-weight:600;white-space:nowrap}
+
+/* 热图：母任务 × 天 */
+.tsk-hm{display:flex;flex-direction:column;gap:2px}
+.tsk-hm-r{display:grid;grid-template-columns:112px minmax(0,1fr) 52px;column-gap:7px;
+  align-items:center}
+.tsk-hm-nm{font-size:10.5px;color:var(--tx2);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.tsk-hm-cs{display:grid;gap:1.5px}
+.tsk-hm-cs i{height:13px;border-radius:2px;background:var(--line2);opacity:.55}
+.tsk-hm-cs i.d1{background:var(--pri);opacity:.2}
+.tsk-hm-cs i.d2{background:var(--pri);opacity:.4}
+.tsk-hm-cs i.d3{background:var(--pri);opacity:.62}
+.tsk-hm-cs i.d4{background:var(--pri);opacity:.9}
+.tsk-hm-cs i.now{box-shadow:inset 0 0 0 1.2px var(--pri)}
+.tsk-hm-v{font-size:10px;text-align:right;color:var(--tx2);font-variant-numeric:tabular-nums}
+.tsk-hm-x{display:grid;grid-template-columns:112px minmax(0,1fr) 52px;column-gap:7px;
+  font-size:8.5px;color:var(--tx3);font-variant-numeric:tabular-nums}
+.tsk-hm-x .mid{position:relative;height:12px}
+
+/* 成本 / 效率：窄表，两栏数字 */
+.tsk-rows{display:flex;flex-direction:column;gap:1px}
+.tsk-row2{display:grid;align-items:center;padding:3px 2px;border-radius:7px;
+  grid-template-columns:minmax(0,1fr) 62px 58px 54px;column-gap:6px;position:relative}
+.tsk-row2:hover{background:var(--card2)}
+/* 量条铺在行底当底色：比在数字底下单起一行干净，也不跟网格抢行高 */
+.tsk-row2>.fill{position:absolute;left:0;top:1px;bottom:1px;border-radius:7px;
+  background:var(--pri);opacity:.1;pointer-events:none}
+.tsk-row2>span{position:relative}
+.tsk-row2 span{font-size:10.5px;text-align:right;font-variant-numeric:tabular-nums;
+  color:var(--tx2);white-space:nowrap;overflow:hidden}
+.tsk-row2 .nm{font-size:11px;color:var(--tx);text-align:left;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:5px}
+.tsk-row2 .nm em{font-style:normal;font-size:9px;color:var(--tx3)}
+.tsk-sec{font-size:9px;font-weight:600;letter-spacing:.04em;color:var(--tx3);
+  padding:6px 2px 2px;display:flex;align-items:center;gap:6px}
+.tsk-sec i{font-style:normal;font-weight:400;opacity:.8}
+.tsk-sw{display:inline-flex;gap:2px;margin-left:auto}
+.tsk-sw button{border:1px solid var(--line2);background:transparent;color:var(--tx3);
+  border-radius:999px;font:inherit;font-size:9.5px;padding:1px 7px;cursor:pointer}
+.tsk-sw button.on{color:var(--pri);border-color:var(--pri-line);background:var(--pri-soft)}
+
+/* 窄卡：先让「占比条」和「跨天」退场，名字和 token 留着 —— 那两个是主线 */
+@container (max-width:520px){
+  /* 窄了留「名字 + 轮数 + token」这三样；子任务数 / 跨天 / 占比条先退场 ——
+     它们能从别的视角补回来，名字被挤成「还是…」就什么都看不出来了。
+     用 nth-child 不用 nth-of-type：这一行的子元素全是 span，按类型数会数错。 */
+  .tsk-hd,.tsk-r{grid-template-columns:13px minmax(0,1fr) 40px 56px}
+  .tsk-hd>span:nth-child(3),.tsk-hd>span:nth-child(4),.tsk-hd>span:nth-child(7),
+  .tsk-r>span:nth-child(3),.tsk-r>span:nth-child(4),.tsk-r>span:nth-child(7){display:none}
+  .card[data-card="hwtask"] .gt-axis,
+  .card[data-card="hwtask"] .gt-row{grid-template-columns:104px 54px minmax(0,1fr)}
+  .tsk-hm-r,.tsk-hm-x{grid-template-columns:80px minmax(0,1fr) 44px}
+  /* 卡头那一句汇总（「7 个母任务 · 197 个子任务 · 6.99B」）在手机上会把标题
+     挤成两行、范围芯片切掉半个。它说的是整张卡的总量，卡里本来就看得见，
+     窄卡里先收掉 —— 标题和范围不能少。 */
+  #tskStat{display:none}
+  .tsk-hint{max-width:none}
+}
+
+
 @media(max-width:880px){
   /* 外置盘那条在窄屏收掉剩余空间文字，只留名字 + 百分比 + 条 */
   .hr-ext .free{display:none}
@@ -5169,6 +5315,35 @@ body.v-more .more-wrap > .card[data-card="transfer"].tf-none .tf-body{height:180
           <button type="button" class="atk-lnk" id="atkSrc">数据源</button></span>
         <button type="button" class="wl-more" id="atkMore">展开全部</button>
       </div>
+    </div>
+  </section>
+
+  <!-- 母任务（2026-11-25，用户点名的第五张）：紧挨着 Agent 监控那张放。
+       数据跟「任务清单」那一档是同一份 /api/tasks，但口径不同 —— 那边一行一条
+       会话；这边先按 WorkBuddy 的**空间**归并（个人中台 / 墨山插件 / 新闻摘录 …，
+       即侧栏那个分组，用户叫它「母任务」），母任务一行，点开是它名下那十几条
+       会话（子任务），再点开是那条会话里说过的话。六个视角共用一份数据：
+       列表 / 甘特 / 消耗 / 热图 / 成本 / 效率 —— 切视角不重新拉接口。 -->
+  <section class="card" data-card="hwtask" data-hostonly="host" data-title="母任务" data-h="9">
+    <div class="card-h">
+      <span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h7M4 12h7M4 17.5h7"/><path d="M14 6.5h6M14 12h6M14 17.5h6" opacity=".55"/></svg></span>
+      母任务
+      <span class="r"><span class="hw-rng" id="tskRng" role="group" aria-label="时间范围"></span>
+        <span id="tskStat">—</span></span>
+    </div>
+    <div class="hwb tsk-body">
+      <div class="tsk-bar">
+        <div class="wl-view" id="tskView" role="group" aria-label="视角">
+          <button type="button" data-tskv="list" class="on" aria-pressed="true">列表</button>
+          <button type="button" data-tskv="gantt" aria-pressed="false">甘特</button>
+          <button type="button" data-tskv="rank" aria-pressed="false">消耗</button>
+          <button type="button" data-tskv="heat" aria-pressed="false">热图</button>
+          <button type="button" data-tskv="cost" aria-pressed="false">成本</button>
+          <button type="button" data-tskv="eff" aria-pressed="false">效率</button>
+        </div>
+        <span class="tsk-hint" id="tskHint"></span>
+      </div>
+      <div class="tsk-wrap" id="tskBody"></div>
     </div>
   </section>
 
@@ -9710,6 +9885,577 @@ function renderGantt(tasks) {
     + '<span class="gt-ticks" style="padding-right:13px">' + ticks + '</span></div>'
     + body;
 }
+/* ================= 母任务（2026-11-25）=================
+   用户点名的第五张卡，紧挨着 Agent 监控那张。数据源跟「任务清单」那一档完全一样
+   （/api/tasks），只是换一个口径：那边一行一条**会话**；这边先按 WorkBuddy 的
+   **空间**归并成母任务，点开是它名下那十几条会话（子任务），再点开是那条会话里
+   说过的话。
+
+   为什么空间就是母任务：会话表里只有 space_id 这一层归属（cwd 永远是
+   ~/.workbuddy/projects/<slug>，`_session_index` 里那条注释写着），空间名就是
+   侧栏那个分组名。用户 18:20 说得很清楚：「个人中台分组下面有 ui调整 / 虫巢思维
+   等 10 几个子任务，个人中台分组就是母任务」。没有 space 的老会话归「未归属」，
+   别家的（TRAE）再带个 ·TRAE 后缀，免得两个桶混在一起。
+
+   六个视角共用一份数据，切视角只重画、不重新拉接口（拉一次 /api/tasks?range=
+   要扫会话库，切个 tab 就重扫一遍是白花的）。 */
+const TSK = { at: 0, data: null, err: '', loading: false, loadingAt: 0,
+  view: 'list', range: '30d', open: new Set(), kid: new Set(), rank: 'mom', cst: 'mom' };
+const TSK_RANGES = [['7d', '7 天'], ['30d', '30 天'], ['all', '全部']];
+const TSK_VIEWS = { list: '列表', gantt: '甘特', rank: '消耗', heat: '热图',
+  cost: '成本', eff: '效率' };
+try {
+  const v = localStorage.getItem('dash_tskv');
+  if (v && TSK_VIEWS[v]) TSK.view = v;
+  const r = localStorage.getItem('dash_tskr');
+  if (r && TSK_RANGES.some(x => x[0] === r)) TSK.range = r;
+} catch (e) { /* 隐身模式：用默认值就行 */ }
+
+/* 序号：切范围时上一次请求可能还在路上。以前用「单飞锁」挡重复请求，结果连点
+   7 天 → 全部 时第二次直接被锁吃掉，页面上停在上一档的数（2026-11-25 实测：
+   两档都显示 131 条）。现在谁后发谁算数，回来的旧结果直接丢。 */
+let tskSeq = 0;
+async function loadTSK(force) {
+  if (!force && TSK.at && Date.now() - TSK.at < 30000) return;
+  const id = ++tskSeq;
+  const range = TSK.range;
+  TSK.loading = true;
+  TSK.loadingAt = Date.now();
+  let data = null, err = '';
+  try {
+    data = await api('/api/tasks?range=' + range, { timeout: 25000 });
+    if (data && data.ok === false) throw new Error(data.error || '接口报错');
+  } catch (e) {
+    err = /fetch|Network|load failed|超时/i.test(e.message)
+      ? '读不到任务清单：' + e.message : e.message;
+  }
+  if (id !== tskSeq) return;          // 已经有更新的一次在跑：这份结果作废
+  TSK.data = err ? null : data;
+  TSK.err = err;
+  TSK.at = Date.now();
+  TSK.loading = false;
+  renderTSK();
+}
+
+function tskToday() {
+  const d = new Date(), p = x => String(x).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+
+/* 母任务：把同空间的会话并一桶。
+   所有数字都**只算这个窗口**：切到 7 天就该看到 7 天的量。以前直接拿任务对象上的
+   `tok` / `asks`（那是这条会话一辈子的累计），换档时数字纹丝不动，看着像没生效
+   （2026-11-25 实测 7 天和 30 天都是 8.37B）。所以这里先按 win 把每天的量筛一遍，
+   再把筛出来的 wtok / wasks / wdays 挂到任务副本上，视图只认这三个字段。 */
+function tskMothers(win) {
+  const groups = (TSK.data && TSK.data.groups) || [];
+  const inWin = d => (!win || !d) ? true : (d >= win.from && d <= win.to);
+  const map = new Map();
+  groups.forEach(g => (g.tasks || []).forEach(t => {
+    const td = t.tok_day || {};
+    const days = ((t.span && t.span.days) || []).filter(x => x && x.d && inWin(x.d));
+    let wtok = 0;
+    const wday = new Set();
+    Object.keys(td).forEach(d => {
+      const v = Number(td[d]) || 0;
+      if (!v || !inWin(d)) return;
+      wtok += v;
+      wday.add(d);
+    });
+    days.forEach(x => wday.add(x.d));
+    const wasks = days.length
+      ? days.reduce((a, x) => a + (Number(x.a) || 1), 0)
+      : (wtok ? (Number(t.asks) || 0) : 0);
+    if (!wtok && !wday.size) return;         // 这个窗口里没动过：不占一行
+    const sp0 = String(t.space || '').trim();
+    const name = sp0 || ('未归属' + (g.agent === 'WorkBuddy' ? '' : ' · ' + g.agent));
+    let m = map.get(name);
+    if (!m) {
+      m = { name: name, agent: g.agent, subs: [], tok: 0, tin: 0, tout: 0, cached: 0,
+        asks: 0, working: 0, done: 0, tokDay: {}, act: {}, from: '', to: '', last: '' };
+      map.set(name, m);
+    }
+    const cp = Object.assign({}, t, { wtok: wtok, wasks: wasks, wdays: wday.size,
+      wtin: 0, wtout: 0 });
+    m.subs.push(cp);
+    m.tok += wtok;
+    m.asks += wasks;
+    if (t.state === 'working') m.working += 1;
+    else if (t.state) m.done += 1;
+    Object.keys(td).forEach(d => {
+      const v = Number(td[d]) || 0;
+      if (!v || !inWin(d)) return;
+      m.tokDay[d] = (m.tokDay[d] || 0) + v;
+    });
+    days.forEach(x => { m.act[x.d] = (m.act[x.d] || 0) + (Number(x.a) || 1); });
+  }));
+  const out = [];
+  map.forEach(m => {
+    // 去重：同一天可能两边都有（有活动、也有 token 账），concat 会把天数数两遍
+    const ds = Array.from(new Set(Object.keys(m.act).concat(Object.keys(m.tokDay))
+      .filter(Boolean))).sort();
+    m.days = ds;
+    m.nDays = ds.length;
+    m.from = ds[0] || '';
+    m.to = ds[ds.length - 1] || '';
+    m.subs.sort((a, b) => (b.wtok || 0) - (a.wtok || 0)
+      || String(a.name).localeCompare(String(b.name)));
+    out.push(m);
+  });
+  out.sort((a, b) => (b.tok - a.tok) || (b.nDays - a.nDays)
+    || String(a.name).localeCompare(String(b.name)));
+  return out;
+}
+
+/* 窗口：7 天 / 30 天取日历天；「全部」取数据里最早的活跃日（最多回看 120 天，
+   再长一根柱子不到 2px，画出来只是噪音） */
+function tskWin0() {
+  const today = tskToday();
+  if (TSK.range === '7d') return { from: ymdAdd(today, -6), to: today };
+  if (TSK.range === '30d') return { from: ymdAdd(today, -29), to: today };
+  let from = today;
+  ((TSK.data && TSK.data.groups) || []).forEach(g => (g.tasks || []).forEach(t => {
+    const td = t.tok_day || {};
+    Object.keys(td).forEach(d => {
+      if ((Number(td[d]) || 0) > 0 && d < from) from = d;
+    });
+    ((t.span && t.span.days) || []).forEach(x => {
+      if (x && x.d && x.d < from) from = x.d;
+    });
+  }));
+  if (ymdOffset(today, from) > 119) from = ymdAdd(today, -119);
+  return { from: from, to: today };
+}
+
+function tskTok(v) { return Number(v) > 0 ? hwTokN(v) : '—'; }
+/* 一格的颜色档：按这一屏所有「有量的格子」的四分位分 4 档 ——
+   固定阈值在这儿没用（不同的人 token 差三个数量级） */
+function tskQuart(vals) {
+  const s = vals.filter(v => v > 0).sort((a, b) => a - b);
+  if (!s.length) return [1, 2, 3];
+  const q = p => s[Math.min(s.length - 1, Math.floor(s.length * p))];
+  return [q(0.25), q(0.55), q(0.82)];
+}
+
+function renderTSK() {
+  const box = $('tskBody'), stat = $('tskStat'), hint = $('tskHint');
+  if (!box) return;
+  // 视角 / 范围芯片（静态 HTML 里只放了列表那几颗，范围是这儿画的）
+  const rng = $('tskRng');
+  if (rng && !rng.dataset.painted) {
+    rng.innerHTML = TSK_RANGES.map(r =>
+      '<button type="button" class="hw-rg' + (r[0] === TSK.range ? ' on' : '') + '"'
+      + ' data-tskr="' + r[0] + '" aria-pressed="' + (r[0] === TSK.range) + '">'
+      + r[1] + '</button>').join('');
+    rng.dataset.painted = '1';
+  }
+  const vb = $('tskView');
+  if (vb) [].forEach.call(vb.querySelectorAll('[data-tskv]'), x => {
+    const on = x.getAttribute('data-tskv') === TSK.view;
+    x.classList.toggle('on', on);
+    x.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  if (TSK.loading && !TSK.data) {
+    box.innerHTML = '<div class="hr-empty"><span>正在读会话库…</span></div>';
+    if (stat) stat.textContent = '—';
+    return;
+  }
+  if (TSK.err && !TSK.data) {
+    box.innerHTML = '<div class="hr-empty"><span>' + esc(TSK.err) + '</span></div>';
+    if (stat) stat.textContent = '—';
+    return;
+  }
+  const win = tskWin0();
+  const ms = tskMothers(win);
+  if (!ms.length) {
+    box.innerHTML = '<div class="hr-empty"><span>这个范围里还没有任务</span></div>';
+    if (stat) stat.textContent = '—';
+    return;
+  }
+  const nSub = ms.reduce((a, m) => a + m.subs.length, 0);
+  const tokAll = ms.reduce((a, m) => a + m.tok, 0);
+  if (stat) {
+    stat.textContent = ms.length + ' 个母任务 · ' + nSub + ' 个子任务'
+      + (tokAll ? ' · ' + hwTokN(tokAll) : '');
+  }
+  let html = '', h = '';
+  if (TSK.view === 'list') { const r = tskList(ms); html = r[0]; h = r[1]; }
+  else if (TSK.view === 'gantt') { const r = tskGantt(ms, win); html = r[0]; h = r[1]; }
+  else if (TSK.view === 'rank') { const r = tskRank(ms); html = r[0]; h = r[1]; }
+  else if (TSK.view === 'heat') { const r = tskHeat(ms, win); html = r[0]; h = r[1]; }
+  else if (TSK.view === 'cost') { const r = tskCost(ms); html = r[0]; h = r[1]; }
+  else { const r = tskEff(ms); html = r[0]; h = r[1]; }
+  // 整页 60 秒刷新一次会把 body 重画：不接住滚动位置的话，正滚到一半就被弹回顶部
+  const sc = box.scrollTop;
+  box.innerHTML = html;
+  box.scrollTop = sc;
+  if (hint) hint.textContent = h || '';
+}
+
+/* ---- 1. 列表：母任务 → 子任务 → 说过的话 ---- */
+function tskList(ms) {
+  const max = Math.max.apply(null, ms.map(m => m.tok).concat([1]));
+  let h = '<div class="tsk-tb"><div class="tsk-hd"><span></span><span>母任务 / 子任务</span>'
+    + '<span>子任务</span><span>跨天</span><span>轮数</span><span>token</span>'
+    + '<span>占比</span></div>';
+  ms.forEach(m => {
+    const open = TSK.open.has(m.name);
+    const tok = m.tok;
+    h += '<div class="tsk-r tsk-m' + (open ? ' on' : '') + '" data-tskm="' + esc(m.name) + '">'
+      + '<span class="tsk-cv' + (m.subs.length ? '' : ' off') + '">▶</span>'
+      + '<span class="tsk-nm"><i class="tsk-dot' + (m.working ? ' w' : '') + '"'
+      + (m.working ? ' title="还有 ' + m.working + ' 条在办"' : '') + '></i>'
+      + esc(m.name) + (m.agent === 'WorkBuddy' ? '' : '<em>' + esc(m.agent) + '</em>')
+      + (m.working ? '<em>在办 ' + m.working + '</em>' : '') + '</span>'
+      + '<span class="tsk-n">' + m.subs.length + '</span>'
+      + '<span class="tsk-n">' + (m.nDays || 0) + ' 天</span>'
+      + '<span class="tsk-n">' + hrN(m.asks) + '</span>'
+      + '<span class="tsk-t">' + esc(tskTok(tok)) + '</span>'
+      + '<span class="tsk-bw"><i style="width:' + (tok / max * 100).toFixed(1) + '%"></i></span>'
+      + '</div>';
+    if (!open) return;
+    m.subs.forEach(t => {
+      const key = m.name + '\u0001' + (t.name || '');
+      const kopen = TSK.kid.has(key);
+      const kids = t.children || [];
+      const tt = Number(t.wtok) || 0;
+      h += '<div class="tsk-r tsk-s" data-tsks="' + esc(key) + '"'
+        + (kids.length ? '' : ' title="这条没有对话正文（TRAE 对话库加密 / 云端会话）"') + '>'
+        + '<span class="tsk-cv' + (kids.length ? '' : ' off') + '"'
+        + (kopen ? ' style="transform:rotate(90deg)"' : '') + '>▶</span>'
+        + '<span class="tsk-nm" title="' + esc(t.name || '') + '">' + esc(t.name || '—') + '</span>'
+        + '<span class="tsk-n"></span>'
+        + '<span class="tsk-n">' + ((t.wdays || 0) || '') + '</span>'
+        + '<span class="tsk-n">' + hrN(t.wasks || 0) + '</span>'
+        + '<span class="tsk-t" title="输入 ' + hwTokN(t.tok_in || 0) + ' / 输出 '
+        + hwTokN(t.tok_out || 0) + ' / 缓存命中 ' + hwTokN(t.tok_cached || 0) + '">'
+        + esc(tskTok(tt)) + '</span>'
+        + '<span class="tsk-bw"><i style="width:'
+        + (max ? (tt / max * 100).toFixed(1) : 0) + '%"></i></span></div>';
+      if (!kopen) return;
+      const shown = kids.slice(-8);
+      h += shown.length
+        ? shown.map(k => '<div class="tsk-k"><span class="at">' + esc(k.at || '') + '</span>'
+          + '<span class="tx">' + esc(k.text || '') + '</span></div>').join('')
+        : '<div class="tsk-k"><span class="tx">这条的对话没留下来（每条只留最近 14 段）</span></div>';
+    });
+  });
+  h += '</div>';
+  return [h, '点母任务看子任务 · 点子任务看它里面说过的话'];
+}
+
+/* ---- 2. 甘特：母任务一根汇总条，展开后子任务各一根 ---- */
+function tskGantt(ms, win) {
+  const today = tskToday();
+  const N = ymdOffset(win.to, win.from) + 1;
+  if (N < 1) return ['<div class="hr-empty"><span>这个范围里没有活着的日子</span></div>', ''];
+  const inWin = ms.filter(m => {
+    if (m.to < win.from) return false;
+    if (m.tok > 0) return true;
+    // 没 token 账的（TRAE 那种）：窗口里得有动过的日子才画，否则一排空行只是噪音
+    return Object.keys(m.act).some(d => d >= win.from);
+  });
+  if (!inWin.length) {
+    return ['<div class="hr-empty"><span>这个范围里没有活动</span></div>', ''];
+  }
+  const all = [];
+  inWin.forEach(m => {
+    Object.keys(m.tokDay).forEach(d => { if (d >= win.from) all.push(m.tokDay[d]); });
+  });
+  const [q1, q2, q3] = tskQuart(all);
+  const lv = v => (v >= q3 ? ' a3' : v >= q2 ? ' a2' : v >= q1 ? ' a1' : '');
+  const cols = 'display:grid;grid-template-columns:repeat(' + N + ',minmax(4px,1fr))';
+  // 轴刻度：跟任务清单那张同一个规矩（格太窄塞不下字，用绝对定位）
+  const step = N <= 16 ? 1 : N <= 40 ? 5 : 10;
+  let ticks = '';
+  for (let i = 0; i < N; i += step) {
+    const d = ymdAdd(win.from, i);
+    if (!i && N > 16) continue;
+    const pct = N === 1 ? 0 : (i / N) * 100;
+    ticks += '<span style="left:' + pct.toFixed(3) + '%;transform:translateX('
+      + (pct > 88 ? '-100%' : '-8%') + ');' + (d.slice(8) === '01'
+        ? 'color:var(--tx2);font-weight:600' : '') + '">'
+      + d.slice(5).replace('-', '/') + '</span>';
+  }
+  let body = '';
+  inWin.forEach(m => {
+    const open = TSK.open.has(m.name);
+    const cells = [];
+    for (let i = 0; i < N; i++) {
+      const d = ymdAdd(win.from, i);
+      const v = m.tokDay[d] || 0;
+      const act = m.act[d] || 0;
+      let cls = 'gt-cell';
+      const filled = v > 0 || act;
+      if (v > 0) cls += ' d' + lv(v);
+      else if (act) cls += ' f';            // 动过但没 token 账：画斜纹，不冒充精确
+      // 甘特不标「今天」：这一屏最后一天就是今天（轴上也写着），给每条都套一圈
+      // 描边反而在空日子上留一堆白框 —— 实测像缺数据。热图那边才需要这个标记。
+      cells.push('<i class="' + cls + '"></i>');
+    }
+    body += '<div class="gt-row tsk-gm' + (open ? ' on' : '') + '" data-tskm="'
+      + esc(m.name) + '" title="' + esc(m.name + '\n' + (m.from || '—') + ' → '
+        + (m.to || '—') + ' · ' + m.nDays + ' 天有记录 · ' + m.subs.length + ' 个子任务') + '">'
+      + '<span class="gt-name">' + esc(m.name) + '</span>'
+      + '<span class="gt-tok' + (m.tok >= 1e8 ? ' b' : '') + '">' + esc(tskTok(m.tok)) + '</span>'
+      + '<span class="gt-track" style="' + cols + '">' + cells.join('') + '</span></div>';
+    if (!open) return;
+    m.subs.forEach(t => {
+      const td = t.tok_day || {};
+      const sp = t.span || {};
+      const cnt = {};
+      ((sp.days) || []).forEach(x => { if (x && x.d) cnt[x.d] = Number(x.a) || 1; });
+      const cs = [];
+      for (let i = 0; i < N; i++) {
+        const d = ymdAdd(win.from, i);
+        const v = Number(td[d]) || 0;
+        let cls = 'gt-cell';
+        if (v > 0) cls += ' d' + lv(v);
+        else if (cnt[d]) cls += ' f';
+        cs.push('<i class="' + cls + '"></i>');
+      }
+      body += '<div class="gt-row tsk-gs' + (TSK.kid.has(m.name + '\u0001' + (t.name || ''))
+        ? ' on' : '') + '" data-tsks="' + esc(m.name + '\u0001' + (t.name || '')) + '" title="'
+        + esc((t.name || '') + '\n' + (sp.from || '—') + ' → ' + (sp.to || '—')
+          + (t.wdays ? ' · 这个范围 ' + t.wdays + ' 天' : '')
+          + '\n这个范围 ' + hwTokN(t.wtok || 0) + ' token')
+        + '"><span class="gt-name">' + esc(t.name || '—') + '</span>'
+        + '<span class="gt-tok">' + esc(tskTok(t.wtok)) + '</span>'
+        + '<span class="gt-track" style="' + cols + '">' + cs.join('') + '</span></div>';
+    });
+  });
+  const h = '<div class="gt"><div class="gt-axis"><span class="lab">'
+    + esc(win.from.slice(5)) + ' → ' + esc(win.to.slice(5)) + ' · ' + N + ' 天</span>'
+    + '<span class="gt-th">合计</span>'
+    + '<span class="gt-ticks" style="padding-right:0">' + ticks + '</span></div>'
+    + body + '</div>';
+  return [h, '色深 = 当天烧的 token · 斜纹 = 动过但没 token 账 · 点母任务展开子任务'];
+}
+
+/* ---- 3. 消耗：一条一条横比（母任务 / 子任务两档） ---- */
+function tskRank(ms) {
+  const bySub = TSK.rank === 'sub';
+  const rows = [];
+  if (bySub) {
+    ms.forEach(m => m.subs.forEach(t => rows.push({
+      name: t.name || '—', mom: m.name, tok: Number(t.wtok) || 0,
+      asks: Number(t.wasks) || 0, days: Number(t.wdays) || 0 })));
+  } else {
+    ms.forEach(m => rows.push({ name: m.name, mom: '', tok: m.tok, asks: m.asks,
+      days: m.nDays, subs: m.subs.length }));
+  }
+  rows.sort((a, b) => b.tok - a.tok);
+  const max = Math.max.apply(null, rows.map(r => r.tok).concat([1]));
+  const list = rows.slice(0, 14);
+  let h = '<div class="tsk-sec">按 token 总量'
+    + '<span class="tsk-sw"><button type="button" data-tskrk="mom" class="'
+    + (bySub ? '' : 'on') + '">母任务</button><button type="button" data-tskrk="sub" class="'
+    + (bySub ? 'on' : '') + '">子任务</button></span></div><div class="tsk-rk">';
+  list.forEach(r => {
+    h += '<div class="tsk-rk-r" title="' + esc(r.name + (r.mom ? '\n归属：' + r.mom : '')
+      + '\n' + hrN(r.asks) + ' 轮 · ' + r.days + ' 天 · ' + hwTokN(r.tok) + ' token') + '">'
+      + '<span class="tsk-rk-nm"><b>' + esc(r.name) + '</b>'
+      + '<i>' + esc((r.mom ? r.mom + ' · ' : '') + hrN(r.asks) + ' 轮 · ' + r.days
+        + ' 天') + '</i></span>'
+      + '<span class="tsk-rk-v">' + esc(tskTok(r.tok)) + '</span>'
+      + '<span class="tsk-rk-bb" style="grid-column:1/-1;margin-top:2px"><i style="width:'
+      + (r.tok / max * 100).toFixed(1) + '%"></i></span></div>';
+  });
+  h += '</div>';
+  if (rows.length > list.length) {
+    h += '<div class="tsk-sec" style="justify-content:center">还有 ' + (rows.length - list.length)
+      + ' 条没画（按量排在后头）</div>';
+  }
+  return [h, (bySub ? '子任务' : '母任务') + ' ' + rows.length + ' 条 · 合计 '
+    + hwTokN(rows.reduce((a, r) => a + r.tok, 0)) + ' token'];
+}
+
+/* ---- 4. 热图：母任务 × 天，色深 = 当天 token ---- */
+function tskHeat(ms, win) {
+  const today = tskToday();
+  const N = ymdOffset(win.to, win.from) + 1;
+  const rows = ms.filter(m => m.tok > 0 || m.nDays);
+  if (!rows.length || N < 1) return ['<div class="hr-empty"><span>这个范围里没有活动</span></div>', ''];
+  const vals = [];
+  rows.forEach(m => Object.keys(m.tokDay).forEach(d => vals.push(m.tokDay[d])));
+  const [q1, q2, q3] = tskQuart(vals);
+  const lv = v => (v >= q3 ? 'd4' : v >= q2 ? 'd3' : v >= q1 ? 'd2' : 'd1');
+  const cols = 'grid-template-columns:repeat(' + N + ',minmax(3px,1fr))';
+  let h = '<div class="tsk-hm">';
+  rows.slice(0, 9).forEach(m => {
+    let cs = '';
+    for (let i = 0; i < N; i++) {
+      const d = ymdAdd(win.from, i);
+      const v = m.tokDay[d] || 0;
+      const act = m.act[d] || 0;
+      // 空格子不描「今天」的框：那会变成一个白方块，比没数据还显眼
+      cs += '<i class="' + (v > 0 ? lv(v) : act ? 'd1' : '')
+        + ((v || act) && d === today ? ' now' : '')
+        + '" title="' + esc(m.name + ' · ' + d + (v ? '\n' + hwTokN(v) + ' token'
+          : act ? '\n动过 ' + act + ' 轮（没 token 账）' : '')) + '"></i>';
+    }
+    h += '<div class="tsk-hm-r"><span class="tsk-hm-nm">' + esc(m.name) + '</span>'
+      + '<span class="tsk-hm-cs" style="' + cols + '">' + cs + '</span>'
+      + '<span class="tsk-hm-v">' + esc(tskTok(m.tok)) + '</span></div>';
+  });
+  h += '<div class="tsk-hm-x"><span></span><span class="mid"><span style="position:absolute;'
+    + 'left:0">' + esc(win.from.slice(5)) + '</span><span style="position:absolute;right:0">'
+    + esc(win.to.slice(5)) + '</span></span><span></span></div></div>';
+  if (rows.length > 9) {
+    h += '<div class="tsk-sec">还有 ' + (rows.length - 9) + ' 个母任务（token 少，没画）</div>';
+  }
+  return [h, '一格 = 一天 · 颜色越深当天烧得越多 · 右框 = 今天'];
+}
+
+/* ---- 5. 成本：token 折成 ¥（按本窗口混合单价）+ 僵尸任务 ---- */
+function tskCost(ms) {
+  const money = (HR.data || {}).money || {};
+  let cost = 0, tok = 0;
+  (money.rows || []).forEach(r => {
+    if (r && r.cost != null) { cost += Number(r.cost) || 0; tok += Number(r.total) || 0; }
+  });
+  const rate = tok > 0 ? cost / tok : 0;      // ¥ / token
+  const cur = money.currency || '¥';
+  const bySub = TSK.cst === 'sub';
+  const rows = [];
+  if (bySub) {
+    ms.forEach(m => m.subs.forEach(t => rows.push({ name: t.name || '—', mom: m.name,
+      tok: Number(t.wtok) || 0, asks: Number(t.wasks) || 0, last: t.span && t.span.to })));
+  } else {
+    ms.forEach(m => rows.push({ name: m.name, mom: '', tok: m.tok, asks: m.asks,
+      last: m.to, subs: m.subs.length }));
+  }
+  rows.sort((a, b) => b.tok - a.tok);
+  const today = tskToday();
+  // 僵尸：在办（state=working）但 7 天没动 —— 这是「忘了收尾」，不是「还在做」
+  const zombies = [];
+  ms.forEach(m => m.subs.forEach(t => {
+    if (t.state !== 'working') return;
+    const last = (t.span && t.span.to) || '';
+    if (last && ymdOffset(today, last) >= 7) {
+      zombies.push({ name: t.name || '—', mom: m.name, days: ymdOffset(today, last),
+        tok: Number(t.wtok) || 0 });
+    }
+  }));
+  const money1 = v => cur + (v >= 100 ? Math.round(v) : v >= 1 ? v.toFixed(1) : v.toFixed(2));
+  let h = '<div class="tsk-sec">按 token 折' + (rate ? '（混合单价 ' + cur
+    + (rate * 1e6).toFixed(2) + ' / 百万 token）' : '（没价表，只有 token）')
+    + '<span class="tsk-sw"><button type="button" data-tskcst="mom" class="'
+    + (bySub ? '' : 'on') + '">母任务</button><button type="button" data-tskcst="sub" class="'
+    + (bySub ? 'on' : '') + '">子任务</button></span></div>';
+  h += '<div class="tsk-rows">';
+  const maxC = rows.length ? rows[0].tok : 1;     // 已按量排过序
+  rows.slice(0, 10).forEach(r => {
+    h += '<div class="tsk-row2" title="' + esc(r.name + '\n' + hwTokN(r.tok) + ' token · '
+      + hrN(r.asks) + ' 轮') + '"><i class="fill" style="width:'
+      + (r.tok / Math.max(1, maxC) * 100).toFixed(1) + '%"></i>'
+      + '<span class="nm">' + esc(r.name) + '</span>'
+      + '<span>' + esc(rate && r.tok ? money1(r.tok * rate) : '—') + '</span>'
+      + '<span>' + esc(tskTok(r.tok)) + '</span>'
+      + '<span>' + esc(hrN(r.asks) + ' 轮') + '</span></div>';
+  });
+  h += '</div>';
+  h += '<div class="tsk-sec">在办但 7 天没动 <i>' + (zombies.length || '没有') + '</i></div>';
+  if (zombies.length) {
+    h += '<div class="tsk-rows">';
+    zombies.sort((a, b) => b.days - a.days).slice(0, 6).forEach(z => {
+      h += '<div class="tsk-row2" title="' + esc(z.name + '\n归属 ' + z.mom) + '">'
+        + '<span class="nm">' + esc(z.name) + '<em>' + esc(z.mom) + '</em></span>'
+        + '<span>' + esc(z.days + ' 天没动') + '</span>'
+        + '<span>' + esc(tskTok(z.tok)) + '</span><span></span></div>';
+    });
+    h += '</div>';
+  }
+  return [h, rate ? ('单价取自计费卡 · ' + cur + (rate * 1e6).toFixed(2) + '/M token')
+    : '没配价表，只显示 token'];
+}
+
+/* ---- 6. 效率：每条多少 token / 每天多少 token ---- */
+function tskEff(ms) {
+  const rows = ms.filter(m => m.tok > 0).map(m => ({
+    name: m.name, tok: m.tok, asks: m.asks || 0, days: m.nDays || 1,
+    perAsk: m.asks ? m.tok / m.asks : 0, perDay: m.tok / Math.max(1, m.nDays || 1),
+    subs: m.subs.length,
+  }));
+  if (!rows.length) return ['<div class="hr-empty"><span>还没有 token 账</span></div>', ''];
+  const maxA = Math.max.apply(null, rows.map(r => r.perAsk).concat([1]));
+  const maxD = Math.max.apply(null, rows.map(r => r.perDay).concat([1]));
+  rows.sort((a, b) => b.perAsk - a.perAsk);
+  let h = '<div class="tsk-rows"><div class="tsk-row2" style="color:var(--tx3);font-size:9px">'
+    + '<span class="nm">母任务</span><span>每条 token</span><span>每天 token</span>'
+    + '<span>活跃天</span></div>';
+  rows.slice(0, 9).forEach(r => {
+    h += '<div class="tsk-row2" title="' + esc(r.name + '\n每条 ' + hwTokN(r.perAsk)
+      + ' token（' + hrN(r.asks) + ' 轮）\n每天 ' + hwTokN(r.perDay)
+      + ' token（' + r.days + ' 天）\n' + r.subs + ' 个子任务') + '">'
+      + '<span class="nm">' + esc(r.name) + '</span>'
+      + '<span>' + esc(hwTokN(r.perAsk)) + '</span>'
+      + '<span>' + esc(hwTokN(r.perDay)) + '</span>'
+      + '<span>' + esc(r.days + ' 天') + '</span></div>';
+  });
+  h += '</div>';
+  // 早就画过一版「两条迷你条」，问题是两条各自归一 —— 左边的条跟右边的条
+  // 长度没有可比性，看图的人却一定会去比。表格里两个数已经并排写着了，
+  // 这里只补一句「谁最贵」，不再画第二条轴。
+  const top = rows[0];
+  h += '<div class="tsk-sec">最贵的一条：' + esc(top.name) + ' <i>每条 '
+    + esc(hwTokN(top.perAsk)) + ' token · 共 ' + esc(hrN(top.asks)) + ' 轮</i></div>';
+  return [h, '每条 = token ÷ 轮数 · 每天 = token ÷ 活跃天（同一个母任务两种节奏）'];
+}
+
+/* 交互：视角 / 范围 / 展开折叠 / 母↔子切换，全挂 document（卡片会被页面视图搬走） */
+document.addEventListener('click', e => {
+  const t = e.target;
+  if (!t || !t.closest) return;
+  const v = t.closest('[data-tskv]');
+  if (v) {
+    const k = v.getAttribute('data-tskv');
+    if (TSK_VIEWS[k]) {
+      TSK.view = k;
+      try { localStorage.setItem('dash_tskv', k); } catch (e2) { }
+      renderTSK();
+    }
+    return;
+  }
+  const r = t.closest('[data-tskr]');
+  if (r) {
+    const k = r.getAttribute('data-tskr');
+    if (k !== TSK.range) {
+      TSK.range = k;
+      try { localStorage.setItem('dash_tskr', k); } catch (e2) { }
+      const rng = $('tskRng');
+      if (rng) {
+        delete rng.dataset.painted;
+        [].forEach.call(rng.querySelectorAll('[data-tskr]'), x => {
+          const on = x.getAttribute('data-tskr') === k;
+          x.classList.toggle('on', on);
+          x.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+        rng.dataset.painted = '1';
+      }
+      TSK.at = 0;              // 换范围必须重新拉：range 是后端的参数
+      loadTSK(true);
+    }
+    return;
+  }
+  const rk = t.closest('[data-tskrk]');
+  if (rk) { TSK.rank = rk.getAttribute('data-tskrk') === 'sub' ? 'sub' : 'mom'; renderTSK(); return; }
+  const cs = t.closest('[data-tskcst]');
+  if (cs) { TSK.cst = cs.getAttribute('data-tskcst') === 'sub' ? 'sub' : 'mom'; renderTSK(); return; }
+  const sub = t.closest('[data-tsks]');
+  if (sub) {
+    const k = sub.getAttribute('data-tsks');
+    if (TSK.kid.has(k)) TSK.kid.delete(k); else TSK.kid.add(k);
+    renderTSK();
+    return;
+  }
+  const m = t.closest('[data-tskm]');
+  if (m) {
+    const k = m.getAttribute('data-tskm');
+    if (TSK.open.has(k)) TSK.open.delete(k); else TSK.open.add(k);
+    renderTSK();
+  }
+});
 document.addEventListener('click', e => {
   const b = e.target.closest('.whost [data-agent]');
   if (!b) return;
@@ -9717,8 +10463,7 @@ document.addEventListener('click', e => {
   ATK.expanded = false;
   ATK.open.clear();
   renderTasks();
-});
-$('atkList').addEventListener('click', e => {
+});$('atkList').addEventListener('click', e => {
   const row = e.target.closest('[data-atk]');
   if (!row) return;
   const key = row.dataset.atk;
@@ -13201,6 +13946,10 @@ function renderHW() {
   // 每条 token / 每条耗时）：吃 /api/workstat，一次拉 180 天，七张共用。
   // 只在 Agent 监控页拉 —— 首页和巡检页没这七张卡，不该替它们付这份开销。
   if (VIEW_PAGE === 'host') loadHS();
+  // 母任务（2026-11-25）：紧挨着 Agent 监控那张，吃 /api/tasks —— 它比 workstat
+  // 便宜（增量扫会话库 + 6 秒缓存），但也不必替首页/巡检页拉。
+  if (VIEW_PAGE === 'host') loadTSK();
+  renderTSK();
   renderHWHour();
   renderHWQuota();
   renderHWGloss();
@@ -16587,6 +17336,8 @@ const SZ_DEF = {
   moon: [3, 5], hwtime: [3, 5], hwhour: [3, 5], hwstrat: [3, 5], hwindex: [3, 5],
   // 提示词（2026-11-25）：三格 KPI + 一条按天柱，5 行够。
   hwprm: [3, 5],
+  // 母任务（2026-11-25）：视角条 + 十几行，挑到首页时给 8 行。
+  hwtask: [3, 8],
   // AI 工作计划（2026-11-22）：树 + 底部收件箱 + 输入框，9 行刚好一屏不滚太多。
   aiplan: [3, 10],
 };
@@ -16615,7 +17366,8 @@ const PAGE_SZ = {
   flow: { flowlog: [6, 15], ledger: [6, 8], transfer: [6, 12] },
   // 本机工作：六张全宽卡（花费与用量两 tab 共用一份高度，按高的那个「花费」给）
   // 进程消耗 2026-11-21 长高了：上面一条时间轴折线 + 下面十行排行，矮了就得卡内滚动
-  host: { hostwork: [6, 10], hwtok: [6, 7], hwbill: [6, 8],
+  // 母任务（2026-11-25）：一行母任务 + 六到十个视角，九个行高够它自己滚
+  host: { hostwork: [6, 10], hwtask: [6, 9], hwtok: [6, 7], hwbill: [6, 8],
           hwproc: [6, 8], pocketwork: [6, 7],
           // 2026-11-25 逐日/逐时那七张：一条主图 + 一句读数，五到六行够用
           hwprm: [6, 5], hwcal: [6, 6], hwhod: [6, 5], hwscreen: [6, 5],
@@ -19472,7 +20224,7 @@ const PAGES = {
   // 「用量走势」并进「花费与用量」了，这一页只剩六张
   // 口袋是「同一张卡」：首页摆着它，这一页也列着它（页面视图搬过去而已）。
   // 任务清单已并进 hostwork 卡当第四档视图，不再是独立一张。
-  host: { title: 'Agent 监控', ids: ['hostwork', 'hwcal', 'hwhod', 'hwscreen', 'hwtime', 'hwhour',
+  host: { title: 'Agent 监控', ids: ['hostwork', 'hwtask', 'hwcal', 'hwhod', 'hwscreen', 'hwtime', 'hwhour',
         'hwprm', 'hwphr', 'hwlink',
         'hwptok', 'hwpsec', 'hwagent', 'hwtok', 'hwbill',
         'hwstrat', 'hwindex', 'hwproc', 'pocketwork'] },
