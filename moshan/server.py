@@ -1697,7 +1697,9 @@ async def reveal_api(request: Request) -> dict:
     except ValueError:
         body = {}
     target = str((body or {}).get("target") or "root").strip() if isinstance(body, dict) else "root"
-    p = {"root": paths.data_root(), "state": paths.state_dir()}.get(target)
+    # 跟界面上显示的那个数据根取同一个来源（dashmod._root），否则开发机上
+    # 界面写 A、按钮打开 B，用户会以为数据丢了。
+    p = {"root": dashmod._root(CFG), "state": paths.state_dir()}.get(target)
     if p is None:
         return JSONResponse({"ok": False, "error": "只支持 root / state"}, status_code=400)
     try:
