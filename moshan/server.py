@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import base64
+import gzip
 import hashlib
 import hmac
 import ipaddress
@@ -1174,6 +1175,29 @@ def _page_stamp(text: str) -> str:
     return m.group(1) if m else ""
 
 
+def _page_backup(p):
+    """旧页面存成 _bak/YYYY-MM/<页面名>.<时间>.gz。
+
+    为什么压缩：一次换页就是一份完整页面（约 1MB），改界面时一上午能换十几次，
+    一年几十份无压缩副本就是几十 MB 的纯文本重复。gzip 后每份约 150KB，
+    历史一份不丢（改为保留全部），但不再占地方。按年月分目录，免得根目录
+    堆几千个文件把 Finder 拖死。
+    """
+    try:
+        raw = p.read_bytes()
+    except OSError:
+        return None
+    d = p.parent / "_bak" / time.strftime("%Y-%m")
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        out = d / (p.name + "." + time.strftime("%Y%m%d-%H%M%S") + ".gz")
+        with gzip.open(out, "wb", compresslevel=6) as f:
+            f.write(raw)
+        return out
+    except OSError:
+        return None
+
+
 def _ensure_page(p) -> None:
     """把随包分发的 dash.html 铺到数据根；数据根那份旧了就备份换新。
 
@@ -1208,11 +1232,7 @@ def _ensure_page(p) -> None:
         want = _page_stamp(src.read_text(encoding="utf-8", errors="replace"))
         have = _page_stamp(p.read_text(encoding="utf-8", errors="replace"))
         if want and want != have:
-            backup = p.with_name(p.name + ".bak-" + time.strftime("%Y%m%d-%H%M%S"))
-            try:
-                shutil.copy2(p, backup)
-            except OSError:
-                backup = None
+            backup = _page_backup(p)
             shutil.copy2(src, p)
             try:
                 os.chmod(p, 0o644)
@@ -1381,6 +1401,11 @@ def dash_data() -> dict:
     # 只报不拦，让前端能提示，也让 curl 一眼看得出来。
     data["machine"] = {"host": paths.stamp_machine().get("host") or "",
                        "foreign": paths.foreign_origin()}
+    # 终端风暴那张卡：最近的账 + 此刻终端占多少（读异常.json，读不到就是空卡）
+    try:
+        data["storm"] = stormwatch.payload()
+    except Exception as e:                             # noqa: BLE001
+        data["storm"] = {"items": [], "total": 0, "error": f"{type(e).__name__}: {e}"}
     return data
 
 

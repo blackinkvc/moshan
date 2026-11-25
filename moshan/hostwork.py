@@ -1460,12 +1460,39 @@ def sample_procs() -> dict:
     return rec
 
 
+# 终端类进程：风暴看门狗靠这个数，别让它只看 top15 ——
+# 空转的 conhost 每个只吃几 MB，CPU 是 0，永远进不了「前 15 个吃 CPU 的」，
+# 可六百个加起来就是几 GB（2026-11-25 01:13 EVO 上就这样）。
+_TERM_KEYS = {"windowsterminal", "wt", "conhost", "openconsole", "terminal",
+              "iterm2", "iterm", "alacritty", "wezterm"}
+
+
+def _term_stat(apps: list) -> dict:
+    """全量里筛终端类进程，返回个数与内存合计（MB）。"""
+    n, mb, top = 0, 0.0, []
+    for a in apps:
+        k = str(a.get("name") or "").lower()
+        if k.endswith(".exe"):
+            k = k[:-4]
+        if k not in _TERM_KEYS:
+            continue
+        m = float(a.get("mem") or 0)
+        n += 1
+        mb += m
+        if len(top) < 6:
+            top.append([a.get("name"), round(m, 1)])
+    top.sort(key=lambda x: -x[1])
+    return {"n": n, "mb": round(mb, 1), "top": top}
+
+
 def _dump_procs(rec: dict) -> None:
     top = [[a["name"], a["cpu"], a["mem"]] for a in rec["apps"][:15] if a["cpu"] > 0.2]
-    if not top:
+    terms = _term_stat(rec["apps"])
+    if not top and not terms["n"]:
         return
     line = json.dumps({"at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                       "cpu_pct": rec["cpu_pct"], "top": top}, ensure_ascii=False)
+                       "cpu_pct": rec["cpu_pct"], "top": top,
+                       "terms": terms}, ensure_ascii=False)
     try:
         PROC_PATH.parent.mkdir(parents=True, exist_ok=True)
         with PROC_PATH.open("a", encoding="utf-8") as f:
