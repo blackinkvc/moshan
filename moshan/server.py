@@ -77,6 +77,7 @@ import report_runner
 import dedupe_runner
 import ai_trends_runner
 import heartbeat
+import stormwatch        # 终端风暴看门狗：桌面冒出一串黑框时自动留证
 import ocr_runner
 import diskscan
 import modelcfg          # 对话模型来源：本机 Ollama / 本地网关 / OpenAI 兼容 API
@@ -583,6 +584,7 @@ def _startup() -> None:
     _start_dedupe_scheduler()
     _start_trends_scheduler()
     _start_heartbeat()
+    _start_stormwatch()
     _start_ocr()
     _start_reports()
     _start_wechat_guard()
@@ -897,6 +899,7 @@ def trends_run(force: bool = Query(False)) -> dict:
 # 挂在这里而不是独立 LaunchAgent：本机 launchctl bootstrap 报 I/O error，
 # 装不了新常驻服务；pocket 本身开机常驻，由它兜底巡检并拉起 gateway。
 _HEART_ON = False
+_STORM_ON = False
 
 
 def _start_heartbeat() -> None:
@@ -922,6 +925,28 @@ def _start_heartbeat() -> None:
                      daemon=True, name="heartbeat").start()
     log({"event": "heartbeat_scheduler",
          "interval_sec": int((CFG.get("heartbeat") or {}).get("interval_sec", 120))})
+
+
+def _start_stormwatch() -> None:
+    """终端风暴看门狗：每 5 分钟扫一眼进程采样，桌面冒出一串黑框时自动记账。
+
+    和别的 scheduler 一样用闸门，双 uvicorn 共用 app 时只会起一个。
+    """
+    global _STORM_ON
+    if _STORM_ON:
+        return
+    if (CFG.get("stormwatch") or {}).get("enabled") is False:
+        return
+    _STORM_ON = True
+
+    def _done(out: dict) -> None:
+        log({"event": "stormwatch_hit", "events": out.get("events"),
+             "peaks": out.get("peaks")})
+
+    import threading
+    threading.Thread(target=stormwatch.scheduler_loop, args=(CFG, _done),
+                     daemon=True, name="stormwatch").start()
+    log({"event": "stormwatch_scheduler", "interval_sec": 300})
 
 
 @app.get("/api/heartbeat", dependencies=[Depends(auth)])
