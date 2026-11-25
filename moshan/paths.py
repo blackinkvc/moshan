@@ -71,10 +71,24 @@ def state_dir() -> Path:
 
 
 def library_dir() -> Path:
-    """资料库目录：用户可见的文件区（工作台、收件箱、回收站都在这里）。"""
+    """资料库目录：用户可见的文件区（工作台、收件箱、回收站都在这里）。
+
+    三级优先：环境变量 > 配置文件里的 library_dir > 默认 ~/Documents/Moshan。
+    第二级是给「首次引导里选数据存在哪」用的 —— 选完写进 config.json，
+    之后每次启动都认。配置文件里没有这个键时行为跟以前完全一样，所以对
+    已经装好的机器是零影响（它们的 config.json 里没有它）。
+    """
     override = os.environ.get(ENV_HOME)
     if override:
         return Path(override).expanduser().resolve() / "library"
+    try:
+        import json as _json
+        c = _json.loads((state_dir() / "config.json").read_text(encoding="utf-8"))
+        v = str((c or {}).get("library_dir") or "").strip()
+        if v:
+            return Path(v).expanduser()
+    except (OSError, ValueError):
+        pass
     return Path.home() / "Documents" / APP_NAME
 
 
