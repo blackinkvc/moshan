@@ -5774,15 +5774,6 @@ body.v-more .more-wrap > .card[data-card="transfer"].tf-none .tf-body{height:180
       <label class="md-l" for="plName">名字</label>
       <input class="md-in" id="plName" type="text" autocomplete="off" spellcheck="false"
              placeholder="例如 备份">
-      <label class="md-l">归到哪一档</label>
-      <div class="am-chips" id="plGroup" role="group" aria-label="插件分组">
-        <button type="button" class="am-c" data-grp="tool" aria-pressed="false"
-                title="打开来用的东西：工作流水、日程、备忘、待办、便签、看图、阅读…">小工具</button>
-        <button type="button" class="am-c on" data-grp="plugin" aria-pressed="true"
-                title="工作台自己的能力与运维：口袋、巡检、本机工作、关注…">内置插件</button>
-        <button type="button" class="am-c" data-grp="other" aria-pressed="false"
-                title="自己写的、自带数据和页面：Token 价格追踪、智能设备、界面评审、游戏记录、月相…">其他插件</button>
-      </div>
       <div class="pl-2">
         <div>
           <label class="md-l" for="plPort">端口</label>
@@ -5800,9 +5791,6 @@ body.v-more .more-wrap > .card[data-card="transfer"].tf-none .tf-body{height:180
       <label class="md-l" for="plCmd">启动脚本（可不填）</label>
       <input class="md-in" id="plCmd" type="text" autocomplete="off" spellcheck="false"
              placeholder="14-备份/_备份.command（相对数据根）">
-      <label class="md-l" for="plNote">说明（可不填）</label>
-      <input class="md-in" id="plNote" type="text" autocomplete="off"
-             placeholder="一句话，鼠标停在药丸上能看到">
       <div class="md-res" id="plRes">加完立刻进顶栏，不用重启口袋。清单存在 _工作台/plugins.json，也能手改。</div>
       <div class="pl-mine" id="plList"></div>
     </div>
@@ -17330,7 +17318,7 @@ function openAppModal(tab) {
   $('appRes').textContent = '应用名、.app 全路径、bundle id、网址都认；也认 open -a "xxx" 这种写法';
   // 本机插件那页
   $('plName').value = ''; $('plPort').value = ''; $('plUrl').value = '';
-  $('plCmd').value = ''; $('plNote').value = '';
+  $('plCmd').value = '';
   $('plRes').className = 'md-res';
   $('plRes').textContent = '加完立刻进顶栏，不用重启口袋。清单存在 _工作台/plugins.json，也能手改。';
   // 第三方插件那页
@@ -17404,8 +17392,6 @@ $('plSave').addEventListener('click', async () => {
     url: $('plUrl').value.trim(),
     cmd: $('plCmd').value.trim(),
     glyph: $('plGlyph').value,
-    note: $('plNote').value.trim(),
-    group: plGroup
   };
   if (!body.name) { $('plRes').className = 'md-res bad'; $('plRes').textContent = '先给它起个名字'; $('plName').focus(); return; }
   if (!body.port && !body.url) {
