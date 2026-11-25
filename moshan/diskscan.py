@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -74,6 +75,41 @@ def _cache_put(key: str, data) -> None:
 
 # ---------------------------------------------------------------- 卷
 
+_IMG_CACHE: tuple = (0.0, frozenset())
+
+
+def image_mounts() -> frozenset[str]:
+    """当前挂着的**磁盘映像**（.dmg / .iso）的挂载点。
+
+    为什么要认这个（2026-11-25 用户问「Moshan 0.3.4 77% 是啥意思」）：
+    拖拽安装的 .dmg 会挂到 /Volumes/<包名>，装完不推出就一直挂着。磁盘卡把它们
+    当普通卷列出来，一排「Moshan 0.3.4 / 0.3.5 / 0.3.8」看着像版本历史，
+    其实是三个没弹出的安装盘。认出来之后标成「安装盘」并给个推出。
+    """
+    global _IMG_CACHE
+    at, got = _IMG_CACHE
+    if time.time() - at < 20:
+        return got
+    out: set[str] = set()
+    try:
+        p = subprocess.run(["/usr/bin/hdiutil", "info"], capture_output=True,
+                           text=True, timeout=5)
+        # 挂载点不是单独一行，而是设备行的**最后一个 tab 字段**：
+        #   /dev/disk7s1 <TAB> 48465300-… <TAB> /Volumes/Moshan 0.3.9
+        # 按行首是不是 /Volumes/ 找永远找不到（2026-11-25 踩过）。
+        for line in (p.stdout or "").splitlines():
+            parts = [x.strip() for x in line.split("\t") if x.strip()]
+            if len(parts) < 2 or not parts[0].startswith("/dev/disk"):
+                continue
+            for f in parts[1:]:
+                if f.startswith("/"):
+                    out.add(f)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    _IMG_CACHE = (time.time(), frozenset(out))
+    return _IMG_CACHE[1]
+
+
 def volumes() -> list[dict]:
     """这台机器能看的盘：根卷 + /Volumes 下挂着的。
 
@@ -81,6 +117,7 @@ def volumes() -> list[dict]:
     扫 /Volumes 只是一次 readdir，比缓存失效逻辑便宜。
     """
     out: list[dict] = []
+    imgs = image_mounts()
 
     def add(mount: str) -> None:
         try:
@@ -94,6 +131,8 @@ def volumes() -> list[dict]:
             "total": u.total, "used": u.used, "free": u.free,
             "pct": round(u.used / u.total * 100) if u.total else 0,
             "removable": mount != "/",
+            # dmg：挂着没推出的安装盘。只读、装完就没用了，页面上标出来、给个推出。
+            "dmg": mount in imgs,
         })
 
     add("/")
@@ -111,6 +150,29 @@ def volumes() -> list[dict]:
     except OSError:
         pass
     return out
+
+
+def eject(mount: str) -> dict:
+    """推出一个**安装盘**（.dmg）。
+
+    只允许推 /Volumes 下、且确实是磁盘映像的挂载点 —— 这个接口将来可能被
+    别的入口调到，绝不能变成「一句话把用户的移动硬盘弹掉」。
+    """
+    m = str(mount or "").strip()
+    if not m.startswith("/Volumes/") or not Path(m).is_dir():
+        return {"ok": False, "error": "只能推出 /Volumes 下挂着的卷"}
+    if m not in image_mounts():
+        return {"ok": False, "error": "这不是安装盘（磁盘映像），不推 —— 外置盘请从访达退出"}
+    try:
+        p = subprocess.run(["/usr/bin/hdiutil", "detach", m], capture_output=True,
+                           text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError) as e:
+        return {"ok": False, "error": f"推出失败：{e}"[:160]}
+    if p.returncode != 0:
+        msg = ((p.stderr or "") + (p.stdout or "")).strip().splitlines()
+        return {"ok": False, "error": ("推出失败：" + (msg[0] if msg else str(p.returncode)))[:200]}
+    _IMG_CACHE = (0.0, frozenset())          # 下一次 volumes() 现扫
+    return {"ok": True, "mount": m}
 
 
 # ---------------------------------------------------------------- 扫描

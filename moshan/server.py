@@ -69,6 +69,7 @@ import transfer
 import metrics
 import sysinfo
 import version
+import versions          # 版本足迹：首次启用时间 + 跑过哪些版本（本地记账，不问网）
 import llmwatch          # 本机在跑什么大模型（进程 + 命令行 + 端口自报三路核对）
 # import fleet as fleetmod      # 多机监控已拆成独立服务（2026-11-21），见下方挂载处注释
 import report
@@ -597,6 +598,12 @@ def _startup() -> None:
     _start_pending()
     _start_brief()
     _start_trae_bridge()
+    # 版本足迹（2026-11-25）：每次启动记一笔「今天跑的是哪个版本」。
+    # 放最后、只写一个几 KB 的 json，失败只打日志 —— 记账不该拦住任何服务。
+    try:
+        versions.note_launch()
+    except Exception as exc:                           # noqa: BLE001
+        print(f"[Moshan] 版本足迹写不进去（不影响使用）：{exc}", flush=True)
 
 
 _BRIDGE_STARTED = {"done": False}
@@ -1016,6 +1023,34 @@ def disk_volumes() -> dict:
                 "home": str(Path.home())}
     except Exception as e:                     # noqa: BLE001
         return {"ok": False, "error": f"{type(e).__name__}: {e}"[:160], "vols": []}
+
+
+@app.get("/api/versions", dependencies=[Depends(auth)])
+def versions_footprint() -> dict:
+    """版本足迹：首次启用时间 + 跑过的版本（本地记账，不联网）。
+
+    与 /api/update/state 的分工：那个回答「有没有新的」，这个回答「我这条线
+    是怎么走过来的」。设置抽屉里两行，各读各的。
+    """
+    try:
+        return {"ok": True, **versions.read()}
+    except Exception as e:                             # noqa: BLE001
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"[:160]}
+
+
+@app.post("/api/disk/eject", dependencies=[Depends(auth)])
+async def disk_eject(request: Request) -> dict:
+    """推出一个没弹出的安装盘（.dmg）。
+
+    只在 diskscan 认出「这是磁盘映像」时才动手 —— 别让这个接口变成
+    「一句话弹掉用户的移动硬盘」。判据与说明都在 diskscan.eject()。
+    """
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    return diskscan.eject(str(body.get("mount") or ""))
 
 
 @app.get("/api/disk/list", dependencies=[Depends(auth)])

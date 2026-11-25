@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import socket
 import sqlite3
 import subprocess
@@ -142,6 +143,72 @@ def _posix_ok(aid: str) -> bool:
     return os.name == "posix" or aid not in POSIX_ONLY
 
 
+# —— 这台机器装没装（2026-11-25 加）——
+# 以前 11 个服务无条件全画出来，没装的也占一格红点：别人一眼看到「五个掉线」，
+# 其实那五个是压根没装（用户原话：「巡检里面有些没安装的功能就不用显示了」）。
+# 「装没装」和「跑没跑」是两件事，后者仍由端口探活回答，这里只答前者：
+#   · 有启动脚本 → 装了，只是没起（交付版里最硬的一条证据）
+#   · launchd 里挂了号 → 装了（被 launchctl 管着，可能刚崩）
+#   · 基础服务（gateway / ollama / qdrant）不归口袋管 → 看可执行文件或 .app
+_INFRA_BINS = {"gateway": ("openclaw",), "ollama": ("ollama",), "qdrant": ("qdrant",)}
+_INFRA_APPS = {"gateway": ("OpenClaw.app",), "ollama": ("Ollama.app",), "qdrant": ()}
+
+_INSTALLED: dict[tuple, tuple] = {}          # (id, root) -> (时间戳, 装没装, 说明)
+_INSTALLED_LOCK = threading.Lock()
+
+
+def _launchd_has(aid: str) -> bool:
+    """launchd 里有没有带这个 id 的 plist —— 装了但被 launchctl 管着的服务靠它认。"""
+    try:
+        names = [p.name.lower() for p in
+                 (Path.home() / "Library" / "LaunchAgents").glob("*.plist")]
+    except OSError:
+        return False
+    a = aid.lower()
+    return any(a in n for n in names)
+
+
+def _svc_installed(cfg: dict, spec: dict) -> tuple[bool, str]:
+    """(装没装, 一句话说明)。说明只给「没装」的那几颗灰点当 tooltip 用。
+
+    宁可漏判成「装了」也不要误判成「没装」：多显示一颗灰点只是难看，
+    少显示一个真正装了的服务会让人以为功能没了。
+    """
+    aid = str(spec.get("id") or "")
+    try:
+        root = str(_root(cfg))
+    except Exception:                        # noqa: BLE001
+        root = ""
+    key = (aid, root)
+    with _INSTALLED_LOCK:
+        hit = _INSTALLED.get(key)
+    if hit and time.time() - hit[0] < 60:
+        return hit[1], hit[2]
+
+    ok, why = True, ""
+    if spec.get("self") or spec.get("ext"):
+        ok = True                            # 口袋自己 / 第三方插件（归 extplugins 管）
+    elif aid in _INFRA_BINS:
+        found = any(shutil.which(b) for b in _INFRA_BINS[aid]) or any(
+            (Path("/Applications") / ap).exists() for ap in _INFRA_APPS.get(aid, ()))
+        ok = bool(found)
+        if not ok:
+            why = "这台机器上没装 %s" % (spec.get("name") or aid)
+    else:
+        cmd = spec.get("cmd")
+        if isinstance(cmd, (list, tuple)) and len(cmd) == 2:
+            p = Path(root) / str(cmd[0]) / str(cmd[1]) if root else None
+            ok = bool(p and p.exists()) or _launchd_has(aid)
+            if not ok:
+                why = "这台机器上没有它的启动脚本（%s）" % p
+        else:
+            ok = True                        # 没 cmd 也不归 infra：判不了就照旧显示
+
+    with _INSTALLED_LOCK:
+        _INSTALLED[key] = (time.time(), ok, why)
+    return ok, why
+
+
 def _services(cfg: dict | None = None) -> list[dict]:
     """端口探活。pocket 自己不用探（能渲染这个页面就说明它活着）。
 
@@ -150,6 +217,7 @@ def _services(cfg: dict | None = None) -> list[dict]:
     + <数据根>/_工作台/plugins.json（用户自己加的插件）。
     """
     items = []
+    spec_by_id: dict[str, dict] = {}
     for a in (_all_specs(cfg) if cfg else BUILTIN_APPS):
         if not _posix_ok(a["id"]):        # 别的平台上的服务，别在这台机器上报红点
             continue
@@ -159,6 +227,7 @@ def _services(cfg: dict | None = None) -> list[dict]:
         href = "" if a.get("self") else str(a.get("url") or "")
         # host：服务不在本机（被控机的 portproxy 端口，如 EVO 的 17788）。
         # 有 host 就探它，没 host 探回环 —— 否则远程插件永远显示「离线」。
+        spec_by_id[a["id"]] = a
         items.append((a["id"], a.get("svc_name") or a["name"], port, href,
                       bool(a.get("self")), str(a.get("host") or "")))
     for sid, name, port in INFRA_SERVICES:
@@ -190,9 +259,15 @@ def _services(cfg: dict | None = None) -> list[dict]:
         ups = list(pool.map(_probe, items))
     out = []
     for (sid, name, port, href, always, host), up in zip(items, ups):
+        spec = spec_by_id.get(sid) or {"id": sid, "name": name}
+        inst, why = _svc_installed(cfg, spec) if cfg else (True, "")
         out.append({
             "id": sid, "name": name, "port": port, "href": href,
             "up": bool(up), "lazy": sid in LAZY_SERVICES,
+            # installed：这台机器上装没装（没装的页面默认不画，见 dash.html svcShown）。
+            # 探到端口通就一定是装了 —— 探活比任何文件判断都硬。
+            "installed": bool(up or inst),
+            "why": "" if up else why,
         })
     return out
 
