@@ -1830,6 +1830,20 @@ def agent_store_stats() -> dict:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
+@app.get("/api/agent/config/scan", dependencies=[Depends(auth)])
+def agent_config_scan(force: int = 0) -> dict:
+    """配置面：分组 / 任务 / 插件 / Skill / MCP，一家一份。
+
+    和数据面（/api/agent/import/scan）分开：那边数几万个会话文件，几百毫秒到
+    几秒；这边只读几个清单和小库，通常 1 秒内。带 180 秒缓存，force=1 强刷。
+    """
+    try:
+        import agentconfig                                   # noqa: PLC0415
+        return agentconfig.scan(force=bool(force))
+    except Exception as e:                                  # noqa: BLE001
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "agents": []}
+
+
 @app.get("/api/agent/import/scan", dependencies=[Depends(auth)])
 def agent_import_scan() -> dict:
     """只读扫描：两个客户端各有多少历史可导。不动任何文件。"""
