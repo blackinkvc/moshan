@@ -1485,10 +1485,21 @@ def _term_stat(apps: list) -> dict:
     return {"n": n, "mb": round(mb, 1), "top": top}
 
 
+_LAST_DUMP = {"key": "", "at": 0.0}
+
+
 def _dump_procs(rec: dict) -> None:
     top = [[a["name"], a["cpu"], a["mem"]] for a in rec["apps"][:15] if a["cpu"] > 0.2]
     terms = _term_stat(rec["apps"])
     if not top and not terms["n"]:
+        return
+    # 内容和上一条一样就别重复记账（2026-11-25）：原先每 5 分钟无条件写一行，
+    # 一天 288 行里绝大多数是「同一批进程、同样的 CPU」的重复。
+    # 但也不能完全不写 —— 否则「机器闲了一整天」和「采集挂了」在文件上分不出来。
+    # 所以：有变化照写，没变化也每小时留一条。
+    key = json.dumps([top, terms], ensure_ascii=False, sort_keys=True)
+    now = time.time()
+    if key == _LAST_DUMP["key"] and now - _LAST_DUMP["at"] < 3600:
         return
     line = json.dumps({"at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                        "cpu_pct": rec["cpu_pct"], "top": top,
@@ -1497,6 +1508,8 @@ def _dump_procs(rec: dict) -> None:
         PROC_PATH.parent.mkdir(parents=True, exist_ok=True)
         with PROC_PATH.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
+        _LAST_DUMP["key"] = key
+        _LAST_DUMP["at"] = now
     except OSError:
         pass
 
