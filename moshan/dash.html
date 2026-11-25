@@ -1798,7 +1798,7 @@ body.st-colmoving *{cursor:grabbing!important}
 /* 上限之后还要滚：macOS 默认的浮层滚动条不划不出现，这里让它常显 */
 .hwk-subs::-webkit-scrollbar{width:9px}
 .hwk-subs::-webkit-scrollbar-track{background:transparent}
-.hwk-subs::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--tx3) 30%,transparent);
+.hwk-subs::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--tx3) 48%,transparent);
   border-radius:99px;border:2px solid transparent;background-clip:padding-box}
 .hwk-sbody .dk-row{grid-template-columns:minmax(0,1fr) 54px 62px 26px;gap:6px}
 .hwk-sbody .dk-row.app,.hwk-sbody .dk-row.type{grid-template-columns:minmax(0,1fr) 54px 62px}
@@ -10857,10 +10857,10 @@ function onHwkSubToggle(k, open) {
 }
 
 /* 「向下展开卷轴」：展开时卡片跟着长高，而不是在 150px 的小窗口里滚。
-   高度按内容实算，但有上限（14 行 ≈ 一屏），再多的部分才在卡内滚 ——
-   两个都展开时不至于把页面顶到天上去。
+   高度按内容实算 —— 两个都展开也不设小上限（实测 19 行左右），顶到页面就整页滚，
+   这才像「拉开的卷轴」。24 行是防异常内容的兜底：真到那一步卡内自己滚。
    只在 --hcell 上临时加，不动 data-h：那是拖拽存档，收起就能原样还原。 */
-const HWK_ROW = 72, HWK_MAX_ROWS = 14;
+const HWK_ROW = 72, HWK_MAX_ROWS = 24;
 function fitHwkSubs() {
   const card = document.querySelector('[data-card="hwkpi"]');
   if (!card) return;
