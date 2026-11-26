@@ -101,6 +101,13 @@ pub async fn forward(State(ctx): State<Arc<Ctx>>, req: Request) -> Response {
         }
     }
 
+    // 打一个「这条是转发来的」标记：迁移期判断某端点到底迁没迁，看这个头最快，
+    // 比翻代码可靠。客户端不依赖它，`resp.headers()` 也不含它。
+    out.insert(
+        header::HeaderName::from_static("x-moshan-proxy"),
+        HeaderValue::from_static("1"),
+    );
+
     let stream = resp.bytes_stream();
     let mut res = Body::from_stream(stream).into_response();
     *res.status_mut() = status;

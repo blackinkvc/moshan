@@ -25,7 +25,9 @@ async fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(8400);
 
-    let app = Router::new()
+    // 泳道全关时 `mut` 用不上，这是迁移期的正常状态，不必报警。
+    #[allow(unused_mut)]
+    let mut app = Router::new()
         // ---- W1：契约地基（4 条，依赖零扇出，响应与运行环境无关）
         .route("/api/ping", get(routes::w1::ping))
         .route("/api/versions", get(routes::w1::versions))
@@ -52,10 +54,49 @@ async fn main() {
         .route("/api/ledger/item", get(routes::w4::one))
         .route("/api/ledger/img", get(routes::w4::img))
         .route("/api/ledger/update", post(routes::w4::update))
-        .route("/api/ledger/remove", post(routes::w4::remove))
-        // ---- 其余 216 条：镜像给 Python，行为完全不变
-        .fallback(proxy::forward)
-        .with_state(ctx.clone());
+        .route("/api/ledger/remove", post(routes::w4::remove));
+
+    // ---- 泳道：分批施工时各开一个特性，单独编译单独对拍。
+    //      全部迁完后把这些 cfg 拆掉、直接 merge 即可。
+    #[cfg(feature = "lane_u")]
+    {
+        app = app.merge(routes::u::router());
+    }
+    #[cfg(feature = "lane_w4b")]
+    {
+        app = app.merge(routes::w4b::router());
+    }
+    #[cfg(feature = "lane_w4c")]
+    {
+        app = app.merge(routes::w4c::router());
+    }
+    #[cfg(feature = "lane_w5a")]
+    {
+        app = app.merge(routes::w5a::router());
+    }
+    #[cfg(feature = "lane_w5b")]
+    {
+        app = app.merge(routes::w5b::router());
+    }
+    #[cfg(feature = "lane_w6a")]
+    {
+        app = app.merge(routes::w6a::router());
+    }
+    #[cfg(feature = "lane_w6b")]
+    {
+        app = app.merge(routes::w6b::router());
+    }
+    #[cfg(feature = "lane_w7a")]
+    {
+        app = app.merge(routes::w7a::router());
+    }
+    #[cfg(feature = "lane_w7b")]
+    {
+        app = app.merge(routes::w7b::router());
+    }
+
+    // ---- 其余未迁路由：镜像给 Python，行为完全不变
+    let app = app.fallback(proxy::forward).with_state(ctx.clone());
 
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let listener = match tokio::net::TcpListener::bind(addr).await {

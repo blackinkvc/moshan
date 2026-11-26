@@ -526,6 +526,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--paths", nargs="*", default=None)
     ap.add_argument("--all-get", action="store_true")
+    # 铺夹具但不改 paths：泳道自带一组端点清单时用这个，
+    # 否则只能借 --suite w2 的清单，测不了自己的路由。
+    ap.add_argument("--seed", action="store_true", help="铺夹具，但保留 --paths 给的清单")
     ap.add_argument(
         "--suite",
         choices=["w1", "w2", "w3", "w4"],
@@ -554,7 +557,7 @@ def main() -> int:
         paths = [r["path"] for r in routes if r["method"] == "GET"]
 
     home = Path(tempfile.mkdtemp(prefix="moshan-parity-"))
-    if args.suite:
+    if args.suite or args.seed:
         seed(home)
     if args.suite == "w2":
         paths = w2_paths(home)

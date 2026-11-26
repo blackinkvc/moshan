@@ -10,6 +10,21 @@ description = "墨山中台服务端（Rust 重写）。按波次替换 Python �
 name = "moshan-server"
 path = "src/main.rs"
 
+# 迁移期把剩余波次做成「泳道」特性：每条泳道可单独编译、单独运行、单独对拍。
+# 并行施工时，A 泳道的半成品不会挡住 B 泳道的 cargo check —— 否则任何一个文件
+# 写坏都会让所有人停在同一条报错上。全部迁完后把这里删掉（或 default 置全开）。
+[features]
+default = []
+lane_w4b = []
+lane_w4c = []
+lane_w5a = []
+lane_w5b = []
+lane_w6a = []
+lane_w6b = []
+lane_w7a = []
+lane_w7b = []
+lane_u = []
+
 [dependencies]
 axum = { version = "0.8", features = ["multipart"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync"] }
@@ -27,5 +42,12 @@ sha1 = "0.10"
 base64 = "0.22"
 # 只需要能转发 http/1.1 到 127.0.0.1，不引 TLS：上游是明文端口，
 # 拉一套 rustls 只为连本机没有收益，也拖慢编译。
-reqwest = { version = "0.12", default-features = false, features = ["stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["stream", "json"] }
 futures-util = "0.3"
+# Python 侧大量用 re 做「从一段话里抠字段」，逐条译成正则字面量最稳，
+# 手写字符扫描反而容易在边界（全角空格、中文标点、括号）上分叉。
+regex = "1"
+# 查询串里的 `%XX` 要按 UTF-8 还原；`?path=` 不能只解半截。
+percent-encoding = "2"
+# `/api/updates` 与 pack 校验要算 sha256（与 Python 的 hashlib 同结果）。
+sha2 = "0.10"
