@@ -3,7 +3,7 @@
 <head>
 <!-- 页面版本戳：服务端拿它跟包里那份比，旧了会自动备份并换新。
      改这个文件时把日期往后挪一格，别原地不动，否则老机器收不到。 -->
-<meta name="moshan-page" content="2026-11-25a5">
+<meta name="moshan-page" content="2026-11-26b">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
@@ -9398,12 +9398,13 @@ function setWhView(v) {
 const HR = { at: 0, data: null, err: '', loading: false, loadingAt: 0, colPop: false,
   // 时间范围（原 8775 顶部那排筛选里的一项）。只作用于 /api/overview 这几张统计卡，
   // 「本机工作」那张是按天分组的流水，不跟这个变。
-  range: '7d' };
+  // userRange = 人自己点过范围没有。没点过才允许下面「空窗口自愈」替它放宽。
+  range: '7d', userRange: false };
 const HR_RANGES = [['today', '今天'], ['7d', '7 天'], ['30d', '30 天'], ['all', '全部']];
 function hrRangeInit() {
   try {
     const v = localStorage.getItem('dash_hwrange');
-    if (v && HR_RANGES.some(r => r[0] === v)) HR.range = v;
+    if (v && HR_RANGES.some(r => r[0] === v)) { HR.range = v; HR.userRange = true; }
   } catch (e) { }
 }
 hrRangeInit();
@@ -9433,6 +9434,21 @@ async function loadHostRes(force, fresh) {
     clearTimeout(to);
     if (HR.data && HR.data.ok === false) throw new Error(HR.data.error || '接口报错');
     HR.err = '';
+    // —— 空窗口自愈（2026-11-26）——
+    // 「7 天」里一次模型调用都没有、而人从没自己选过范围：多半是这台机器最近
+    // 没跑 AI（账还在，只是更早）。不放宽的话，卡片上一排 0，看着就像
+    // 「查不了 token 消耗」——EVO 上就是这么被误判的（最后一条记录停在 11-17）。
+    // 只在没手动选过时放宽：Mac 这种天天有账的机器永远走不到这一步。
+    if (!HR.userRange && HR.range === '7d') {
+      const c = ((HR.data.tokens || {}).totals || {}).calls || 0;
+      if (!c) {
+        HR.range = '30d';
+        HR.at = 0;
+        HR.loading = false;
+        renderHWRange();
+        return loadHostRes(true);
+      }
+    }
   } catch (e) {
     HR.data = null;
     HR.err = e.name === 'AbortError' ? '8 秒没响应'
@@ -12260,7 +12276,8 @@ function renderHWTol() {
     + (t.cache_hit != null ? '<span>缓存命中 <b>' + (t.cache_hit * 100).toFixed(0) + '%</b></span>' : '')
     + '</div>';
   html += rows.length ? hwTbl(rows)
-    : '<div class="hr-empty" style="padding:14px 0"><span>这段时间没记到 token（会话扫描还没读完？）</span></div>';
+    : '<div class="hr-empty" style="padding:14px 0"><span>这段时间没记到 token —— 这台机器最近没有 AI 会话，'
+      + '点「30 天」或「全部」看更早的账</span></div>';
   // Cherry 的实付账：另一套货币（人民币原价），单独一块，不并进上面的积分表
   html += hwCherryBlock(d.cherry);
   html += '<div class="hw-price">'
@@ -14033,6 +14050,7 @@ document.addEventListener('click', e => {
     const v = rg.dataset.hwrange;
     if (v && v !== HR.range) {
       HR.range = v;
+      HR.userRange = true;             // 人自己选的，别再被空窗口自愈改掉
       try { localStorage.setItem('dash_hwrange', v); } catch (err) { }
       HR.at = 0;                       // 缓存作废，立刻按新范围重拉
       renderHWRange();
