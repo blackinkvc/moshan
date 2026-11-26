@@ -967,6 +967,10 @@ def inject(html: str, drawer: bool = False) -> str:
     """
     if "mosh-upd-row" in html or "mosh-about" in html:
         return html
+    # 2026-11-26：口袋首页的右下角胶囊撤了 —— 版本入口统一收进顶栏「更多」抽屉，
+    # 那颗浮标正好压在阅读列表和对话输入框上（小屏尤其明显）。中台那边不受影响。
+    if not drawer:
+        return html
     badge = _DRAWER_ROW if drawer else _BADGE
     badge = badge.replace("__VER__", version.VERSION)
     i = html.rfind("</body>")

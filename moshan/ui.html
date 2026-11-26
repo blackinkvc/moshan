@@ -285,16 +285,52 @@ nav svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.7;
   color:var(--bg);padding:9px 16px;border-radius:20px;font-size:13px;opacity:0;
   transition:opacity .2s;pointer-events:none;z-index:60;max-width:80%;text-align:center}
 .toast.show{opacity:.94}
+
+/* ---------- 2026-11-26 重整：顶栏 / 二级页 / 「存」单入口 ---------- */
+header .iconbtn{width:30px;height:30px;flex:0 0 auto}
+#btnBack[hidden]{display:none}
+#subTitle{display:none;font-size:16px;font-weight:600;letter-spacing:.3px}
+body.subpage .brand,body.subpage .status{display:none}
+body.subpage #subTitle{display:block;margin-right:auto}
+body.subpage nav{display:none}
+#stat[hidden]{display:none}
+#v-save.active{display:block;overflow-y:auto;-webkit-overflow-scrolling:touch}
+#v-save .pane{padding-bottom:calc(26px + env(safe-area-inset-bottom))}
+#v-save #upqueue{flex:0 0 auto;overflow:visible;padding:0 14px 4px}
+#v-save #readList{flex:0 0 auto;overflow:visible}
+.seg{display:flex;gap:6px;margin-top:10px}
+.seg .sg{padding:5px 11px;border:1px solid var(--line);border-radius:20px;
+  font-size:12.5px;color:var(--muted);background:var(--bg)}
+.seg .sg.on{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.swch{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:12.5px;color:var(--muted)}
+.swch input{width:16px;height:16px;accent-color:var(--accent);margin:0}
+.sechead{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  margin:20px 12px 4px;padding-top:16px;border-top:1px solid var(--line);
+  font-size:13px;color:var(--muted);font-weight:600;letter-spacing:.3px}
+.sechead .mini2{font-size:12.5px;font-weight:400;color:var(--accent);
+  background:var(--accent-soft);padding:5px 11px;border-radius:9px}
+.mstat{padding:2px 4px 12px;border-bottom:1px solid var(--line);margin-bottom:2px}
+.mstat .ms-l{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;color:var(--muted)}
+.mstat .ms-s{font-size:12.5px;color:var(--text);margin-top:3px}
+.menu-item .mi-s{margin-left:auto;font-size:11.5px;color:var(--muted);flex:0 0 auto}
+.menu-sec{padding:15px 4px 3px;font-size:11.5px;color:var(--muted);letter-spacing:.5px}
 </style>
 </head>
 <body>
 
 <header>
+  <button class="iconbtn" id="btnBack" hidden aria-label="返回">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+         stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+  </button>
   <div class="brand">口袋 <span class="chip" id="free">--</span></div>
-  <div class="status"><a href="/dash" style="color:inherit;opacity:.72;text-decoration:none;margin-right:8px;border-bottom:1px dotted currentColor">工作台</a><span class="dot" id="dot"></span><span id="stat">连接中</span></div>
+  <span id="subTitle"></span>
+  <div class="status"><span class="dot" id="dot"></span><span id="stat" hidden></span></div>
+  <button class="iconbtn" id="btnMore" aria-label="更多">⋯</button>
 </header>
 
 <main>
+  <!-- ① 文件：浏览 / 选择 / 目录操作 -->
   <section class="view active" id="v-files">
     <div id="tidyBanner"></div>
     <div class="crumbbar">
@@ -303,7 +339,6 @@ nav svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.7;
              stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="crumbs" id="crumbs"></div>
-      <button class="iconbtn" id="btnMore" title="更多">⋯</button>
     </div>
     <div class="searchbar">
       <input id="q" placeholder="搜文件名（会往下找四层）">
@@ -320,61 +355,56 @@ nav svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.7;
     </div>
   </section>
 
-  <section class="view" id="v-upload">
-    <div class="linkbox">
-      <div class="lbt">粘个链接，存成文件夹</div>
-      <div class="hint" id="linkHint">公众号、小红书直接抓图；抖音与视频号暂为占位</div>
-      <div class="linkrow">
-        <input class="field" id="linkIn" placeholder="粘贴链接或整段分享口令"
-               autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-        <button id="btnLink">存</button>
+  <!-- ② 存：一个入口吃掉「粘链接 + 发文件」，下面接阅读库 -->
+  <section class="view" id="v-save">
+    <div class="pane">
+      <div class="linkbox">
+        <div class="lbt">贴个链接</div>
+        <div class="hint" id="linkHint">公众号 / 小红书抓图存文件夹，网页抓正文存阅读；分不清时会问你</div>
+        <div class="linkrow">
+          <input class="field" id="linkIn" placeholder="粘贴链接或整段分享口令"
+                 autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          <button id="btnSave">存</button>
+        </div>
+        <div class="seg" id="saveSeg">
+          <span class="sg on" data-mode="auto">自动判断</span>
+          <span class="sg" data-mode="article">当文章存</span>
+        </div>
       </div>
-    </div>
-    <div class="groupbar" id="gbar">
-      <button id="btnGroup">存一组</button>
-      <span class="gtext" id="gtext">传的图直接进当天目录</span>
-      <button id="btnGroupName" class="mini" hidden>起名</button>
-      <button id="btnGroupRe" class="mini" hidden>再传进这组</button>
-    </div>
-    <div class="drop">
-      <div class="big">把文件发到这台 Mac</div>
-      <div class="hint" id="upTarget">目标：收件箱</div>
-      <div class="picks">
-        <button class="pk" data-pick="img" data-mode="keep">
-          <span class="t">存图 · 留本地</span><span class="s">开相册选 · 手机留着</span></button>
-        <button class="pk del" data-pick="img" data-mode="move">
-          <span class="t">存图 · 删本地</span><span class="s">开相册选 · 传完提示删</span></button>
-        <button class="pk" data-pick="doc" data-mode="keep">
-          <span class="t">存文件 · 留本地</span><span class="s">开文件App · 手机留着</span></button>
-        <button class="pk del" data-pick="doc" data-mode="move">
-          <span class="t">存文件 · 删本地</span><span class="s">开文件App · 传完提示删</span></button>
-        <input type="file" id="pickImg" accept="image/*" multiple>
-        <input type="file" id="pickAny" multiple>
+
+      <div class="groupbar" id="gbar">
+        <button id="btnGroup">存一组</button>
+        <span class="gtext" id="gtext">传的图直接进当天目录</span>
+        <button id="btnGroupName" class="mini" hidden>起名</button>
+        <button id="btnGroupRe" class="mini" hidden>再传进这组</button>
       </div>
-      <div class="hint" style="margin-top:11px">「删本地」不能在网页里自动删：传完会列出原件，请到相册 / 文件 App 手动移入回收站</div>
+
+      <div class="drop">
+        <div class="big">发文件到这台 Mac</div>
+        <div class="hint" id="upTarget">目标：收件箱</div>
+        <div class="picks">
+          <button class="pk" data-pick="img">
+            <span class="t">相册</span><span class="s">照片 / 截图 / 视频</span></button>
+          <button class="pk" data-pick="doc">
+            <span class="t">文件</span><span class="s">文件 App 里任意文件</span></button>
+          <input type="file" id="pickImg" accept="image/*" multiple>
+          <input type="file" id="pickAny" multiple>
+        </div>
+        <label class="swch"><input type="checkbox" id="delAfter"><span>传完提示删手机原件</span></label>
+      </div>
+
+      <div id="cleanup" class="cleanup" hidden></div>
+      <div id="upqueue"></div>
+
+      <div class="sechead"><span>阅读库</span>
+        <button class="mini2" id="btnClassify">4B 分主题</button></div>
+      <div class="readtip" id="readTip" style="padding:0 14px"></div>
+      <div class="readchips" id="readChips"></div>
+      <div id="readList" class="readlist"></div>
     </div>
-    <div id="cleanup" class="cleanup" hidden></div>
-    <div id="upqueue"></div>
   </section>
 
-  <section class="view" id="v-reading">
-    <div class="linkbox" style="margin:12px 12px 0">
-      <div class="lbt">粘个链接，存成文章</div>
-      <div class="linkrow">
-        <input class="field" id="readIn" placeholder="公众号 / 小红书 / 任意网页"
-               autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-        <button id="btnRead">存</button>
-      </div>
-      <div class="hint" id="readHint">抓正文存到 08-阅读/未分类，再交给 4B 分主题</div>
-    </div>
-    <div class="readbar">
-      <button class="ghost" id="btnClassify">4B 分主题</button>
-      <span class="readtip" id="readTip"></span>
-    </div>
-    <div class="readchips" id="readChips"></div>
-    <div id="readList" class="readlist"></div>
-  </section>
-
+  <!-- ③ 二级页：存图归整（从「更多」进，底栏隐藏） -->
   <section class="view" id="v-tidy">
     <div class="tidy-head">
       <div class="tidy-title">存图归整 <span class="chip" id="tidyState">每天 03:00</span></div>
@@ -387,6 +417,7 @@ nav svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.7;
     <div id="tidyList"></div>
   </section>
 
+  <!-- ④ 对话 -->
   <section class="view" id="v-chat">
     <div id="msgs"></div>
     <div class="composer">
@@ -401,21 +432,13 @@ nav svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.7;
     <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
     <span>文件</span>
   </button>
-  <button data-view="upload">
-    <svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5 5 5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
-    <span>入库</span>
-  </button>
-  <button data-view="reading">
-    <svg viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11a2 2 0 0 1 2 2v14a2 2 0 0 0-2-2H6.5A2.5 2.5 0 0 1 4 14.5z"/><path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H13a2 2 0 0 0-2 2v14a2 2 0 0 1 2-2h4.5a2.5 2.5 0 0 0 2.5-2.5z"/></svg>
-    <span>阅读</span>
+  <button data-view="save">
+    <svg viewBox="0 0 24 24"><path d="M12 3v11m0 0l-4-4m4 4l4-4"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+    <span>存</span>
   </button>
   <button data-view="chat">
     <svg viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9.6 9.6 0 0 1-3.4-.6L3 21l1.7-4.6A8.4 8.4 0 1 1 21 11.5z"/></svg>
     <span>对话</span>
-  </button>
-  <button data-view="tidy">
-    <svg viewBox="0 0 24 24"><path d="M4 6h10M4 12h7M4 18h5"/><path d="M17 9l2 2 4-4"/><circle cx="18.5" cy="16" r="3.2"/></svg>
-    <span>归整</span>
   </button>
 </nav>
 
@@ -528,6 +551,14 @@ $('#shBody').addEventListener('click',async e=>{
     else if(a==='purgeAll'){ await doPurge(); }
     else if(a==='revoke'){ await api('/api/shares/'+act.dataset.sid,{method:'DELETE'}); toast('已撤销'); openShares(); }
     else if(a==='genShare'){ await doShare(act.dataset.path,Number(act.dataset.hours)); }
+    else if(a==='view'){ closeSheet(); goView(act.dataset.view); }
+    else if(a==='href'){
+      // /dash 认 token=，其余页（/gray、/about）认 k=
+      const hr=act.dataset.href;
+      const prm=hr.indexOf('/dash')===0?'token=':'k=';
+      closeSheet();
+      location.href=hr+(hr.indexOf('?')>=0?'&':'?')+prm+q(token);
+    }
     else if(a==='goUp'){ pickerPath=pickerPath.replace(/\/[^/]+$/,'')||pickerPath; await renderPicker(); }
     else if(a==='pickHere'){ await doMove(pickerPath); }
     else if(a==='openDir'){ closeSheet(); await loadDir(act.dataset.path); }
@@ -857,17 +888,32 @@ function openSecure(){
 }
 
 /* ---------------- 更多菜单 ---------------- */
+/* 顶栏那颗 ⋯：全局项常驻，文件页再追加「当前目录」那几项。
+   以前这些全挤在文件页的 ⋯ 里，别的页就够不到归整/灰色/关于，于是各自往标签栏塞一格。 */
 $('#btnMore').onclick=()=>{
-  openSheet('更多',
-    '<div class="menu-item" data-act="mkdir"><span class="mi-ic">＋</span>新建文件夹</div>'
-    +'<div class="menu-item" data-act="sort" data-key="name"><span class="mi-ic">A</span>按名称排序</div>'
-    +'<div class="menu-item" data-act="sort" data-key="mtime"><span class="mi-ic">◷</span>按时间排序</div>'
-    +'<div class="menu-item" data-act="sort" data-key="size"><span class="mi-ic">▤</span>按大小排序</div>'
-    +'<div class="menu-item" data-act="trash"><span class="mi-ic">♻</span>回收站</div>'
-    +'<div class="menu-item" data-act="shares"><span class="mi-ic">↗</span>分享链接管理</div>'
-    +'<div class="menu-item" data-act="dav"><span class="mi-ic">⛨</span>加密访问与传输说明</div>'
-    +'<div class="menu-item" data-act="sortInbox"><span class="mi-ic">⊞</span>把收件箱按类型整理</div>'
-    +'<div class="menu-item" data-act="finder"><span class="mi-ic">⌘</span>在 Mac 上打开这个目录</div>');
+  const st=$('#stat').textContent||'';
+  const fr=$('#free').textContent||'';
+  let h='<div class="mstat">'
+    +'<div class="ms-l">'+esc(location.hostname)+'</div>'
+    +'<div class="ms-s">'+esc(st||'状态未知')+(fr&&fr!=='--'?' · '+esc(fr):'')+'</div></div>';
+  h+='<div class="menu-item" data-act="view" data-view="tidy"><span class="mi-ic">⧉</span>存图归整<span class="mi-s">每天 03:00</span></div>'
+    +'<div class="menu-item" data-act="href" data-href="/gray"><span class="mi-ic">灰</span>灰色 · 扫码下载</div>'
+    +'<div class="menu-item" data-act="href" data-href="/dash"><span class="mi-ic">▦</span>工作台<span class="mi-s">桌面版</span></div>'
+    +'<div class="menu-item" data-act="href" data-href="/about"><span class="mi-ic">ⓘ</span>关于与版本</div>';
+  if(curView==='files'){
+    h+='<div class="menu-sec">当前目录</div>'
+      +'<div class="menu-item" data-act="mkdir"><span class="mi-ic">+</span>新建文件夹</div>'
+      +'<div class="menu-item" data-act="sort" data-key="name"><span class="mi-ic">A</span>按名称排序</div>'
+      +'<div class="menu-item" data-act="sort" data-key="mtime"><span class="mi-ic">◷</span>按时间排序</div>'
+      +'<div class="menu-item" data-act="sort" data-key="size"><span class="mi-ic">▤</span>按大小排序</div>'
+      +'<div class="menu-item" data-act="finder"><span class="mi-ic">⌘</span>在 Mac 上打开这个目录</div>'
+      +'<div class="menu-item" data-act="sortInbox"><span class="mi-ic">⊞</span>把收件箱按类型整理</div>'
+      +'<div class="menu-sec">其他</div>'
+      +'<div class="menu-item" data-act="trash"><span class="mi-ic">♻</span>回收站</div>'
+      +'<div class="menu-item" data-act="shares"><span class="mi-ic">↗</span>分享链接管理</div>'
+      +'<div class="menu-item" data-act="dav"><span class="mi-ic">⛨</span>加密访问与传输说明</div>';
+  }
+  openSheet('更多',h);
 };
 
 /* ---------------- 链接入库 ---------------- */
@@ -913,8 +959,9 @@ function pickRow(q, host){
   el.innerHTML='<span class="ic">?</span><span class="tx"><div class="t1"></div></span>'
     +'<span class="pick"><button data-m="gallery">存图</button>'
     +'<button data-m="article">存文章</button></span>';
-  // 有按钮就不用再念「回存图 / 回存文章」——那半句是给微信文字回复用的
-  const q2=String(q||'').replace(/\s*[—–-]*\s*回「[\s\S]*$/, '')||'这条存图还是存文章？';
+  // 有按钮就不用再念「回存图 / 回存文章」——那半句是给微信文字回复用的。
+  // 后端文案 2026-11-26 改成「回1「存图」；回2…」，数字要一起吃掉，否则整句会漏到这里。
+  const q2=String(q||'').replace(/\s*[—–-]*\s*回\s*[123]?\s*「[\s\S]*$/, '')||'这条存图还是存文章？';
   el.querySelector('.t1').textContent=q2;
   $(host||'#upqueue').prepend(el);
   return new Promise(res=>{
@@ -975,7 +1022,7 @@ async function watchLink(job){
 
 async function saveLink(){
   if(lkBusy) return;
-  const inp=$('#linkIn'), btn=$('#btnLink'), hint=$('#linkHint');
+  const inp=$('#linkIn'), btn=$('#btnSave'), hint=$('#linkHint');
   const text=inp.value.trim();
   if(!text){ inp.focus(); return; }
   const urls=lkSplit(text);
@@ -1015,10 +1062,7 @@ async function saveLink(){
     }
   }
 }
-$('#btnLink').onclick=saveLink;
-$('#linkIn').addEventListener('keydown',e=>{
-  if(e.key==='Enter'&&!e.isComposing){ e.preventDefault(); saveLink(); }
-});
+
 
 /* ---------------- 阅读（存文章 + 4B 分主题） ---------------- */
 let readBusy=false, readTopic='全部', readTopicsCache=null;
@@ -1030,7 +1074,7 @@ function readRow(state,title,sub){
   el.querySelector('.ic').textContent=READ_ST[state]||'·';
   el.querySelector('.t1').textContent=title;
   el.querySelector('.t2').textContent=sub||'';
-  $('#readList').prepend(el);
+  $('#upqueue').prepend(el);
   return el;
 }
 /* 等一篇存文章任务跑完。返回失败时要回填的链接（成功 / 重复返回 ''）。 */
@@ -1045,7 +1089,7 @@ async function watchArticle(job){
     // 两边都像：问一句再走。回答后这个任务会按选的方向重跑一遍
     // （选「图集」时改由存图那条路抓，任务号会换）。
     if(s.state==='ask'){
-      const pick=await pickRow(s.error||s.message, '#readList');
+      const pick=await pickRow(s.error||s.message, '#upqueue');
       const r=await api('/api/pending/resolve',{method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({id:s.pid, mode:pick.mode})}).catch(()=>null);
@@ -1080,7 +1124,7 @@ async function watchArticle(job){
 
 async function saveArticle(){
   if(readBusy) return;
-  const inp=$('#readIn'), btn=$('#btnRead'), hint=$('#readHint');
+  const inp=$('#linkIn'), btn=$('#btnSave'), hint=$('#linkHint');
   const text=inp.value.trim();
   if(!text){ inp.focus(); return; }
   const urls=lkSplit(text);
@@ -1113,9 +1157,21 @@ async function saveArticle(){
     }
   }
 }
-$('#btnRead').onclick=saveArticle;
-$('#readIn').addEventListener('keydown',e=>{
-  if(e.key==='Enter'&&!e.isComposing){ e.preventDefault(); saveArticle(); }
+/* 两颗按钮合并成一颗：自动判断走 /api/link（后端分不清会反问），
+   选了「当文章存」就直接走 /api/article/fetch。 */
+let saveMode='auto';
+$('#saveSeg').addEventListener('click',e=>{
+  const sg=e.target.closest('.sg'); if(!sg) return;
+  saveMode=sg.dataset.mode;
+  document.querySelectorAll('#saveSeg .sg').forEach(x=>x.classList.toggle('on',x===sg));
+  $('#linkHint').textContent=saveMode==='article'
+    ? '一律按文章抓正文，存进阅读库'
+    : '公众号 / 小红书抓图存文件夹，网页抓正文存阅读；分不清时会问你';
+});
+function doSave(){ saveMode==='article' ? saveArticle() : saveLink(); }
+$('#btnSave').onclick=doSave;
+$('#linkIn').addEventListener('keydown',e=>{
+  if(e.key==='Enter'&&!e.isComposing){ e.preventDefault(); doSave(); }
 });
 
 async function loadReadTopics(){
@@ -1278,7 +1334,7 @@ function showCleanup(names){
 let pickMode='keep';
 document.querySelectorAll('.picks .pk').forEach(btn=>{
   btn.onclick=()=>{
-    pickMode=btn.dataset.mode;
+    pickMode=($('#delAfter')&&$('#delAfter').checked)?'move':'keep';
     (btn.dataset.pick==='img' ? $('#pickImg') : $('#pickAny')).click();
   };
 });
@@ -1301,7 +1357,9 @@ function saveGroup(){
 }
 function paintTarget(){
   const t=groupPath||uploadTarget||'';
-  $('#upTarget').textContent='目标：'+(t?t.replace(/^.*\/AI项目/,'…'):'收件箱（当天目录）');
+  // 绝对路径一行放不下（390 宽会换行顶掉按钮），只留最后两段
+  const short=t?('…/'+t.split('/').filter(Boolean).slice(-2).join('/')):'';
+  $('#upTarget').textContent='目标：'+(t?short:'收件箱（当天目录）');
 }
 function paintGroup(){
   const on=!!groupPath;
@@ -1440,7 +1498,13 @@ $('#input').addEventListener('input',()=>{
 });
 
 /* ---------------- 导航 ---------------- */
+let curView='files';
 function goView(name,path){
+  curView=name;
+  const sub=(name==='tidy');            // 二级页：底栏让位，顶栏出返回键
+  document.body.classList.toggle('subpage',sub);
+  $('#btnBack').hidden=!sub;
+  $('#subTitle').textContent=sub?({tidy:'存图归整'}[name]||''):'';
   document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x.dataset.view===name));
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   $('#v-'+name).classList.add('active');
@@ -1448,8 +1512,9 @@ function goView(name,path){
   if(name==='files') loadDir(path||curPath);
   if(name==='chat') setTimeout(()=>$('#input').focus(),80);
   if(name==='tidy') loadTidy();
-  if(name==='reading'){ loadReadTopics(); loadReadList(); }
+  if(name==='save'){ loadReadTopics(); loadReadList(); }
 }
+$('#btnBack').onclick=()=>goView('files');
 document.querySelectorAll('nav button').forEach(b=>{
   b.onclick=()=>goView(b.dataset.view);
 });
@@ -1679,7 +1744,7 @@ async function boot(){
     $('#stat').textContent=s.gateway_ok?(s.tools+' 个工具'):'网关离线';
     if(s.usage&&s.usage.free_h) $('#free').textContent=s.usage.free_h+' 可用';
     if(!$('#msgs').children.length){
-      addBubble('bot','连上了。你可以：\n· 「文件」里浏览、改名、移动、删除本机目录\n· 「上传」把手机文件发进来，直接落进当前目录\n· 「更多」里把本机挂成网络盘（WebDAV）\n· 「对话」里让它整理文件、找东西、查资料');
+      addBubble('bot','连上了。三格就够用：\n· 「文件」浏览、改名、移动、删除本机目录\n· 「存」粘链接 + 发手机文件，下面直接看已存文章\n· 「对话」让它整理文件、找东西、查资料\n右上 ⋯ 里有归整、灰色、工作台、回收站');
     }
     await loadDir('');
     restoreGroup();
