@@ -141,6 +141,69 @@ def seed(home: Path) -> None:
     (trash / "index.jsonl").write_text(
         "\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8")
 
+    # ---- 记账账本：三件商品，覆盖「在用 / 已卖 / 字段缺失」三种形态
+    led = lib / "12-记账"
+    for sub in ("图", "原图", "_回收站"):
+        (led / sub).mkdir(parents=True, exist_ok=True)
+    img = led / "图" / "p-20260101-aaaa.jpg"
+    if photo.exists():
+        subprocess.run(["sips", "-Z", "600", "-s", "format", "jpeg", str(photo), "--out", str(img)],
+                       capture_output=True)
+    if not img.exists():
+        img.write_bytes(b"\xff\xd8\xff\xe0" + b"1" * 300)
+    (led / "原图" / "p-20260101-aaaa.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 64)
+    book = {
+        "items": [
+            {"id": "p-20260101-aaaa", "name": "无线降噪耳机 白色", "platform": "京东",
+             "bought_at": "2026-01-01", "price": 1299.0, "category": "数码",
+             "shop": "某某旗舰店", "order_no": "1234567890123", "note": "  划痕在背面  ",
+             "status": "在用", "sold_at": "", "sold_price": None, "sold_to": "",
+             "image": "12-记账/图/p-20260101-aaaa.jpg",
+             "raw": "12-记账/原图/p-20260101-aaaa.png",
+             "crop_src": "vision", "ocr": "订单详情\n实付款 ¥1299.00", "conf": ["shop"],
+             "created_at": "2026-01-01T10:00:00", "updated_at": "2026-01-01T10:00:00"},
+            {"id": "p-20260102-bbbb", "name": "旧键盘", "platform": "",
+             "bought_at": "2025-12-01", "price": 399, "category": "数码",
+             "shop": "", "order_no": "", "note": "", "status": "已卖",
+             "sold_at": "2026-01-05", "sold_price": 260.5, "sold_to": "同事",
+             "image": "", "raw": "", "crop_src": "none", "ocr": "", "conf": [],
+             "created_at": "2025-12-01T09:00:00", "updated_at": "2026-01-05T09:00:00"},
+            {"id": "p-20260103-cccc", "name": "（待命名）", "bought_at": "2026-01-03",
+             "price": None, "status": "在用", "note": "", "image": "", "raw": "",
+             "conf": ["price", "name"]},
+        ],
+        "updated_at": "2026-01-05T09:00:00",
+    }
+    (led / "账本.json").write_text(
+        json.dumps(book, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def w4_steps(state: dict):
+    """记账账本：读、单条、图片、改（含非法价）、删（含重复删）。"""
+    q = lambda s: urllib.parse.quote(s, safe="")  # noqa: E731
+    return [
+        ("账本整体", "GET", "/api/ledger", None),
+        ("单条详情", "GET", "/api/ledger/item?id=p-20260101-aaaa", None),
+        ("单条不存在", "GET", "/api/ledger/item?id=nope", None),
+        ("产品图", "GET", "/api/ledger/img?id=p-20260101-aaaa", None),
+        ("原图", "GET", "/api/ledger/img?id=p-20260101-aaaa&raw=1", None),
+        ("图不存在", "GET", "/api/ledger/img?id=nope", None),
+        ("改价格与状态", "POST", "/api/ledger/update",
+         {"id": "p-20260101-aaaa",
+          "patch": {"price": "¥1,299.90", "status": "已卖", "note": "改过了"}}),
+        ("改完再读", "GET", "/api/ledger/item?id=p-20260101-aaaa", None),
+        ("价格非法", "POST", "/api/ledger/update",
+         {"id": "p-20260101-aaaa", "patch": {"price": "不是数字"}}),
+        ("清空价格", "POST", "/api/ledger/update",
+         {"id": "p-20260102-bbbb", "patch": {"sold_price": ""}}),
+        ("改不存在的", "POST", "/api/ledger/update", {"id": "nope", "patch": {"name": "x"}}),
+        ("删一条", "POST", "/api/ledger/remove", {"id": "p-20260103-cccc"}),
+        ("删后再看", "GET", "/api/ledger", None),
+        ("重复删", "POST", "/api/ledger/remove", {"id": "p-20260103-cccc"}),
+        ("删带图的", "POST", "/api/ledger/remove", {"id": "p-20260101-aaaa"}),
+        ("删完看账本", "GET", "/api/ledger", None),
+    ]
+
 
 def w2_paths(home: Path) -> list[str]:
     inbox = home / "library" / "收件箱"
@@ -211,6 +274,8 @@ _NORM = [
     (re.compile(rb"\b[0-9a-f]{10}\b"), b"<SID>"),
     (re.compile(rb'"(created|expires)":\d+'), rb'"\1":<EPOCH>'),
     (re.compile(rb"\d{8}-\d{6}_"), b"<STAMP>_"),
+    # 记账的回收站目录是 `{stamp}-{id}`（连字符，不是下划线）
+    (re.compile(rb"\d{8}-\d{6}-"), b"<STAMP>-"),
     (re.compile('"\\d+ (?:分钟|小时|天)前"'.encode()), '"<AGE>"'.encode()),
     (re.compile(rb"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{4}"), b"<TS>"),
     (re.compile(rb'"\?v=\d+"'), b'"?v=<M>"'),
@@ -260,12 +325,12 @@ def call(port: int, token: str, method: str, path: str, body, timeout: float = 6
         return 0, str(e).encode()
 
 
-def replay(port: int, token: str, home: Path) -> list[tuple[str, int, bytes]]:
+def replay(port: int, token: str, home: Path, steps_fn) -> list[tuple[str, int, bytes]]:
     """跑完整脚本，返回 [(说明, 状态码, 归一后响应)]。"""
     inbox = home / "library" / "收件箱"
     state = {"inbox": inbox}
     out: list[tuple[str, int, bytes]] = []
-    for note, method, path, body in w3_steps(state):
+    for note, method, path, body in steps_fn(state):
         if "{sid}" in path:
             path = path.replace("{sid}", state.get("sid", ""))
         if "{inbox_q}" in path:
@@ -373,8 +438,9 @@ def _wait_cfg(home: Path, timeout: float = 40.0) -> dict:
     return cfg
 
 
-def run_w3(args) -> int:
+def run_write_suite(args, name: str) -> int:
     """写族对拍：同一脚本，Python 跑一遍、Rust 跑一遍，各用一份干净数据根。"""
+    steps_fn = w3_steps if name == "w3" else w4_steps
     results: dict[str, list] = {}
     procs: list[subprocess.Popen] = []
     try:
@@ -407,7 +473,7 @@ def run_w3(args) -> int:
                     err = p.stderr.read().decode()[:600]
                 print(f"{side} 侧没起来（端口 {port}）{err}")
                 return 2
-            results[side] = replay(port, token, home)
+            results[side] = replay(port, token, home, steps_fn)
     finally:
         for p in procs:
             p.terminate()
@@ -436,7 +502,7 @@ def main() -> int:
     ap.add_argument("--all-get", action="store_true")
     ap.add_argument(
         "--suite",
-        choices=["w1", "w2", "w3"],
+        choices=["w1", "w2", "w3", "w4"],
         default=None,
         help="用内置夹具跑某一波（会先往临时数据根铺文件）",
     )
@@ -453,8 +519,8 @@ def main() -> int:
     ap.add_argument("--keep", action="store_true", help="保留临时数据根，便于排查")
     args = ap.parse_args()
 
-    if args.suite == "w3":
-        return run_w3(args)
+    if args.suite in ("w3", "w4"):
+        return run_write_suite(args, args.suite)
 
     paths = args.paths or DEFAULT_PATHS
     if args.all_get:

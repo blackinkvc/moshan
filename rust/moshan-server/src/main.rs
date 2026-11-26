@@ -4,6 +4,8 @@
 //       W1 阶段保持"零副作用"，才能与 Python 逐字节对拍）。
 
 mod auth;
+mod jsonio;
+mod ledger;
 mod paths;
 mod proxy;
 mod routes;
@@ -44,6 +46,12 @@ async fn main() {
         .route("/api/trash/purge", post(routes::w3::trash_purge))
         .route("/api/share", post(routes::w3::share_create))
         .route("/api/shares/{sid}", axum::routing::delete(routes::w3::share_revoke))
+        // ---- W4：记账账本（6 条；上传那两条等 multipart 基建）
+        .route("/api/ledger", get(routes::w4::all))
+        .route("/api/ledger/item", get(routes::w4::one))
+        .route("/api/ledger/img", get(routes::w4::img))
+        .route("/api/ledger/update", post(routes::w4::update))
+        .route("/api/ledger/remove", post(routes::w4::remove))
         // ---- 其余 216 条：镜像给 Python，行为完全不变
         .fallback(proxy::forward)
         .with_state(ctx.clone());
