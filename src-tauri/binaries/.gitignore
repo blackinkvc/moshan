@@ -1,0 +1,4 @@
+# 只保留说明文件；sidecar 一律现场构建（见 README.md）
+*.exe
+moshan-*
+!README.md

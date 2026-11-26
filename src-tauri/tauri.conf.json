@@ -1,0 +1,66 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Moshan",
+  "version": "0.3.13",
+  "identifier": "cn.moshan.hub",
+  "build": {
+    "frontendDist": "frontend"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "墨山中台",
+        "url": "loading.html",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 700,
+        "resizable": true,
+        "center": true,
+        "visible": true,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "publisher": "Moshan contributors",
+    "copyright": "Copyright (c) 2026 Moshan contributors",
+    "category": "Productivity",
+    "shortDescription": "墨山中台",
+    "longDescription": "墨山中台：本机工作台、文件、账本与多机管理。桌面壳只负责窗口与进程，业务仍由本机 Python 服务提供，浏览器可直接访问同一端口。",
+    "licenseFile": "../LICENSE-MIT",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/moshan"
+    ],
+    "resources": {
+      "../LICENSE-MIT": "licenses/LICENSE-MIT",
+      "../LICENSE-APACHE": "licenses/LICENSE-APACHE"
+    },
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "SimpChinese",
+          "English"
+        ]
+      }
+    }
+  }
+}

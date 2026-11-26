@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "桌面壳默认能力：只开核心窗口能力。不开 shell / fs 插件——进程由 Rust 侧直接管理，页面拿不到任何本机执行权。",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default"
+  ]
+}

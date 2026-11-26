@@ -197,7 +197,7 @@ _PAGE = """<!DOCTYPE html>
   <span class="ver" id="ver">Moshan</span>
   <span class="tag" id="chan"></span>
 </header>
-<p class="lead">本地优先的个人中台 · MIT 许可 · 数据全部留在本机</p>
+<p class="lead">本地优先的个人中台 · MIT or Apache-2.0 双许可 · 数据全部留在本机</p>
 
 <div class="card">
   <h2>更新</h2>
@@ -241,7 +241,7 @@ _PAGE = """<!DOCTYPE html>
   </div>
 </div>
 
-<p class="foot">Moshan · 墨山中台 · MIT</p>
+<p class="foot">Moshan · 墨山中台 · MIT OR Apache-2.0</p>
 </div>
 
 <script>

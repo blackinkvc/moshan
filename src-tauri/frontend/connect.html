@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>连接墨山中台</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: max(24px, env(safe-area-inset-top)) 20px 28px;
+    background: #f6f6f3; color: #2c2c2a;
+    font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  h1 { margin: 8px 0 4px; font-size: 19px; font-weight: 500; }
+  p.lead { margin: 0 0 20px; color: #6b6a66; font-size: 13px; }
+  label { display: block; margin: 14px 0 6px; font-size: 13px; color: #444441; }
+  input {
+    width: 100%; padding: 10px 12px; font: inherit; color: #2c2c2a; background: #fff;
+    border: 1px solid rgba(0,0,0,.12); border-radius: 10px; outline: none;
+  }
+  input:focus { border-color: #7F77DD; }
+  .hint { margin: 6px 0 0; color: #888780; font-size: 12px; }
+  button {
+    width: 100%; margin-top: 22px; padding: 12px; font: inherit; font-weight: 500; color: #fff;
+    background: #534AB7; border: 0; border-radius: 10px;
+  }
+  button:disabled { background: #AFA9EC; }
+  #msg { margin-top: 14px; font-size: 13px; min-height: 20px; }
+  .bad { color: #A32D2D; }
+  .good { color: #0F6E56; }
+  .note { margin-top: 26px; padding: 12px 14px; background: #fff; border: 1px solid rgba(0,0,0,.07);
+          border-radius: 12px; color: #5F5E5A; font-size: 12px; line-height: 1.7; }
+  .note b { font-weight: 500; color: #2c2c2a; }
+}
+</style>
+</head>
+<body>
+<h1>连接墨山中台</h1>
+<p class="lead">Android 版是控制器：它不跑本机服务，而是连到已经在跑的桌面机。</p>
+
+<label for="host">桌面机地址</label>
+<input id="host" placeholder="例如 192.168.0.106 或 100.101.102.103" autocomplete="off" spellcheck="false">
+<p class="hint">Tailscale 的 100.x 地址，或同一局域网内的 IPv4。</p>
+
+<label for="port">端口</label>
+<input id="port" placeholder="8322" inputmode="numeric" autocomplete="off">
+
+<label for="token">访问令牌</label>
+<input id="token" placeholder="桌面端 config.json 里的 token" autocomplete="off" spellcheck="false">
+<p class="hint">桌面端用明文端口给手机用时，令牌就在 state/config.json。</p>
+
+<button id="go">测试并进入</button>
+<div id="msg"></div>
+
+<div class="note">
+  <b>连不上时按顺序排查</b><br>
+  1. 桌面端要绑手机可达的地址：Tailscale 用 <b>plain_port</b>（默认 8322），局域网需在配置里放开 <b>allow_lan</b> 并把这台手机加进 <b>lan_allow_ips</b>。<br>
+  2. 安卓不信任自签证书，所以手机侧一律走明文 HTTP，不要填 https 端口。<br>
+  3. 桌面端没开或已休眠时，这里会一直转圈——先在电脑上打开一次中台。
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const msg = $('msg');
+
+  const saved = (() => {
+    try { return JSON.parse(localStorage.getItem('moshan.remote') || '{}'); } catch { return {}; }
+  })();
+  $('host').value = saved.host || '';
+  $('port').value = saved.port || '8322';
+  $('token').value = saved.token || '';
+
+  function say(text, cls) {
+    msg.textContent = text;
+    msg.className = cls || '';
+  }
+
+  function base() {
+    const host = $('host').value.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    const port = $('port').value.trim();
+    if (!host) throw new Error('请填桌面机地址');
+    if (!/^\d+$/.test(port)) throw new Error('端口应为数字');
+    const url = `http://${host}:${port}`;
+    return { host, port, token: $('token').value.trim(), url };
+  }
+
+  // 跨源读不到响应头，所以只判断「请求是否发得出去」：能 resolve 就说明地址可达，
+  // 真正的鉴权由随后的页面跳转来判定（错令牌会看到 401 页面，比在这里猜更准）。
+  function probe(url) {
+    return Promise.race([
+      fetch(url + '/api/ping', { mode: 'no-cors', cache: 'no-store' }).then(() => true),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('超时')), 3000)),
+    ]);
+  }
+
+  $('go').addEventListener('click', async () => {
+    let t;
+    try { t = base(); } catch (e) { say(e.message, 'bad'); return; }
+    $('go').disabled = true;
+    say('正在测通…');
+    try {
+      await probe(t.url);
+    } catch {
+      $('go').disabled = false;
+      say('连不上：确认电脑开着、地址与端口正确、手机与电脑在同一网络。', 'bad');
+      return;
+    }
+    localStorage.setItem('moshan.remote', JSON.stringify({ host: t.host, port: t.port, token: t.token }));
+    say('已连通，正在进入…', 'good');
+    location.replace(`${t.url}/dash?k=${encodeURIComponent(t.token)}`);
+  });
+</script>
+</body>
+</html>

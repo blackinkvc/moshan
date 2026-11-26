@@ -1,0 +1,34 @@
+[package]
+name = "moshan-desktop"
+version = "0.3.13"
+description = "墨山中台桌面壳（Tauri）"
+authors = ["Moshan contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/blackinkvc/moshan"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+# 名字带 _lib 是 Tauri 移动端的硬要求：Android 侧生成的 Kotlin 代码按这个符号找入口，
+# 改成别的名字会在 tauri android build 时报 unresolved reference。
+name = "moshan_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+# custom-protocol 由 tauri build 自动开启；开发态走 loading.html 本地资源。
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

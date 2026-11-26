@@ -14,7 +14,7 @@
 <a href="https://github.com/blackinkvc/moshan/releases/latest"><img src="https://img.shields.io/badge/下载-macOS%20%7C%20Windows-2b4b6f?style=for-the-badge" alt="下载"></a>
 <img src="https://img.shields.io/github/v/release/blackinkvc/moshan?style=flat-square&label=版本" alt="版本">
 <img src="https://img.shields.io/github/actions/workflow/status/blackinkvc/moshan/build.yml?style=flat-square&label=构建" alt="构建">
-<img src="https://img.shields.io/badge/许可-MIT-6b6a62?style=flat-square" alt="MIT">
+<img src="https://img.shields.io/badge/许可-MIT_OR_Apache--2.0-6b6a62?style=flat-square" alt="MIT OR Apache-2.0">
 <img src="https://img.shields.io/badge/数据-不出本机-2f7d54?style=flat-square" alt="数据不出本机">
 
 </div>
@@ -77,9 +77,25 @@
 | 系统 | 文件 | 说明 |
 |---|---|---|
 | macOS（Apple 芯片） | `Moshan-<版本>-macos-arm64.dmg` | M1 / M2 / M3 / M4 |
+| macOS（Tauri 壳） | `Moshan_<版本>_aarch64.dmg` | 由 `tauri.yml` 构建，窗口化，仍拉起同一个本机服务 |
 | Windows 10 / 11（64 位） | `Moshan-<版本>-windows-x64-Setup.exe` | 一键安装，无需管理员权限 |
+| Windows（Tauri 壳） | `Moshan_<版本>_x64-setup.exe` | NSIS 安装包，按当前用户安装 |
+| Linux（64 位） | `moshan_<版本>_amd64.deb` / `.AppImage` | Debian / Ubuntu 用 deb，其他发行版用 AppImage |
+| Android | `Moshan-<版本>-android.apk` | **控制器**：不跑本机服务，连到已配对的桌面机 |
+| 网页版 | 无需下载 | 服务跑起来后浏览器直接开 `http://127.0.0.1:<端口>` |
 
 安装包自带 Python 运行时，**不需要另外装 Python、也不需要装 Node**。
+
+**网页版与桌面壳是同一个服务。** 桌面壳（Tauri）只负责开窗口、拉起本机 Python 服务、
+退出时收掉进程；业务与接口全在服务里。所以两者可以并存：壳开着的时候，浏览器打开同一端口
+看到的是同一份数据，不存在「网页版和桌面版数据不同步」。想只用浏览器，装安装包后直接访问
+`http://127.0.0.1:8323` 即可（端口以 `state/config.json` 里的 `local_port` 为准）。
+
+**Android 是控制器，不是第二个本体。** 手机上跑不了桌面二进制（bionic 与 glibc 不兼容），
+所以 APK 装完先填桌面机地址、端口与令牌，之后加载对方的中台页面。桌面机需通过 Tailscale
+或局域网可达：Tailscale 走 `plain_port`（默认 8322），局域网需放开 `allow_lan` 并把手机加进
+`lan_allow_ips`。手机一律走明文 HTTP —— 安卓不信任自签证书。
+
 
 <details>
 <summary><b>macOS 提示「无法验证开发者」怎么办</b></summary>
@@ -493,4 +509,12 @@ macOS 用系统自带 `sips` 缩图；Windows 没有这个命令，列表退回�
 
 ## 许可
 
-[MIT](LICENSE) © Moshan contributors
+本项目采用 **MIT OR Apache-2.0 双许可**，你可以任选其一：
+
+- [MIT](LICENSE-MIT)
+- [Apache-2.0](LICENSE-APACHE)
+
+选择 Apache-2.0 时，额外获得明确的专利授权条款；选择 MIT 时条款更短。
+除特别标注的文件外，两种许可对全部代码同等适用。
+
+© Moshan contributors

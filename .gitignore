@@ -41,3 +41,12 @@ notes.md
 
 # 可选的 openssl 二进制（vendor/openssl/openssl.exe + dll）：谁要谁放，不入库
 vendor/openssl/
+
+# Tauri 桌面壳（src-tauri/）
+# target/ 是 cargo 产物（几 GB 到几十 GB）；gen/ 是 tauri-build 每次现生成的能力 schema。
+# sidecar 二进制同样不入库，见 src-tauri/binaries/README.md。
+src-tauri/target/
+src-tauri/gen/
+src-tauri/.cargo/
+src-tauri/binaries/moshan-*
+
