@@ -11,7 +11,6 @@ use axum::extract::{Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::Arc;
@@ -60,39 +59,65 @@ pub async fn all(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Response
     Json(ledger::payload(&ctx)).into_response()
 }
 
-#[derive(Deserialize)]
-pub struct IdQ {
-    #[serde(default)]
-    id: String,
-    #[serde(default = "default_w")]
-    w: i64,
-    #[serde(default)]
-    raw: i64,
+/// FastAPI 缺必填查询参数时的 422 形状。
+///
+/// 前端永远会带 id，但「不带参数直接打」是对拍里必然会出现的一步 ——
+/// 与其让它红着，不如把形状照抄。`url` 里的 pydantic 版本跟 requirements.txt 走，
+/// 升级 pydantic 时这里一起改（它只出现在错误消息里，不影响任何判定）。
+fn missing_query(field: &str) -> Response {
+    (
+        StatusCode::UNPROCESSABLE_ENTITY,
+        Json(json!({"detail": [{
+            "type": "missing",
+            "loc": ["query", field],
+            "msg": "Field required",
+            "input": null,
+            "url": "https://errors.pydantic.dev/2.14/v/missing",
+        }]})),
+    )
+        .into_response()
 }
 
-fn default_w() -> i64 {
-    400
-}
-
-pub async fn one(State(ctx): CtxState, headers: HeaderMap, uri: Uri, Query(q): Query<IdQ>) -> Response {
+pub async fn one(
+    State(ctx): CtxState,
+    headers: HeaderMap,
+    uri: Uri,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
     if let Some(r) = peek(&ctx, &headers, &uri) {
         return r;
     }
-    Json(ledger::full_item(&ctx, &q.id)).into_response()
+    let Some(id) = q.get("id") else {
+        return missing_query("id");
+    };
+    Json(ledger::full_item(&ctx, id)).into_response()
 }
 
-pub async fn img(State(ctx): CtxState, headers: HeaderMap, uri: Uri, Query(q): Query<IdQ>) -> Response {
+pub async fn img(
+    State(ctx): CtxState,
+    headers: HeaderMap,
+    uri: Uri,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
     if let Some(r) = peek(&ctx, &headers, &uri) {
         return r;
     }
-    let Some(p) = ledger::image_file(&ctx, &q.id, q.raw != 0) else {
+    let Some(id) = q.get("id") else {
+        return missing_query("id");
+    };
+    let raw = q.get("raw").and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+    let Some(p) = ledger::image_file(&ctx, id, raw != 0) else {
         return http_err(404, "没有这张图");
     };
-    if q.raw != 0 {
+    if raw != 0 {
         return file_bytes(&p, ledger::mime_of(&p), "private, max-age=60");
     }
     // 与 `/api/thumb` 同一套：宽限制 80..1200，缩不出来就回原图（功能不能断）。
-    let w = q.w.clamp(80, 1200) as u32;
+    let w = q
+        .get("w")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(400)
+        .clamp(80, 1200) as u32;
     match storage::make_thumb(&p, w) {
         Some(t) => file_bytes(&t, "image/jpeg", "private, max-age=600"),
         None => file_bytes(&p, ledger::mime_of(&p), "private, max-age=60"),
