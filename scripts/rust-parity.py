@@ -25,6 +25,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -48,6 +49,243 @@ DEFAULT_PATHS = [
 #   /api/heartbeat  STATE 是进程内字典，Python 启动后立刻跑过一轮，last_at 已填；
 #                   Rust 此刻还没有自己的调度器。等 W5 由 Rust 接管调度再纳入。
 TIME_KEYS = ("/api/heartbeat",)
+PARITY_TOKEN = "parity-token-fixed-for-both-sides"
+
+
+def seed(home: Path) -> None:
+    """往临时数据根里铺一套夹具。
+
+    W2 及之后的对拍必须跑在**有内容的目录**上：空目录里 `files`/`browse`/`trash`/`shares`
+    都只返回空数组，字段顺序、链接判定、排序键全都验不到。
+    夹具刻意包含：中文名、点开头文件、`index.jsonl`、符号链接目录、符号链接文件、
+    空目录、四层嵌套、回收站里「索引有但磁盘没有」的残条。
+    """
+    lib = home / "library"
+    inbox = lib / "收件箱"
+    (inbox / "子目录" / "深层").mkdir(parents=True, exist_ok=True)
+    (inbox / "空目录").mkdir(parents=True, exist_ok=True)
+    (inbox / "报告.md").write_text("# 小结\nhello\n", encoding="utf-8")
+    # 真图才验得到内联缩略图那条路（假 JPEG 会让两边都缩不出来，等于没测）。
+    icon = ROOT / "src-tauri/icons/icon.png"
+    photo = inbox / "照片.jpg"
+    made = False
+    if icon.exists():
+        made = subprocess.run(
+            ["sips", "-Z", "240", "-s", "format", "jpeg", str(icon), "--out", str(photo)],
+            capture_output=True,
+        ).returncode == 0 and photo.exists()
+    if not made:
+        photo.write_bytes(b"\xff\xd8\xff\xe0" + b"0" * 200)
+    (inbox / "数据.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    (inbox / ".隐藏.txt").write_text("hidden", encoding="utf-8")
+    (inbox / "index.jsonl").write_text('{"x":1}\n', encoding="utf-8")
+    (inbox / "子目录" / "a.txt").write_text("a", encoding="utf-8")
+    (inbox / "子目录" / "深层" / "b.md").write_text("b", encoding="utf-8")
+    # 数据根下的真实形态就是符号链接：目录链接不能进（rglob 口径），文件链接要能列出
+    (inbox / "链接目录").symlink_to(inbox / "子目录")
+    (inbox / "别名.txt").symlink_to(inbox / "报告.md")
+
+    arch = lib / "04-归档"
+    arch.mkdir(parents=True, exist_ok=True)
+    (arch / "旧文件.pdf").write_bytes(b"%PDF-1.4\n")
+
+    now = int(time.time())
+    state = home / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    # 固定令牌 + 固定数据根：两边各跑一遍写脚本时，配置必须完全对等，
+    # 否则「Rust 侧全是 401」会被误读成鉴权实现有问题。
+    # 令牌固定还有一个好处：对拍脚本不用等 Python 生成随机 token 再读回来。
+    cfg = {
+        "token": PARITY_TOKEN,
+        "host": "0.0.0.0",
+        "port": 8321,
+        "inbox_dir": str(inbox),
+        "allowed_roots": [str(lib)],
+        "trash_dir": str(lib / ".回收站"),
+        "dav_root": str(lib),
+        "trash_days": 30,
+        "max_upload_mb": 500,
+        "tls": False,
+        "allow_private_only": True,
+        "dav_enabled": False,
+        "gateway_base": "http://127.0.0.1:8080",
+        "gateway_api_key": "",
+        "model": "qwen3.5-4b-gguf:q4km",
+    }
+    (state / "config.json").write_text(
+        json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    shares = {
+        "aaaaaaaaaa": {"sid": "aaaaaaaaaa", "path": str(inbox / "报告.md"), "name": "报告.md",
+                       "is_dir": False, "created": now - 100, "expires": 0, "hits": 3},
+        "bbbbbbbbbb": {"sid": "bbbbbbbbbb", "path": str(inbox / "照片.jpg"), "name": "照片.jpg",
+                       "is_dir": False, "created": now - 50, "expires": now + 3600, "hits": 1},
+        # 过期的那条不该出现在列表里
+        "cccccccccc": {"sid": "cccccccccc", "path": str(inbox / "已删.txt"), "name": "已删.txt",
+                       "is_dir": False, "created": now - 10, "expires": now - 5, "hits": 0},
+    }
+    (state / "shares.json").write_text(
+        json.dumps(shares, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    trash = lib / ".回收站"
+    (trash / "d").mkdir(parents=True, exist_ok=True)
+    (trash / "d" / "x.bin").write_bytes(b"1" * 1500)
+    (trash / "20260101-000000_旧.txt").write_text("old", encoding="utf-8")
+    rows = [
+        {"name": "20260101-000000_旧.txt", "orig": str(inbox / "旧.txt"),
+         "ts": now - 7200, "bytes": 3, "is_dir": False},
+        {"name": "d", "orig": str(inbox / "d"), "ts": now - 600, "bytes": 1500, "is_dir": True},
+        # 索引里有、磁盘上已经没了 → 两边都必须跳过
+        {"name": "20260101-000000_丢失.txt", "orig": str(inbox / "丢失.txt"),
+         "ts": now - 100, "bytes": 0, "is_dir": False},
+    ]
+    (trash / "index.jsonl").write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8")
+
+
+def w2_paths(home: Path) -> list[str]:
+    inbox = home / "library" / "收件箱"
+    q = lambda p: urllib.parse.quote(str(p), safe="")  # noqa: E731
+    return [
+        "/api/files",
+        "/api/files?scope=archive",
+        "/api/files?q=%E6%8A%A5%E5%91%8A",
+        f"/api/browse?path={q(inbox)}",
+        f"/api/browse?path={q(inbox / '子目录')}",
+        f"/api/browse?path={q(inbox)}&sort=mtime",
+        f"/api/browse?path={q(inbox)}&sort=size",
+        f"/api/browse?path={q(inbox)}&q=%E6%8A%A5",
+        f"/api/browse?path={q(inbox / '空目录')}",
+        f"/api/browse?path={q(inbox / '报告.md')}",      # 307 跳转到所在目录
+        "/api/browse?path=%2Fetc",                        # 403 越界
+        f"/api/browse?path={q(inbox / '不存在')}",         # 404
+        "/api/usage",
+        "/api/trash",
+        "/api/shares",
+    ]
+
+
+# ---------------------------------------------------------------- W3 写族回放
+#
+# 写接口不能用「两边打同一份数据根」的方式对拍：Python 建了目录，Rust 再建就是 409，
+# 比的不是契约而是"谁先跑"。所以改成：**同一脚本各跑一遍，每边一份干净数据根**，
+# 逐条比归一后的响应。路径里的临时根、随机 sid、时间戳都在归一化里抹掉，
+# 剩下的就是形状与取值 —— 那才是契约。
+
+
+def w3_steps(state: dict):
+    """返回 [(说明, method, path, body)]。状态字典用来串起上一步产生的随机值。"""
+    inbox = state["inbox"]
+    return [
+        ("建目录", "POST", "/api/mkdir", {"path": str(inbox), "name": "新目录"}),
+        ("重名再建", "POST", "/api/mkdir", {"path": str(inbox), "name": "新目录"}),
+        ("名字带斜杠", "POST", "/api/mkdir", {"path": str(inbox), "name": "a/b"}),
+        ("上级不是目录", "POST", "/api/mkdir", {"path": str(inbox / "报告.md"), "name": "x"}),
+        ("改名", "POST", "/api/rename", {"path": str(inbox / "新目录"), "name": "改名了"}),
+        ("改成已占用名", "POST", "/api/rename", {"path": str(inbox / "改名了"), "name": "别名.txt"}),
+        ("改名越界", "POST", "/api/rename", {"path": "/etc/hosts", "name": "x"}),
+        ("移动进子目录", "POST", "/api/move",
+         {"paths": [str(inbox / "改名了")], "dest": str(inbox / "子目录")}),
+        ("移动空清单", "POST", "/api/move", {"paths": [], "dest": str(inbox)}),
+        ("移动不存在", "POST", "/api/move",
+         {"paths": [str(inbox / "没有这个")], "dest": str(inbox / "子目录")}),
+        ("复制文件", "POST", "/api/move",
+         {"paths": [str(inbox / "报告.md")], "dest": str(inbox / "子目录"), "copy": True}),
+        ("建分享", "POST", "/api/share", {"path": str(inbox / "报告.md"), "hours": 2}),
+        ("分享越界", "POST", "/api/share", {"path": "/etc/hosts"}),
+        ("分享不存在", "POST", "/api/share", {"path": str(inbox / "没有这个")}),
+        ("列分享", "GET", "/api/shares", None),
+        ("撤销分享", "DELETE", "/api/shares/{sid}", None),
+        ("删进回收站", "POST", "/api/delete", {"paths": [str(inbox / "数据.csv")]}),
+        ("删空清单", "POST", "/api/delete", {"paths": []}),
+        ("删根目录", "POST", "/api/delete", {"paths": [str(inbox.parent)]}),
+        ("回收站列表", "GET", "/api/trash", None),
+        ("从回收站恢复", "POST", "/api/trash/restore", {"names": ["{trash_name}"]}),
+        ("清空回收站", "POST", "/api/trash/purge", {"names": None}),
+        ("清空后列表", "GET", "/api/trash", None),
+        ("改完看一眼目录", "GET", "/api/browse?path={inbox_q}", None),
+    ]
+
+
+# 随机值/时间/临时根：两边必然不同，抹掉再比。
+_NORM = [
+    (re.compile(rb"\b[0-9a-f]{10}\b"), b"<SID>"),
+    (re.compile(rb'"(created|expires)":\d+'), rb'"\1":<EPOCH>'),
+    (re.compile(rb"\d{8}-\d{6}_"), b"<STAMP>_"),
+    (re.compile('"\\d+ (?:分钟|小时|天)前"'.encode()), '"<AGE>"'.encode()),
+    (re.compile(rb"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{4}"), b"<TS>"),
+    (re.compile(rb'"\?v=\d+"'), b'"?v=<M>"'),
+    # OS 错误文本：Python 是 `[Errno 5] 说明 (os error 2): '/path'`，Rust 是
+    # `说明 (os error 2)`。冒号后的绝对路径两边必然不同（各自的数据根），
+    # `[Errno N]` 那个 N 也不是内核 errno —— 但括号里的 **(os error N) 是真 errno**，
+    # 所以只去掉前缀与路径，保留 strerror 和 errno：错误类型不同照样能抓到。
+    (re.compile(rb"\[Errno \d+\] "), b""),
+    # 末尾的 `'` 可以是缺失的：Python 那边写的是 `str(e)[:120]`，路径常被截断在引号前。
+    # 字符类必须排除 `"` 和 `'`，否则截断时会把后面整个 JSON 尾巴一起吃掉。
+    (re.compile(rb"\(os error (\d+)\): '[^'\"]*'?"), rb"(os error \1)"),
+]
+
+# 写族是「两边各跑一遍」，两份数据根在不同时刻采样同一块卷 ——
+# used/free 差个几 MB 完全是别的进程在写盘，没有可比性。这一档直接抹掉数值，
+# 只保留键存在与 total（卷容量，必须一致）。
+_DISK_COARSE = re.compile(rb'"(used|free)":\d+')
+# 派生的展示值跟着 used/free 走，一并抹掉（`total_h` 不在此列：它是卷容量算的）。
+_DISK_DERIVED = re.compile(rb'"(free_h|used_pct)":(?:"[^"]*"|[0-9.]+)')
+
+
+def norm(b: bytes, home: Path, coarse: bool = False) -> bytes:
+    b = b.replace(str(home).encode(), b"<HOME>")
+    b = b.replace(str(home.resolve()).encode(), b"<HOME>")
+    if coarse:
+        b = _DISK_COARSE.sub(lambda m: b'"' + m.group(1) + b'":<N>', b)
+        b = _DISK_DERIVED.sub(lambda m: b'"' + m.group(1) + b'":<N>', b)
+    for rx, rep in _NORM:
+        b = rx.sub(rep, b)
+    return mask(b) if not coarse else _TS.sub(b"<TS>", b)
+
+
+def call(port: int, token: str, method: str, path: str, body, timeout: float = 60) -> tuple[int, bytes]:
+    data = None if body is None else json.dumps(body, ensure_ascii=False).encode()
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}{path}",
+        data=data,
+        method=method,
+        headers={"X-Token": token, "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+    except Exception as e:  # noqa: BLE001
+        return 0, str(e).encode()
+
+
+def replay(port: int, token: str, home: Path) -> list[tuple[str, int, bytes]]:
+    """跑完整脚本，返回 [(说明, 状态码, 归一后响应)]。"""
+    inbox = home / "library" / "收件箱"
+    state = {"inbox": inbox}
+    out: list[tuple[str, int, bytes]] = []
+    for note, method, path, body in w3_steps(state):
+        if "{sid}" in path:
+            path = path.replace("{sid}", state.get("sid", ""))
+        if "{inbox_q}" in path:
+            path = path.replace("{inbox_q}", urllib.parse.quote(str(inbox), safe=""))
+        if method == "POST" and isinstance(body, dict) and "{trash_name}" in json.dumps(body):
+            body = {"names": [state.get("trash_name", "")]}
+        status, raw = call(port, token, method, path, body)
+        out.append((note, status, norm(raw, home, coarse=True)))
+        # 串起下一步要用的随机值
+        try:
+            js = json.loads(raw)
+        except Exception:  # noqa: BLE001
+            js = {}
+        if note == "建分享" and isinstance(js, dict) and js.get("sid"):
+            state["sid"] = js["sid"]
+        if note == "删进回收站" and isinstance(js, dict):
+            for r in js.get("results") or []:
+                if r.get("ok") and r.get("trash"):
+                    state["trash_name"] = r["trash"]
+    return out
 
 
 def free_port(start: int = 8400) -> int:
@@ -91,9 +329,16 @@ def fetch(port: int, path: str, token: str) -> tuple[int, bytes]:
 # 抹掉时间戳后仍然一致，就说明结构与取值都对——比笼统标 DIFF 有用得多。
 _TS = re.compile(rb"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?")
 
+# 磁盘的 used/free 是**活计数**：同一台机器上别的进程写 32 KB，两次请求就不同
+# （实测过，Python 自己连打三次都不一样）。所以比较前按 MB 归一——
+# 32 KB 的噪声消失，而「算错了几个 GB」这种真差异一定还在。
+# `total` 不归一：它是卷容量，本来就该恒定，变了说明读错了文件系统。
+_DISK = re.compile(rb'"(used|free)":(\d+)')
+
 
 def mask(b: bytes) -> bytes:
-    return _TS.sub(b"<TS>", b)
+    b = _TS.sub(b"<TS>", b)
+    return _DISK.sub(lambda m: b'"' + m.group(1) + b'":' + str(int(m.group(2)) // 1048576).encode(), b)
 
 
 def first_diff(a: bytes, b: bytes) -> str:
@@ -113,10 +358,88 @@ def first_diff(a: bytes, b: bytes) -> str:
     return "内容相同"
 
 
+def _wait_cfg(home: Path, timeout: float = 40.0) -> dict:
+    """等 config.json 里出现 local_port（launcher 选完端口才补这个键）。"""
+    deadline = time.time() + timeout
+    cfg: dict = {}
+    while time.time() < deadline:
+        try:
+            cfg = json.loads((home / "state/config.json").read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            cfg = {}
+        if cfg.get("token") and cfg.get("local_port"):
+            return cfg
+        time.sleep(0.25)
+    return cfg
+
+
+def run_w3(args) -> int:
+    """写族对拍：同一脚本，Python 跑一遍、Rust 跑一遍，各用一份干净数据根。"""
+    results: dict[str, list] = {}
+    procs: list[subprocess.Popen] = []
+    try:
+        for side in ("py", "rs"):
+            home = Path(tempfile.mkdtemp(prefix=f"moshan-w3-{side}-"))
+            seed(home)
+            env = {**os.environ, "MOSHAN_HOME": str(home), "MOSHAN_NO_BROWSER": "1"}
+            if side == "py":
+                p = subprocess.Popen(
+                    [args.py_python, str(ROOT / "moshan/launcher.py")],
+                    env=env, cwd=str(ROOT / "moshan"),
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                procs.append(p)
+                cfg = _wait_cfg(home)
+                port, token = cfg.get("local_port"), cfg.get("token", "")
+            else:
+                port = free_port()
+                # 上游置空：写族这些路由都应已迁完，任何一条落到 404 都是真问题
+                # （代理回来的 200 会掩盖「其实没迁」）。
+                p = subprocess.Popen(
+                    [args.rs_bin],
+                    env={**env, "MOSHAN_PY_UPSTREAM": "", "MOSHAN_RS_PORT": str(port),
+                         "MOSHAN_APP_DIR": str(ROOT / "moshan")},
+                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                procs.append(p)
+                token = PARITY_TOKEN
+            if not port or not wait_ping(port):
+                err = ""
+                if side == "rs" and p.stderr:
+                    err = p.stderr.read().decode()[:600]
+                print(f"{side} 侧没起来（端口 {port}）{err}")
+                return 2
+            results[side] = replay(port, token, home)
+    finally:
+        for p in procs:
+            p.terminate()
+        for p in procs:
+            try:
+                p.wait(timeout=8)
+            except Exception:  # noqa: BLE001
+                p.kill()
+
+    bad = 0
+    print(f"{'步骤':16s} {'py':>4s} {'rs':>4s}  结果")
+    for (note, sa, ra), (_, sb, rb) in zip(results["py"], results["rs"]):
+        ok = sa == sb and ra == rb
+        if not ok:
+            bad += 1
+        print(f"{note:16s} {sa:4d} {sb:4d}  {'一致' if ok else '差异'}")
+        if not ok:
+            print("    " + first_diff(ra, rb))
+    print(f"\n共 {len(results['py'])} 步，实质差异 {bad}")
+    return 0 if bad == 0 else 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--paths", nargs="*", default=None)
     ap.add_argument("--all-get", action="store_true")
+    ap.add_argument(
+        "--suite",
+        choices=["w1", "w2", "w3"],
+        default=None,
+        help="用内置夹具跑某一波（会先往临时数据根铺文件）",
+    )
     # 默认跑**源码态** Python：对拍的是接口契约，不是打包形态。
     # 打包后的 sidecar 会返回 frozen=true、app_dir 指向解包临时目录，
     # 那两条差异纯属"换了个形态"，会把真差异淹掉。
@@ -130,12 +453,19 @@ def main() -> int:
     ap.add_argument("--keep", action="store_true", help="保留临时数据根，便于排查")
     args = ap.parse_args()
 
+    if args.suite == "w3":
+        return run_w3(args)
+
     paths = args.paths or DEFAULT_PATHS
     if args.all_get:
         routes = json.load(open("/tmp/routes.json"))
         paths = [r["path"] for r in routes if r["method"] == "GET"]
 
     home = Path(tempfile.mkdtemp(prefix="moshan-parity-"))
+    if args.suite:
+        seed(home)
+    if args.suite == "w2":
+        paths = w2_paths(home)
     env = {**os.environ, "MOSHAN_HOME": str(home), "MOSHAN_NO_BROWSER": "1"}
     procs: list[subprocess.Popen] = []
     try:
@@ -186,6 +516,13 @@ def main() -> int:
 
         bad = 0
         jitter = 0
+        if args.suite:
+            # 预热：`browse` 会给图片目录**首次生成缩略图**（写盘），那一刻的
+            # `usage.free` 必然与下一次不同。这是首次使用的正常代价，不是契约差异；
+            # 先各打一遍让缓存落定，再开始测量，否则这条永远红着没人看得懂。
+            for p in paths:
+                fetch(py_port, p, token)
+                fetch(rs_port, p, token)
         print(f"{'端点':32s} {'py':>5s} {'rs':>5s}  结果")
         for p in paths:
             ps, pb = fetch(py_port, p, token)

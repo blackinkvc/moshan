@@ -144,4 +144,52 @@ impl Ctx {
             .unwrap_or("")
             .to_string()
     }
+
+    /// `INBOX_DIR`：配置里的 inbox_dir，缺省为 数据根/收件箱。
+    pub fn inbox_dir(&self) -> PathBuf {
+        let raw = self.inbox();
+        if raw.is_empty() {
+            return self.library_dir.join("收件箱");
+        }
+        PathBuf::from(raw)
+    }
+
+    /// `ALLOWED_ROOTS`：配置为空时退回数据根本身。
+    /// Python 侧此时会得到一个空列表（任何路径都是 403），那是坏配置的表现；
+    /// 这里选择「退回根目录」，宁可少一道闸也不要让所有文件接口静默全 403。
+    pub fn allowed_roots(&self) -> Vec<PathBuf> {
+        let list: Vec<PathBuf> = self
+            .cfg
+            .get("allowed_roots")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .map(PathBuf::from)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if list.is_empty() {
+            vec![self.library_dir.clone()]
+        } else {
+            list
+        }
+    }
+
+    /// `TRASH_DIR`：配置里的 trash_dir（支持 `~`），缺省为 数据根/.回收站。
+    pub fn trash_dir(&self) -> PathBuf {
+        match self.cfg.get("trash_dir").and_then(|v| v.as_str()) {
+            Some(s) if !s.trim().is_empty() => crate::storage::expanduser(s),
+            _ => self.library_dir.join(".回收站"),
+        }
+    }
+
+    pub fn shares_file(&self) -> PathBuf {
+        self.state_dir.join("shares.json")
+    }
+
+    pub fn trash_days(&self) -> i64 {
+        self.cfg.get("trash_days").and_then(|v| v.as_i64()).unwrap_or(30)
+    }
 }

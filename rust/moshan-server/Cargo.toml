@@ -12,8 +12,19 @@ path = "src/main.rs"
 
 [dependencies]
 axum = "0.8"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+# 查询参数解析（`?path=` 含中文/空格时必须走 urlencoded 解码，与 FastAPI 同口径）。
+serde = { version = "1", features = ["derive"] }
+# 磁盘用量：statvfs 的 f_blocks/f_bfree/f_bavail 才是 `shutil.disk_usage` 的原始量，
+# 自己读 df 会因为列宽/本地化解析出错。
+libc = "0.2"
+# 分享过期时间要按本地时区渲染成 "%m-%d %H:%M"，和 Python 的 time.localtime 一致。
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# 内联缩略图：缓存键是 sha1，内联体是 base64。键必须与 Python 逐字节一致，
+# 否则两边各生成一份缓存，对拍时还会因为写盘让磁盘用量抖动。
+sha1 = "0.10"
+base64 = "0.22"
 # 只需要能转发 http/1.1 到 127.0.0.1，不引 TLS：上游是明文端口，
 # 拉一套 rustls 只为连本机没有收益，也拖慢编译。
 reqwest = { version = "0.12", default-features = false, features = ["stream"] }

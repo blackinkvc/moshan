@@ -7,8 +7,9 @@ mod auth;
 mod paths;
 mod proxy;
 mod routes;
+mod storage;
 
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::Router;
 use std::sync::Arc;
 
@@ -28,6 +29,21 @@ async fn main() {
         .route("/api/versions", get(routes::w1::versions))
         .route("/api/about", get(routes::w1::about))
         .route("/api/appearance", get(routes::w1::appearance))
+        // ---- W2：文件层只读（5 条）。路径语义（链接/越界/面包屑）全在 storage.rs
+        .route("/api/files", get(routes::w2::files))
+        .route("/api/browse", get(routes::w2::browse))
+        .route("/api/usage", get(routes::w2::usage))
+        .route("/api/trash", get(routes::w2::trash))
+        .route("/api/shares", get(routes::w2::shares))
+        // ---- W3：文件层写族（8 条）。判定链顺序与 Python 完全一致
+        .route("/api/mkdir", post(routes::w3::mkdir))
+        .route("/api/rename", post(routes::w3::rename))
+        .route("/api/move", post(routes::w3::move_))
+        .route("/api/delete", post(routes::w3::delete))
+        .route("/api/trash/restore", post(routes::w3::trash_restore))
+        .route("/api/trash/purge", post(routes::w3::trash_purge))
+        .route("/api/share", post(routes::w3::share_create))
+        .route("/api/shares/{sid}", axum::routing::delete(routes::w3::share_revoke))
         // ---- 其余 216 条：镜像给 Python，行为完全不变
         .fallback(proxy::forward)
         .with_state(ctx.clone());
