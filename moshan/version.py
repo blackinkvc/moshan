@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-VERSION = "0.3.11"
+VERSION = "0.3.12"
 BUILD = ""          # 构建时由 CI 注入短 SHA，源码运行时为空
 CHANNEL = "stable"  # stable | beta
 
