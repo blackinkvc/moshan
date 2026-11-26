@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "moshan-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "墨山中台服务端（Rust 重写）。按波次替换 Python 实现，未迁路由转发给上游。"
+
+[[bin]]
+name = "moshan-server"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+# 只需要能转发 http/1.1 到 127.0.0.1，不引 TLS：上游是明文端口，
+# 拉一套 rustls 只为连本机没有收益，也拖慢编译。
+reqwest = { version = "0.12", default-features = false, features = ["stream"] }
+futures-util = "0.3"

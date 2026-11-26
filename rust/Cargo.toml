@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[workspace]
+members = ["moshan-server"]
+resolver = "2"
+
+[workspace.package]
+version = "0.3.13"
+edition = "2021"
+license = "MIT OR Apache-2.0"

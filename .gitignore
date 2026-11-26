@@ -50,3 +50,7 @@ src-tauri/gen/
 src-tauri/.cargo/
 src-tauri/binaries/moshan-*
 
+
+# Rust 服务（rust/）：迁移期产物
+rust/target/
+rust/Cargo.lock.bak

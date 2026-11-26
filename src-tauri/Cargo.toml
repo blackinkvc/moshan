@@ -27,8 +27,13 @@ serde_json = "1"
 custom-protocol = ["tauri/custom-protocol"]
 
 [profile.release]
-codegen-units = 1
-lto = true
 opt-level = "s"
 panic = "abort"
-strip = true
+# 这里刻意不加 `lto` 与 `strip`：
+#   strip = true   → 编译期要 dlopen 的 proc-macro dylib（serde_derive / phf_macros /
+#                    thiserror-impl…）被一起 strip，Mach-O 的 LINKEDIT 字符串池错位，
+#                    rustc 报 `can't find crate for serde_derive`。
+#   lto = true     → fat LTO 同样作用于这些 dylib，实测产出仍不可加载
+#                    （`mis-aligned LINKEDIT string pool`）。
+# 两处报错都落在依赖库里，看不出跟本项目配置有关。本机 macOS 27 + CLT ld 组合必现。
+# 只想减体积就在打包后单独 strip 主二进制。
