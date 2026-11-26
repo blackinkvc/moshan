@@ -1,0 +1,13 @@
+<script>
+(function () {
+  var K = new URLSearchParams(location.search).get('k') || '';
+  if (!K) return;
+  var f = window.fetch;
+  window.fetch = function (u, o) {
+    if (typeof u === 'string' && u.indexOf('/api/') === 0) {
+      u += (u.indexOf('?') >= 0 ? '&' : '?') + 'k=' + encodeURIComponent(K);
+    }
+    return f.call(this, u, o);
+  };
+})();
+</script>

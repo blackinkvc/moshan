@@ -40,9 +40,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 # 否则两边各生成一份缓存，对拍时还会因为写盘让磁盘用量抖动。
 sha1 = "0.10"
 base64 = "0.22"
-# 只需要能转发 http/1.1 到 127.0.0.1，不引 TLS：上游是明文端口，
-# 拉一套 rustls 只为连本机没有收益，也拖慢编译。
-reqwest = { version = "0.12", default-features = false, features = ["stream", "json"] }
+# 只需要 http/1.1，但**必须带 TLS**：账单拉取、文章抓取、更新检查全是 https，
+# 少了 rustls 这些接口只能回「握手失败」，等于没迁。
+reqwest = { version = "0.12", default-features = false, features = ["stream", "json", "rustls-tls"] }
 futures-util = "0.3"
 # Python 侧大量用 re 做「从一段话里抠字段」，逐条译成正则字面量最稳，
 # 手写字符扫描反而容易在边界（全角空格、中文标点、括号）上分叉。

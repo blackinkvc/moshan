@@ -1,0 +1,194 @@
+
+<style>
+  #mosh-upd-row .sl span{word-break:break-all}
+  #mosh-upd-b.hot{background:#a8641c;border-color:#a8641c;color:#fff}
+  /* 版本足迹：跟上面那行「版本 + 检查更新」是两件事 ——
+     那行回答「有没有新的」，这行回答「我这条线怎么走过来的」。 */
+  #mosh-hist-row .sl div{font-size:11.5px;color:var(--tx2);line-height:1.4;margin-top:2px}
+  #mosh-hist-row details{margin-top:4px}
+  #mosh-hist-row summary{cursor:pointer;color:var(--tx3);font-size:11px;outline:none}
+  #mosh-hist-row .mh-v{font-size:11px;color:var(--tx2);line-height:1.75;
+    font-variant-numeric:tabular-nums}
+  #mosh-hist-row .mh-v b{display:inline;font-size:11px;color:var(--tx);font-weight:600}
+  #mosh-hist-row .mh-t{margin-top:3px;font-size:10.5px;color:var(--tx3)}
+</style>
+<script>
+(function(){
+  var K = new URLSearchParams(location.search).get('k')
+        || localStorage.getItem('pocket_token') || '';
+  // 页面里就带着当前版本号（注入时替换）：/api/update/state 在「还没查过更新」
+  // 时 info 是 null，光靠它标题会只剩「版本」两个字，看着像没装上。
+  var VER = '__VER__';
+  var ROW = null, BTN = null, SUB = null, TITLE = null, BUSY = false;
+
+  function j(path, opt){
+    opt = opt || {};
+    opt.headers = Object.assign({'X-Token': K, 'Content-Type': 'application/json'}, opt.headers || {});
+    return fetch(path, opt).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){
+        if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+        return d;
+      });
+    });
+  }
+
+  function paint(st){
+    // /api/update/state 是 {checked_at, info:{...}}，/api/update/check 是平铺的
+    // {has_update, current, latest} —— 两种都给，别指望形状一样。
+    var info = (st && st.info) || st || {};
+    var cur = info.current || '';
+    // checked_at 在**外层**（/api/update/state 的约定），info 里没有；读错会永远
+    // 显示「还没检查过」——明明刚查过。
+    var seen = (st && st.checked_at) || info.checked_at || 0;
+    TITLE.textContent = '版本 ' + (cur || VER);
+    BTN.classList.toggle('hot', !!info.has_update);
+    BTN.disabled = false;
+    if (info.has_update){
+      SUB.textContent = '有新版本 ' + info.latest;
+      BTN.textContent = st.path ? (st.in_place ? '立即更新并重启' : '打开安装包') : '下载更新';
+    } else if (seen){
+      SUB.textContent = '已是最新';
+      BTN.textContent = '检查更新';
+    } else {
+      SUB.textContent = '还没检查过';
+      BTN.textContent = '检查更新';
+    }
+  }
+
+  function poll(){
+    var n = 0;
+    (function tick(){
+      n++;
+      j('/api/update/state').then(function(st){
+        var p = st.phase || '';
+        if (p === 'downloading'){
+          SUB.textContent = '正在下载 ' + (st.msg || '…');
+        } else if (p === 'done'){
+          paint(st); SUB.textContent = '已下载，可以装了'; return;
+        } else if (p === 'error'){
+          SUB.textContent = '失败：' + (st.msg || '未知原因');
+          BTN.disabled = false; BTN.textContent = '重试'; return;
+        }
+        if (n < 240) setTimeout(tick, 1000);
+      }).catch(function(){ if (n < 240) setTimeout(tick, 1500); });
+    })();
+  }
+
+  function info2ver(st){
+    try { return ((st && st.info) || st || {}).current || ''; } catch (e) { return ''; }
+  }
+
+  function onClick(){
+    if (BUSY) return;
+    BUSY = true;
+    var label = BTN.textContent;
+    BTN.disabled = true;
+    if (label === '检查更新' || label === '重试' || label === '下载更新'){
+      SUB.textContent = '正在问 GitHub…';
+      j('/api/update/check', {method: 'POST', body: '{}'}).then(function(d){
+        // 查完再读一次 state 来画：check 的返回没有 checked_at，直接画会退回
+        // 「还没检查过」，明明刚查过。
+        return j('/api/update/state').then(function(st){
+          if (d && d.has_update){
+            paint(st);
+            return j('/api/update/download', {method: 'POST', body: '{}'}).then(function(){
+              SUB.textContent = '正在下载…'; poll();
+            });
+          }
+          BUSY = false; paint(st);
+          SUB.textContent = '已是最新 ' + (info2ver(st) || '');
+        });
+      }).catch(function(e){
+        BUSY = false; BTN.disabled = false; BTN.textContent = '重试';
+        SUB.textContent = '检查失败：' + e.message;
+      });
+      return;
+    }
+    // 「立即更新并重启」/「打开安装包」
+    j('/api/update/apply', {method: 'POST', body: '{}'}).then(function(d){
+      BUSY = false;
+      SUB.textContent = d.hint || '正在替换并重启，这个页面会断开几秒…';
+      BTN.disabled = true;
+    }).catch(function(e){
+      BUSY = false; BTN.disabled = false;
+      SUB.textContent = '装不上：' + e.message;
+    });
+  }
+
+  function mount(){
+    if (ROW || !document.getElementById('drawer')) return;
+    var t = null;
+    [].forEach.call(document.querySelectorAll('.set-t'), function(x){
+      if (!t && x.textContent.trim() === '关于') t = x;
+    });
+    if (!t) return;
+    var grp = t.parentNode;
+    ROW = document.createElement('div');
+    ROW.className = 'set-row';
+    ROW.id = 'mosh-upd-row';
+    ROW.innerHTML = '<div class="sl"><b id="mosh-upd-t">版本 ' + VER + '</b>'
+      + '<span id="mosh-upd-s">还没检查过</span></div>'
+      + '<button class="btn-line" id="mosh-upd-b" type="button">检查更新</button>';
+    var first = grp.querySelector('.set-row');
+    if (first) grp.insertBefore(ROW, first); else grp.appendChild(ROW);
+    TITLE = document.getElementById('mosh-upd-t');
+    SUB = document.getElementById('mosh-upd-s');
+    BTN = document.getElementById('mosh-upd-b');
+    BTN.addEventListener('click', onClick);
+    j('/api/update/state').then(paint).catch(function(){});
+    mountHist(grp);
+  }
+
+  /* 版本足迹（2026-11-25 用户要的）：首次启用时间 + 之后跑过哪些版本。
+     数据在本地 versions.json，由服务启动时记一笔 —— 断网也能看，
+     与「检查更新」（要问 GitHub）互不依赖。 */
+  function fmtAt(s){
+    s = String(s || '');
+    return s.length >= 16 ? (s.slice(5, 10) + ' ' + s.slice(11, 16)) : s;
+  }
+  function paintHist(d){
+    var el = document.getElementById('mosh-hist-s');
+    if (!el) return;
+    if (!d || d.ok === false){ el.textContent = '读不到（versions.json 还没写）'; return; }
+    // 上面那行标题顺手补上版本号：/api/update/state 在「还没查过更新」时
+    // info 是 null，标题就只剩「版本」两个字，看着像没装上。
+    if (TITLE && d.current && TITLE.textContent.trim() === '版本'){
+      TITLE.textContent = '版本 ' + d.current;
+    }
+    var vs = (d.versions || []).slice().reverse();
+    var head = (d.first_at
+      ? '首次使用 ' + fmtAt(d.first_at) + (d.first_guess ? '（不晚于）' : '')
+      : '首次使用时间未知')
+      + ' · 跑过 ' + (vs.length || 0) + ' 个版本';
+    el.innerHTML = '<span>' + head + '</span>'
+      + (vs.length ? '<details><summary>每个版本的首末时间</summary>'
+        + vs.map(function(x){
+            return '<div class="mh-v"><b>' + x.v + '</b> ' + fmtAt(x.first)
+              + ' → ' + fmtAt(x.last) + ' · 启动 ' + (x.n || 1) + ' 次'
+              + (x.v === d.current ? ' · 当前' : '') + '</div>';
+          }).join('')
+        + '<div class="mh-t">' + (d.first_guess
+            ? '首次时间是按' + ((d.first_basis || '本机文件时间')) + '推的，不是精确值；'
+            : '') + '记录从 ' + (d.first_version || d.current) + ' 开始，更早的版本没有留账。</div>'
+        + '</details>' : '');
+  }
+  function mountHist(grp){
+    if (!grp || document.getElementById('mosh-hist-row')) return;
+    var h = document.createElement('div');
+    h.className = 'set-row';
+    h.id = 'mosh-hist-row';
+    h.innerHTML = '<div class="sl"><b>版本足迹</b><div id="mosh-hist-s">读取中…</div></div>';
+    if (ROW && ROW.nextSibling) grp.insertBefore(h, ROW.nextSibling);
+    else grp.appendChild(h);
+    j('/api/versions').then(paintHist).catch(function(){
+      var el = document.getElementById('mosh-hist-s');
+      if (el) el.textContent = '读不到（服务还没重启过）';
+    });
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
+  else mount();
+  // 抽屉是 hidden 常驻的，一次就够；万一那会儿 dash 还没画完，兜底再试两次
+  setTimeout(mount, 800); setTimeout(mount, 2500);
+})();
+</script>
