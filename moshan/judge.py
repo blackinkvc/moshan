@@ -118,10 +118,12 @@ def question(text_len: int, n_img: int, platform: str = "", title: str = "") -> 
 
 
 def decide(text_len: int, n_img: int, platform: str = "",
-           hint: str = "", layout: str = "", title: str = "") -> dict:
+           hint: str = "", layout: str = "", title: str = "",
+           n_video: int = 0) -> dict:
     """返回 {'mode': 'article'|'gallery', 'why': 一句人话}。
 
     text_len 是去掉图床地址之后的纯正文字数，n_img 是这篇的图片张数。
+    n_video 是这条里的视频段数（抖音/微博）：有视频就是视频，不参与图/文之争。
     layout 是抓取器给的版面类型（公众号才有）：
       "article" = 正文文章，字才是内容
       "picture" = 图片消息，图才是内容（配文几百字也还是照片集）
@@ -133,11 +135,17 @@ def decide(text_len: int, n_img: int, platform: str = "",
     """
     text_len = max(0, int(text_len or 0))
     n_img = max(0, int(n_img or 0))
+    n_video = max(0, int(n_video or 0))
     kw = keyword_of(hint)
     if kw == "article":
         return {"mode": "article", "why": "你说了「文章」", "forced": True}
     if kw == "gallery":
         return {"mode": "gallery", "why": "你说了「存图」", "forced": True}
+    # 视频直通：视频作品的「配文」是文案不是文章，视频也没法塞进阅读库。
+    # 必须在 ask 之前——抖音几百字的文案正好落在问话带里，问「存图还是存文章」
+    # 对一个视频毫无意义（2026-11-27 加）。
+    if n_video >= 1:
+        return {"mode": "gallery", "why": f"视频作品（{n_video} 段），不按文章转存"}
     # 写真直通：标题或用户原话里带「写真」，有图就存图，字数完全不看。
     # 必须排在 ask 之前——写真笔记的几百字话术正好落在问话带里。
     # 用户明确说了「文章」时上面已强制返回，不会被这条盖掉。

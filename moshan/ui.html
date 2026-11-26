@@ -1006,9 +1006,11 @@ async function watchLink(job){
       return '';
     }
     if(s.state==='done'){
+      // 视频说「段」：一条抖音作品存下来就是一个 mp4，报「1 张」会让人以为存错了
+      const cnt = s.n_video ? `${s.n_video} 段视频` : `${s.images} 张`;
       lkRow('done',s.dir_name||'已保存',
-            `${s.platform||''} · ${s.images} 张 · ${s.size}`,s.dir);
-      toast('已存 '+s.images+' 张');
+            `${s.platform||''} · ${cnt} · ${s.size}`,s.dir);
+      toast('已存 '+cnt);
       return '';
     }
     if(s.state==='unsupported'){
