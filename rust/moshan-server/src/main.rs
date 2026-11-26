@@ -4,6 +4,7 @@
 //       W1 阶段保持"零副作用"，才能与 Python 逐字节对拍）。
 
 mod auth;
+mod hostwork;
 mod jsonio;
 mod ledger;
 mod paths;
@@ -95,6 +96,24 @@ async fn main() {
         app = app.merge(routes::w7b::router());
     }
 
+    // ---- 角色开关：有两套接口在 Python 里本来就不是主服务挂的，
+    //      默认跟着 Python 保持「不挂」，免得迁完之后 404 变 200。
+    let role = std::env::var("MOSHAN_ROLE").unwrap_or_default();
+    let nest = role == "nest" || env_flag("MOSHAN_FLEET");
+    let gray = env_flag("MOSHAN_GRAY");
+    #[cfg(feature = "lane_w6a")]
+    if nest {
+        app = app.merge(routes::w6a::fleet_router());
+    }
+    #[cfg(feature = "lane_w7a")]
+    if gray {
+        app = app.merge(routes::w7a::gray_router());
+    }
+    #[cfg(not(feature = "lane_w6a"))]
+    let _ = nest;
+    #[cfg(not(feature = "lane_w7a"))]
+    let _ = gray;
+
     // ---- 其余未迁路由：镜像给 Python，行为完全不变
     let app = app.fallback(proxy::forward).with_state(ctx.clone());
 
@@ -119,4 +138,15 @@ async fn main() {
         })
         .await
         .expect("server");
+}
+
+/// `MOSHAN_*` 这类开关只认「非空且不是 0/false」——与 Python 侧读环境变量的口径一致。
+fn env_flag(key: &str) -> bool {
+    match std::env::var(key) {
+        Ok(v) => {
+            let v = v.trim().to_ascii_lowercase();
+            !v.is_empty() && v != "0" && v != "false" && v != "no"
+        }
+        Err(_) => false,
+    }
 }

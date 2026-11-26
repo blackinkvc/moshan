@@ -206,6 +206,147 @@ def w4_steps(state: dict):
     ]
 
 
+def w6_steps(state: dict):
+    """泳道 w6b：Agent 自述 / 总线 / 插件 / 收件箱整理 / 联动回执 / 问答快路。
+
+    刻意不在这里跑的（汇报里写明原因）：
+      · store/refresh 与 link/import（要真解几百 MB 会话）；
+      · parse-event / chat 的真模型分支（4B 输出不确定）；
+      · pick/dir（会弹原生对话框）；reveal 的 root（会打开访达）。
+    """
+    inbox = str(state["inbox"])
+    return [
+        ("自述一笔", "POST", "/api/agent/note",
+         {"agent": "TRAE", "task": "跑对拍", "summary": "一次", "project": "p",
+          "model": "m", "in": 10, "out": 5, "calls": 2}),
+        ("自述重复同句", "POST", "/api/agent/note",
+         {"agent": "TRAE", "task": "跑对拍", "summary": "二次"}),
+        ("老入口自述", "POST", "/api/trae/note", {"task": "老入口", "in": "3"}),
+        ("自述缺 task", "POST", "/api/agent/note", {"agent": "X"}),
+        ("自述非对象", "POST", "/api/agent/note", [1, 2]),
+        ("自述数组体", "POST", "/api/agent/event", 123),
+        ("写事件", "POST", "/api/agent/event",
+         {"ns": "工作", "type": "task", "title": "跑通一条", "text": "对拍用"}),
+        ("报用量", "POST", "/api/agent/usage",
+         {"client": "trae", "in": 10, "out": 2, "calls": 1, "task": "对拍"}),
+        ("读总线", "GET", "/api/agent/read?ns=all&since=all&limit=20", None),
+        ("加插件", "POST", "/api/plugins/add",
+         {"id": "parity", "name": "对拍插件", "port": 8899, "note": "临时"}),
+        ("加同名插件", "POST", "/api/plugins/add",
+         {"id": "parity", "name": "又一个"}),
+        ("加内置同名", "POST", "/api/plugins/add",
+         {"id": "pocket", "name": "盖内置", "url": "http://127.0.0.1:1/"}),
+        ("加插件缺体", "POST", "/api/plugins/add", None),
+        ("删插件", "POST", "/api/plugins/remove", {"id": "parity"}),
+        ("删不存在的", "POST", "/api/plugins/remove", {"id": "nope"}),
+        ("联动回执", "POST", "/api/agent/link/report",
+         {"agent": "trae", "paths": [{"key": "memory", "path": inbox}], "note": "对拍"}),
+        ("回执坏体", "POST", "/api/agent/link/report", [1]),
+        ("别家导入", "POST", "/api/agent/link/import", {"agent": "cursor"}),
+        # 真装一次说明：会写进本机该 agent 的说明目录（auto_install 本来也写），
+        # 但 links.json 里那条 `prompt` 记录在落盘比对时被抹掉（见 _drop_prompt）。
+        ("装说明 trae", "POST", "/api/agent/link/install", {"agent": "trae"}),
+        ("不认识的装说明", "POST", "/api/agent/link/install", {"agent": "nope"}),
+        # 手工探活：只量体积不解析，给对拍一个不看外部目录的确定输入。
+        ("探活收件箱", "POST", "/api/agent/probe", {"path": inbox}),
+        # 只挑 Cherry Studio：另外两家（WorkBuddy / TRAE）要过采集层 hostwork，
+        # 那一层没迁（见汇报的已知分叉），挑上就会把分叉混进这一步。
+        ("导入樱桃账", "POST", "/api/agent/import", {"sources": ["Cherry Studio"]}),
+        # 再导一次：验证 _strip_imported 先删旧行再写，不叠加。
+        ("再导一次", "POST", "/api/agent/import", {"sources": ["Cherry Studio"]}),
+        ("问收件箱", "POST", "/api/chat", {"text": "收件箱里有什么？"}),
+        ("问文件", "POST", "/api/chat", {"text": "文件列表"}),
+        ("空聊天", "POST", "/api/chat", {"text": ""}),
+        ("入站空文", "POST", "/api/intake", {"text": ""}),
+        ("入站无链接", "POST", "/api/intake", {"text": "今天没链接"}),
+        # 空文字不走 4B（本机有模型时那条路输出不确定，比不了），只验兜底那一支。
+        ("空行程", "POST", "/api/parse-event", {"text": ""}),
+        ("重扫", "POST", "/api/rescan", {}),
+        ("打开越界目标", "POST", "/api/reveal", {"target": "etc"}),
+        ("配对取包", "GET", "/api/pair", None),
+        # 不带令牌只验 401 那一支：带令牌会走 wechat_push（网关 WebSocket），
+        # 网关在跑时 Python 会真把一条消息发到微信里，对拍脚本不该有这个副作用；
+        # Rust 侧没有 WebSocket 客户端（Cargo.toml 不归本泳道），这一支另作分叉记。
+        ("配对无令牌", "GET", "/api/pair", None, {"noauth": True}),
+        ("发微信无令牌", "POST", "/api/pair/send", {"text": "对拍用"}, {"noauth": True}),
+        ("账本统计", "GET", "/api/agent/store/stats", None),
+        ("整理收件箱", "POST", "/api/sort", None),
+        ("再整理一次", "POST", "/api/sort", None),
+    ]
+
+
+_TS_KEYS = {"at", "ts", "ms", "now", "created", "updated_at", "started", "finished",
+            "last_read", "mtime", "recent_at"}
+
+
+def _strip_ts(v):
+    """结构对比时抹掉时间：两边相隔几秒，时间戳本来就不会相同。"""
+    if isinstance(v, dict):
+        return {k: _strip_ts(x) for k, x in v.items() if k not in _TS_KEYS}
+    if isinstance(v, list):
+        return [_strip_ts(x) for x in v]
+    if isinstance(v, str):
+        v = re.sub(r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?", "<TS>", v)
+        # 事件 id 里嵌了 epoch 秒（`link-report-trae-1795725396`），差一秒就不同。
+        return re.sub(r"(?<=-)(?:1[6-9]|2[0-9])\d{8}$", "<EPOCH>", v)
+    return v
+
+
+def _drop_prompt(v):
+    """抹掉 links.json 里的 `prompt` 记录（见 w6 落盘比对处的说明）。
+
+    抹完如果某个 agent 只剩空壳（`{"workbuddy": {}}`）也一起去掉 —— 那个壳
+    就是 prompt 被抹掉后剩下的，不是真的有一条空记录。
+    """
+    if isinstance(v, dict):
+        out = {}
+        for k, x in v.items():
+            if k == "prompt":
+                continue
+            y = _drop_prompt(x)
+            if isinstance(y, dict) and not y and isinstance(x, dict) and "prompt" in x:
+                continue
+            out[k] = y
+        return out
+    if isinstance(v, list):
+        return [_drop_prompt(x) for x in v]
+    return v
+
+
+def _load_any(p: Path, home: Path | None = None):
+    text = p.read_text(encoding="utf-8", errors="replace")
+    if home is not None:
+        # 落盘里也带着各自的数据根（回执的 `paths[].path` 就是请求体原样）。
+        # 两份数据根必然不同，抹成 <HOME> 再比结构。
+        text = text.replace(str(home), "<HOME>").replace(str(home.resolve()), "<HOME>")
+    if p.suffix == ".jsonl":
+        out = []
+        for ln in text.splitlines():
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                out.append(_strip_ts(json.loads(ln)))
+            except Exception:  # noqa: BLE001
+                out.append(ln)
+        return out
+    try:
+        return _strip_ts(json.loads(text))
+    except Exception:  # noqa: BLE001
+        return text
+
+
+def w6_files(home: Path) -> dict:
+    lib = home / "library"
+    return {
+        "Agent自述.jsonl": lib / "_本机工作" / "Agent自述.jsonl",
+        "events.jsonl": lib / "_工作台" / "agents" / "events.jsonl",
+        "usage.jsonl": lib / "_工作台" / "agents" / "usage.jsonl",
+        "links.json": lib / "_工作台" / "agents" / "links.json",
+        "plugins.json": lib / "_工作台" / "plugins.json",
+    }
+
+
 def w2_paths(home: Path) -> list[str]:
     inbox = home / "library" / "收件箱"
     q = lambda p: urllib.parse.quote(str(p), safe="")  # noqa: E731
@@ -278,8 +419,21 @@ def w3_steps(state: dict):
 
 # 随机值/时间/临时根：两边必然不同，抹掉再比。
 _NORM = [
+    # 时间字段先于 SID 规则：`"at": 1795725396.4` 的整数部分正好 10 位，
+    # 会被下面的 `[0-9a-f]{10}` 当成 sid 吃掉一半（剩 `<SID>.4`），
+    # 看着像差异其实只是秒的小数位不同。
+    (re.compile(rb'"(at|since|until|first|last)":-?\d+(?:\.\d+)?'), rb'"\1":<EPOCH>'),
     (re.compile(rb"\b[0-9a-f]{10}\b"), b"<SID>"),
     (re.compile(rb'"(created|expires)":\d+'), rb'"\1":<EPOCH>'),
+    # 总线里的 `ts` 是 epoch 毫秒。两边跑的时刻差几秒，数值不可能相等；
+    # 但格式（13 位整数，不是字符串）本身是契约，所以只抹数字、留引号形状。
+    (re.compile(rb'"ts":\d{10,13}'), b'"ts":<EPOCH>'),
+    # `/api/chat` 快答回 `{"reply": ..., "ms": N}`：N 是这次请求的耗时，
+    # 本来就是「越快越好」的观测值，逐字节比它没有意义（同一份代码两次也不同）。
+    (re.compile(rb'"ms":\d+'), b'"ms":<MS>'),
+    # 说明书正文里嵌着 `http://127.0.0.1:<本机端口>`，两边端口位数不同（py 是
+    # launcher 随机挑的五位数，rs 是脚本给的 8400+），字节数跟着差一两位。
+    (re.compile(rb'"bytes":\d+'), b'"bytes":<N>'),
     (re.compile(rb"\d{8}-\d{6}_"), b"<STAMP>_"),
     # 记账的回收站目录是 `{stamp}-{id}`（连字符，不是下划线）
     (re.compile(rb"\d{8}-\d{6}-"), b"<STAMP>-"),
@@ -355,7 +509,11 @@ def replay(port: int, token: str, home: Path, steps_fn) -> list[tuple[str, int, 
     inbox = home / "library" / "收件箱"
     state = {"inbox": inbox}
     out: list[tuple[str, int, bytes]] = []
-    for note, method, path, body in steps_fn(state):
+    for step in steps_fn(state):
+        note, method, path, body = step[:4]
+        # 第 5 位是可选的 {"noauth": True}：不带令牌打，验 401 那一支。
+        opts = step[4] if len(step) > 4 else {}
+        tok = "" if opts.get("noauth") else token
         if "{sid}" in path:
             path = path.replace("{sid}", state.get("sid", ""))
         if "{inbox_q}" in path:
@@ -363,7 +521,7 @@ def replay(port: int, token: str, home: Path, steps_fn) -> list[tuple[str, int, 
         if method == "POST" and isinstance(body, dict) and "{trash_name}" in json.dumps(body):
             body = {"names": [state.get("trash_name", "")]}
         http_method = "POST" if method == "MULTIPART" else method
-        status, raw = call(port, token, http_method, path, body)
+        status, raw = call(port, tok, http_method, path, body)
         out.append((note, status, norm(raw, home, coarse=True)))
         # 串起下一步要用的随机值
         try:
@@ -466,13 +624,15 @@ def _wait_cfg(home: Path, timeout: float = 40.0) -> dict:
 
 def run_write_suite(args, name: str) -> int:
     """写族对拍：同一脚本，Python 跑一遍、Rust 跑一遍，各用一份干净数据根。"""
-    steps_fn = w3_steps if name == "w3" else w4_steps
+    steps_fn = {"w3": w3_steps, "w4": w4_steps, "w6": w6_steps}[name]
     results: dict[str, list] = {}
+    homes: dict[str, Path] = {}
     procs: list[subprocess.Popen] = []
     try:
         for side in ("py", "rs"):
             home = Path(tempfile.mkdtemp(prefix=f"moshan-w3-{side}-"))
             seed(home)
+            homes[side] = home
             env = {**os.environ, "MOSHAN_HOME": str(home), "MOSHAN_NO_BROWSER": "1"}
             if side == "py":
                 p = subprocess.Popen(
@@ -519,6 +679,38 @@ def run_write_suite(args, name: str) -> int:
         if not ok:
             print("    " + first_diff(ra, rb))
     print(f"\n共 {len(results['py'])} 步，实质差异 {bad}")
+
+    if name == "w6":
+        print(f"\n{'落盘文件':24s} 结果")
+        for label in w6_files(homes["py"]):
+            fa = w6_files(homes["py"])[label]
+            fb = w6_files(homes["rs"])[label]
+            ea, eb = fa.exists(), fb.exists()
+            if not ea and not eb:
+                print(f"{label:24s} 两边都没有")
+                continue
+            if ea != eb:
+                bad += 1
+                print(f"{label:24s} 差异（存在性 py={ea} rs={eb}）")
+                continue
+            a = _load_any(fa, homes["py"])
+            b = _load_any(fb, homes["rs"])
+            if label == "links.json":
+                # Python 启动线程会跑 agent_link.auto_install，把说明书投放进本机
+                # 已装的那几家 agent，并在 links.json 记 `prompt: {version, auto}`。
+                # 这是启动期副产物，不在这 29 条路由里（Rust 的启动逻辑不归本泳道），
+                # 所以比对结构前把 prompt 记录抹掉；回执本身照比。
+                a = _drop_prompt(a)
+                b = _drop_prompt(b)
+            if a == b:
+                print(f"{label:24s} 一致")
+            else:
+                bad += 1
+                print(f"{label:24s} 差异")
+                sa = json.dumps(a, ensure_ascii=False, sort_keys=True)
+                sb = json.dumps(b, ensure_ascii=False, sort_keys=True)
+                print("    " + first_diff(sa.encode(), sb.encode()))
+        print(f"\n落盘与响应合计实质差异 {bad}")
     return 0 if bad == 0 else 1
 
 
@@ -531,7 +723,7 @@ def main() -> int:
     ap.add_argument("--seed", action="store_true", help="铺夹具，但保留 --paths 给的清单")
     ap.add_argument(
         "--suite",
-        choices=["w1", "w2", "w3", "w4"],
+        choices=["w1", "w2", "w3", "w4", "w6"],
         default=None,
         help="用内置夹具跑某一波（会先往临时数据根铺文件）",
     )
@@ -548,7 +740,7 @@ def main() -> int:
     ap.add_argument("--keep", action="store_true", help="保留临时数据根，便于排查")
     args = ap.parse_args()
 
-    if args.suite in ("w3", "w4"):
+    if args.suite in ("w3", "w4", "w6"):
         return run_write_suite(args, args.suite)
 
     paths = args.paths or DEFAULT_PATHS
