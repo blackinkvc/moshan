@@ -46,6 +46,7 @@ async fn main() {
         .route("/api/trash/purge", post(routes::w3::trash_purge))
         .route("/api/share", post(routes::w3::share_create))
         .route("/api/shares/{sid}", axum::routing::delete(routes::w3::share_revoke))
+        .route("/api/upload", post(routes::w3::upload))
         // ---- W4：记账账本（6 条；上传那两条等 multipart 基建）
         .route("/api/ledger", get(routes::w4::all))
         .route("/api/ledger/item", get(routes::w4::one))

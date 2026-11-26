@@ -11,7 +11,7 @@ name = "moshan-server"
 path = "src/main.rs"
 
 [dependencies]
-axum = "0.8"
+axum = { version = "0.8", features = ["multipart"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 # 查询参数解析（`?path=` 含中文/空格时必须走 urlencoded 解码，与 FastAPI 同口径）。

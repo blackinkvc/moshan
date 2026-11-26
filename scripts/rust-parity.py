@@ -25,6 +25,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import uuid
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -258,6 +259,12 @@ def w3_steps(state: dict):
         ("分享不存在", "POST", "/api/share", {"path": str(inbox / "没有这个")}),
         ("列分享", "GET", "/api/shares", None),
         ("撤销分享", "DELETE", "/api/shares/{sid}", None),
+        ("上传两个文件", "MULTIPART", "/api/upload",
+         {"__files__": [("a.txt", b"hello"), ("中文名.bin", bytes(range(32)))]}),
+        ("上传到指定目录", "MULTIPART",
+         "/api/upload?dir=" + urllib.parse.quote(str(inbox / "子目录"), safe=""),
+         {"__files__": [("c.txt", b"ccc")]}),
+        ("上传空文件", "MULTIPART", "/api/upload", {"__files__": [("empty.txt", b"")]}),
         ("删进回收站", "POST", "/api/delete", {"paths": [str(inbox / "数据.csv")]}),
         ("删空清单", "POST", "/api/delete", {"paths": []}),
         ("删根目录", "POST", "/api/delete", {"paths": [str(inbox.parent)]}),
@@ -308,13 +315,31 @@ def norm(b: bytes, home: Path, coarse: bool = False) -> bytes:
     return mask(b) if not coarse else _TS.sub(b"<TS>", b)
 
 
+def _multipart(files: list) -> tuple[bytes, str]:
+    """手搓 multipart：标准库没有表单构造器，而这里只需要「多个文件」这一种形状。"""
+    boundary = "----parity" + uuid.uuid4().hex[:12]
+    out = bytearray()
+    for name, data in files:
+        out += (f'--{boundary}\r\n'
+                f'Content-Disposition: form-data; name="files"; filename="{name}"\r\n'
+                f"Content-Type: application/octet-stream\r\n\r\n").encode("utf-8")
+        out += data
+        out += b"\r\n"
+    out += f"--{boundary}--\r\n".encode()
+    return bytes(out), f"multipart/form-data; boundary={boundary}"
+
+
 def call(port: int, token: str, method: str, path: str, body, timeout: float = 60) -> tuple[int, bytes]:
-    data = None if body is None else json.dumps(body, ensure_ascii=False).encode()
+    if isinstance(body, dict) and "__files__" in body:
+        data, ctype = _multipart(body["__files__"])
+    else:
+        data = None if body is None else json.dumps(body, ensure_ascii=False).encode()
+        ctype = "application/json"
     req = urllib.request.Request(
         f"http://127.0.0.1:{port}{path}",
         data=data,
         method=method,
-        headers={"X-Token": token, "Content-Type": "application/json"},
+        headers={"X-Token": token, "Content-Type": ctype},
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -337,7 +362,8 @@ def replay(port: int, token: str, home: Path, steps_fn) -> list[tuple[str, int, 
             path = path.replace("{inbox_q}", urllib.parse.quote(str(inbox), safe=""))
         if method == "POST" and isinstance(body, dict) and "{trash_name}" in json.dumps(body):
             body = {"names": [state.get("trash_name", "")]}
-        status, raw = call(port, token, method, path, body)
+        http_method = "POST" if method == "MULTIPART" else method
+        status, raw = call(port, token, http_method, path, body)
         out.append((note, status, norm(raw, home, coarse=True)))
         # 串起下一步要用的随机值
         try:

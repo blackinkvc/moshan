@@ -189,6 +189,14 @@ impl Ctx {
         self.state_dir.join("shares.json")
     }
 
+    /// `max_upload_mb`：单文件上限（默认 500MB）。整批上限是它的两倍。
+    pub fn max_upload_mb(&self) -> f64 {
+        self.cfg
+            .get("max_upload_mb")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(500.0)
+    }
+
     pub fn trash_days(&self) -> i64 {
         self.cfg.get("trash_days").and_then(|v| v.as_i64()).unwrap_or(30)
     }
