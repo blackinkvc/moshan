@@ -269,3 +269,126 @@ pub async fn sources_api(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> 
         Err(e) => crate::routes::common::http_err(500, &format!("internal error: {e}")),
     }
 }
+
+// ------------------------------------------------------------------ overview / pulse / tasks
+// 这三条压在 hostwork 的会话日聚合上（agg.days / act / hw / utt + 17 版解析缓存），
+// 现在由 crate::hostwork 自己算，不再转发给 Python 上游。
+
+fn norm_range(k: &str) -> String {
+    match k {
+        "today" | "7d" | "30d" | "all" => k.to_string(),
+        _ => "7d".to_string(),
+    }
+}
+
+fn int_q(uri: &Uri, key: &str, default: i64) -> i64 {
+    let s = q(uri, key);
+    if s.trim().is_empty() {
+        return default;
+    }
+    s.trim().parse::<i64>().unwrap_or(default)
+}
+
+fn flag_q(uri: &Uri, key: &str) -> bool {
+    int_q(uri, key, 0) != 0
+}
+
+/// GET /api/overview?range=7d|30d|all&fresh=0
+///
+/// 两段装饰照 Python 的顺序：先 `_with_llm`（llmwatch.snapshot），再
+/// `_with_prompts`（workstat 的提示词聚合）。采集层自己报了错就给降级账。
+pub async fn overview_api(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Response {
+    if let Some(r) = peek(&ctx, &headers, &uri) {
+        return r;
+    }
+    let key = norm_range(&q(&uri, "range"));
+    let fresh = flag_q(&uri, "fresh");
+    let c = ctx.clone();
+    let k2 = key.clone();
+    let mut d = match tokio::task::spawn_blocking(move || crate::hostwork::overview(&c, &k2, fresh))
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            let c2 = ctx.clone();
+            let k3 = key.clone();
+            let reason = format!("采集线程崩了: {e}");
+            let rz = reason.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::hostwork::overview::fallback(&c2, &k3, &rz)
+            })
+            .await
+            .unwrap_or_else(|_| json!({"ok": false, "error": reason}))
+        }
+    };
+    if !d.get("ok").map(truthy).unwrap_or(true) {
+        let reason = d
+            .get("error")
+            .map(|v| crate::hostwork::util::str_or(Some(v)))
+            .unwrap_or_else(|| "采集层返回失败".to_string());
+        let c2 = ctx.clone();
+        let k3 = key.clone();
+        let rz = reason.clone();
+        d = tokio::task::spawn_blocking(move || {
+            crate::hostwork::overview::fallback(&c2, &k3, &rz)
+        })
+        .await
+        .unwrap_or_else(|_| json!({"ok": false, "error": reason}));
+    }
+
+    // _with_llm
+    let llm = super::modeluse::llm_snapshot().await;
+    if let Some(m) = d.as_object_mut() {
+        m.insert("llm".into(), llm);
+    }
+
+    // _with_prompts：range.days 为 0（「全部」）时按 180 天
+    let days = d
+        .get("range")
+        .and_then(|r| r.get("days"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let win = if days > 0 { days } else { 180 };
+    let c3 = ctx.clone();
+    let prm = tokio::task::spawn_blocking(move || crate::hostwork::prompts::brief(&c3, win))
+        .await
+        .unwrap_or_else(|e| json!({"ok": false, "why": format!("{e}")}));
+    if let Some(m) = d.as_object_mut() {
+        m.insert("prompts".into(), prm);
+    }
+    Json(d).into_response()
+}
+
+/// GET /api/pulse?days=75&scope=
+pub async fn pulse_api(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Response {
+    if let Some(r) = peek(&ctx, &headers, &uri) {
+        return r;
+    }
+    let days = int_q(&uri, "days", 75);
+    let scope = q(&uri, "scope");
+    let c = ctx.clone();
+    match tokio::task::spawn_blocking(move || crate::hostwork::pulse(&c, days, &scope)).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => Json(json!({
+            "ok": false,
+            "error": format!("{e}"),
+            "days": [], "hours": [], "weeks": [],
+        }))
+        .into_response(),
+    }
+}
+
+/// GET /api/tasks?range=
+pub async fn tasks_api(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Response {
+    if let Some(r) = peek(&ctx, &headers, &uri) {
+        return r;
+    }
+    let key = norm_range(&q(&uri, "range"));
+    let c = ctx.clone();
+    match tokio::task::spawn_blocking(move || crate::hostwork::tasks_view(&c, &key)).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => {
+            Json(json!({"ok": false, "error": format!("{e}"), "groups": []})).into_response()
+        }
+    }
+}

@@ -590,6 +590,37 @@ def mask(b: bytes) -> bytes:
     return _DISK.sub(lambda m: b'"' + m.group(1) + b'":' + str(int(m.group(2)) // 1048576).encode(), b)
 
 
+# 这些键的值天然每轮不同（进程启动时刻、采样耗时、正在跑的计时器）。
+# 直接比会永远红，红了又没人看，最后真差异被淹掉 —— 掩值不掩结构：
+# 字段是否存在、顺序、类型、数组长度仍然照比。
+VOLATILE = {
+    "at", "now", "started", "last_sample", "last_run", "last_made", "last_removed",
+    "last_at", "scan_at", "cache_at", "secs", "seconds", "elapsed", "uptime",
+    "ts", "ms", "scan_sec", "sample_at", "first_at", "then", "ago",
+}
+
+
+def _mask_volatile(obj):
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            out[k] = "<V>" if (k in VOLATILE and not isinstance(v, (dict, list))) else _mask_volatile(v)
+        return out
+    if isinstance(obj, list):
+        return [_mask_volatile(x) for x in obj]
+    return obj
+
+
+def structural(b: bytes) -> bytes:
+    """把响应体按 JSON 解析后抹掉活值，再按原键序序列化。
+    非 JSON（HTML/二进制）原样返回 —— 那些本来就没有活值可抹。"""
+    try:
+        obj = json.loads(b.decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return mask(b)
+    return json.dumps(_mask_volatile(obj), ensure_ascii=False, separators=(",", ":")).encode()
+
+
 def first_diff(a: bytes, b: bytes) -> str:
     n = min(len(a), len(b))
     for i in range(n):
@@ -722,6 +753,12 @@ def main() -> int:
     # 否则只能借 --suite w2 的清单，测不了自己的路由。
     ap.add_argument("--seed", action="store_true", help="铺夹具，但保留 --paths 给的清单")
     ap.add_argument(
+        "--struct",
+        action="store_true",
+        help="按结构比：抹掉「每轮都会变」的活值（时间戳/耗时/计时器）后逐字段比较，"
+             "字段、顺序、类型、数组长度仍然照比。用于调度器/采样类端点。",
+    )
+    ap.add_argument(
         "--suite",
         choices=["w1", "w2", "w3", "w4", "w6"],
         default=None,
@@ -817,9 +854,12 @@ def main() -> int:
             same_status = ps == rstatus
             exact = same_status and pb == rb
             same_masked = same_status and mask(pb) == mask(rb)
+            same_struct = same_status and args.struct and structural(pb) == structural(rb)
             detail = ""
             if exact:
                 flag = "一致"
+            elif same_struct:
+                flag = "一致（仅活值不同）"
             elif same_masked:
                 flag = "一致（仅时间戳不同）"
             else:

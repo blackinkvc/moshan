@@ -20,6 +20,10 @@ pub mod w5b;
 pub mod w6a;
 #[cfg(feature = "lane_w6b")]
 pub mod w6b;
+#[cfg(feature = "lane_w5d")]
+pub mod w5d;
+#[cfg(feature = "lane_w5e")]
+pub mod w5e;
 #[cfg(feature = "lane_w7a")]
 pub mod w7a;
 #[cfg(feature = "lane_w7b")]

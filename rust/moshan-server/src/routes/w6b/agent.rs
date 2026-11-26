@@ -252,7 +252,6 @@ async fn read(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Response {
     let root = data_root(&ctx);
     let ctx2 = ctx.clone();
     let out = tokio::task::spawn_blocking(move || {
-        let _ = ctx2;
         bus::read(&root, &ns, &since, limit, &q, &client)
     })
     .await
@@ -728,9 +727,43 @@ async fn brief(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Response {
         tt.insert("apps".into(), json!(apps));
         o.insert("today_tokens".into(), Value::Object(tt));
 
-        // `recent_work` 要的是 hostwork.rounds_items("today")（逐轮记录），
-        // 那一层是 w5a 泳道的会话解析器，本泳道没迁，所以这里**没有这个键**。
-        // 其余字段（self_report / today_tokens / devices）与 Python 一致。
+        // `recent_work`：hostwork.rounds_items("today") 的前 8 条逐轮记录。
+        // 解析层在 crate::hostwork（w5a 泳道的会话解析器），跨泳道只能走公共模块。
+        let rw = crate::hostwork::rounds_items(&ctx2, "today");
+        let rows: Vec<Value> = rw
+            .get("items")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().take(8).cloned().collect())
+            .unwrap_or_default();
+        let recent_work: Vec<Value> = rows
+            .iter()
+            .map(|x| {
+                let start = x.get("start").map(|v| crate::hostwork::util::str_or(Some(v))).unwrap_or_default();
+                let at: String = start.chars().skip(11).take(5).collect();
+                let title = x.get("title").map(|v| crate::hostwork::util::str_or(Some(v))).unwrap_or_default();
+                let task = if !title.is_empty() {
+                    title
+                } else {
+                    x.get("task").map(|v| crate::hostwork::util::str_or(Some(v))).unwrap_or_default()
+                };
+                let mut m = Map::new();
+                m.insert("at".into(), Value::String(at));
+                m.insert(
+                    "client".into(),
+                    x.get("client").cloned().unwrap_or(Value::Null),
+                );
+                m.insert(
+                    "task".into(),
+                    Value::String(task.chars().take(60).collect()),
+                );
+                m.insert(
+                    "status".into(),
+                    x.get("status").cloned().unwrap_or(Value::Null),
+                );
+                Value::Object(m)
+            })
+            .collect();
+        o.insert("recent_work".into(), Value::Array(recent_work));
 
         // 设备台账：只数个数，明细走设备服务（8778）
         let arc = root.join("13-设备").join("档案");
@@ -742,7 +775,6 @@ async fn brief(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Response {
             "devices".into(),
             json!({"n": n, "detail": "http://127.0.0.1:8778/"}),
         );
-        let _ = ctx2;
         Value::Object(o)
     })
     .await

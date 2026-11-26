@@ -686,18 +686,23 @@ fn dedupe_block() -> Value {
     })
 }
 
+/// `dash._heartbeat()`：Python 读进程内 heartbeat.STATE。Rust 的调度器把同一份
+/// 状态写在 crate::live；只有「本进程还没跑过心跳」（例如 MOSHAN_NO_SCHED=1）时，
+/// 才退回读 Python 落盘的 最新.json，免得卡片整块空掉。
+fn heartbeat_block(root: &Path) -> Value {
+    let live = crate::live::heartbeat_dash();
+    let empty = live.get("ok").map(|v| v.is_null()).unwrap_or(true)
+        && super::util::str_or(live.get("at")).is_empty();
+    if empty {
+        return hbmod::heartbeat_at(&root.join("10-系统记录"));
+    }
+    live
+}
+
 fn ocr_block() -> Value {
-    // 同上：ocr_runner.STATE 是进程内状态，落盘里没有这一份。
-    json!({
-        "at": "",
-        "done": 0,
-        "failed": 0,
-        "scanned": 0,
-        "chars": 0,
-        "seconds": 0,
-        "running": false,
-        "error": "",
-    })
+    // ocr_runner.STATE 是进程内状态，现在由 w5d 的调度线程写进 crate::live。
+    // 没开调度（MOSHAN_NO_SCHED=1）时保持 Python 的初值形状（at 空、计数 0）。
+    crate::live::ocr_dash()
 }
 
 // ------------------------------------------------------------------ 流水
@@ -1095,10 +1100,7 @@ pub fn payload(ctx: &Ctx) -> Value {
     m.insert("llmcost".into(), images::llmcost(&root));
     m.insert("files".into(), images::files(&root));
     m.insert("health".into(), health(&root));
-    m.insert(
-        "heartbeat".into(),
-        hbmod::heartbeat_at(&root.join("10-系统记录")),
-    );
+    m.insert("heartbeat".into(), heartbeat_block(&root));
     m.insert("trends".into(), trends);
     m.insert("dedupe".into(), dedupe_block());
     m.insert("ocr".into(), ocr_block());
@@ -1159,7 +1161,7 @@ pub async fn trends_state(State(ctx): CtxState, headers: HeaderMap, uri: Uri) ->
             "model": "qwen3.5-4b-gguf:q4km",
             "next_at": next_run_at(&c),
             "today_done": already_done(&c, &day),
-            "state": {"running": false, "started": "", "error": "", "last": Value::Null},
+            "state": crate::live::trends_value(),
             "latest": trends_latest(&c),
             "history": trends_history(&c, 14),
         })

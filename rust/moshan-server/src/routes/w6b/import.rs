@@ -689,9 +689,52 @@ fn read_dir_unsorted(p: &Path) -> Vec<PathBuf> {
 }
 
 /// `agent_import.scan()`
-pub fn scan(ctx: &Ctx) -> Value {
+/// `_hw_stats(hw)`：采集层认识的所有客户端（WorkBuddy / TRAE / Claude Code …），全部历史。
+/// 口袋自己的账不算「别的 agent」，跳过；空 id 也跳过。
+pub fn hw_stats(ctx: &Ctx) -> Vec<Value> {
+    let rows = crate::hostwork::clients_view(ctx, 0);
     let mut out: Vec<Value> = Vec::new();
-    // 采集层（hostwork）那一档没有迁：见文件头的说明。
+    for c in &rows {
+        let cid = crate::hostwork::util::str_or(c.get("id"));
+        if cid == "pocket" || cid.is_empty() {
+            continue;
+        }
+        let t = c.get("tokens").cloned().unwrap_or(json!({}));
+        let models: Vec<String> = c
+            .get("kids")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter(|k| crate::hostwork::util::str_or(k.get("kind")) == "model")
+                    .map(|k| crate::hostwork::util::str_or(k.get("name")))
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let name = {
+            let n = crate::hostwork::util::str_or(c.get("name"));
+            if n.is_empty() { cid.clone() } else { n }
+        };
+        let mut m = Map::new();
+        m.insert("name".into(), json!(name));
+        m.insert("id".into(), json!(cid));
+        m.insert("ok".into(), json!(true));
+        m.insert("sessions".into(), json!(util::int0(c.get("sessions").unwrap_or(&Value::Null))));
+        m.insert("calls".into(), json!(util::int0(c.get("calls").unwrap_or(&Value::Null))));
+        m.insert("asks".into(), json!(util::int0(c.get("asks").unwrap_or(&Value::Null))));
+        m.insert("tin".into(), json!(util::int0(t.get("in").unwrap_or(&Value::Null))));
+        m.insert("tout".into(), json!(util::int0(t.get("out").unwrap_or(&Value::Null))));
+        m.insert("cached".into(), json!(util::int0(t.get("cached").unwrap_or(&Value::Null))));
+        m.insert("models".into(), json!(models.into_iter().take(6).collect::<Vec<_>>()));
+        m.insert("last".into(), json!(crate::hostwork::util::str_or(c.get("last"))));
+        out.push(Value::Object(m));
+    }
+    out
+}
+
+pub fn scan(ctx: &Ctx) -> Value {
+    // 顺序照 Python：采集层各客户端 → Cherry → QwenWork
+    let mut out: Vec<Value> = hw_stats(ctx);
     let ch = cherry_stat();
     out.push(ch);
     if let Some(qw) = qwenwork_stat() {

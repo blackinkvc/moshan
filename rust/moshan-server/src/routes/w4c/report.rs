@@ -1580,17 +1580,11 @@ pub fn run(ctx: &Ctx, force: bool) -> Value {
 }
 
 /// `report_runner.state()`
+///
+/// 运行态由 w5d 的 report 线程写入 crate::live；没开调度时是 Python 的初值形状
+/// （started=0、samples=0、last_made=[]、runs=0）。
 fn runner_state() -> Value {
-    json!({
-        "started": 0.0,
-        "samples": 0,
-        "last_sample": "",
-        "last_run": 0.0,
-        "last_made": [],
-        "last_removed": [],
-        "error": "",
-        "runs": 0,
-    })
+    crate::live::report_value()
 }
 
 // ---------------------------------------------------------------- 路由

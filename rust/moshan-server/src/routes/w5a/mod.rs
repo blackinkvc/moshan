@@ -53,6 +53,9 @@ pub fn router() -> Router<Arc<Ctx>> {
         .route("/api/rounds", get(hostwork::rounds_api))
         .route("/api/sources", get(hostwork::sources_api))
         .route("/api/hourly", get(hourly::hourly_api))
+        .route("/api/overview", get(hostwork::overview_api))
+        .route("/api/pulse", get(hostwork::pulse_api))
+        .route("/api/tasks", get(hostwork::tasks_api))
         // —— AI 新闻
         .route("/api/trends", get(dash::trends_state))
         // —— 插件卡片

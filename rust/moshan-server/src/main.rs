@@ -7,6 +7,7 @@ mod auth;
 mod hostwork;
 mod jsonio;
 mod ledger;
+mod live;
 mod paths;
 mod proxy;
 mod routes;
@@ -87,6 +88,14 @@ async fn main() {
     {
         app = app.merge(routes::w6b::router());
     }
+    #[cfg(feature = "lane_w5d")]
+    {
+        app = app.merge(routes::w5d::router());
+    }
+    #[cfg(feature = "lane_w5e")]
+    {
+        app = app.merge(routes::w5e::router());
+    }
     #[cfg(feature = "lane_w7a")]
     {
         app = app.merge(routes::w7a::router());
@@ -131,6 +140,11 @@ async fn main() {
         ctx.upstream.as_deref().unwrap_or("（无，未迁路由将 404）"),
         ctx.state_dir.display()
     );
+
+    // 后台调度器：心跳/采样/巡检/OCR 各自按 Python 的节奏跑。
+    // 放在监听之后起，是为了让 `/api/ping` 立刻可用（探针不看调度器）。
+    #[cfg(feature = "lane_w5d")]
+    routes::w5d::spawn(ctx.clone());
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async {

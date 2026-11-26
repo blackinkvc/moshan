@@ -601,7 +601,7 @@ async fn build() -> Value {
         "at": fnum(round1(std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0))),
         "models": dedup,
-        "total_rss_gb": fnum(round1(total)),
+        "total_rss_gb": if total == 0.0 { json!(0) } else { fnum(round1(total)) },
         "services": services,
         "procs": cands.len(),
         "probed_ports": probed,
