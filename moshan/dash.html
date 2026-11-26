@@ -3,7 +3,7 @@
 <head>
 <!-- 页面版本戳：服务端拿它跟包里那份比，旧了会自动备份并换新。
      改这个文件时把日期往后挪一格，别原地不动，否则老机器收不到。 -->
-<meta name="moshan-page" content="2026-11-26b">
+<meta name="moshan-page" content="2026-11-26c">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
@@ -6619,6 +6619,13 @@ async function api(path, opt) {
     ctl = new AbortController();
     fopt.signal = ctl.signal;
     to = setTimeout(() => ctl.abort(), ms);
+    // 调用方自己传了 signal 的话，接到我们这个控制器上，别把它的取消能力吞掉。
+    // （2026-11-26：loadHostRes/loadHS 原来各起一个 8/9 秒的 AbortController 传 signal，
+    //  就是在这里被覆盖掉的 —— 那两处“超时”从来没生效过，白白查了很久。）
+    if (opt.signal && typeof opt.signal.addEventListener === 'function'
+      && !opt.signal.aborted) {
+      opt.signal.addEventListener('abort', () => ctl.abort(), { once: true });
+    }
   }
   try {
     const r = await fetch(path, fopt);
@@ -9399,7 +9406,8 @@ const HR = { at: 0, data: null, err: '', loading: false, loadingAt: 0, colPop: f
   // 时间范围（原 8775 顶部那排筛选里的一项）。只作用于 /api/overview 这几张统计卡，
   // 「本机工作」那张是按天分组的流水，不跟这个变。
   // userRange = 人自己点过范围没有。没点过才允许下面「空窗口自愈」替它放宽。
-  range: '7d', userRange: false };
+  // cold = 首轮超时、正在补的那一轮。卡片这时说「首次扫描中」而不是「没读到」。
+  range: '7d', userRange: false, cold: false };
 const HR_RANGES = [['today', '今天'], ['7d', '7 天'], ['30d', '30 天'], ['all', '全部']];
 function hrRangeInit() {
   try {
@@ -9414,7 +9422,7 @@ function hrN(n) {
   if (n >= 1e4) return (n / 1e4).toFixed(n >= 1e6 ? 0 : 1) + '万';
   return String(Math.round(n));
 }
-async function loadHostRes(force, fresh) {
+async function loadHostRes(force, fresh, retried) {
   // 单飞锁要看门狗：api() 虽然有 25 秒超时，但标签被浏览器挂起时请求可能永远不落地，
   // 一旦卡住这张卡就再也不刷（跟任务清单那次一模一样）。
   if (HR.loading) {
@@ -9424,14 +9432,16 @@ async function loadHostRes(force, fresh) {
   if (!force && HR.at && Date.now() - HR.at < 25000) return;
   HR.loading = true; HR.loadingAt = Date.now();
   try {
-    const ctl = new AbortController();
-    const to = setTimeout(() => ctl.abort(), 8000);
+    // 超时只在 api() 那一处定（默认 25 秒），这里传 timeout 覆盖它。
+    // 2026-11-26 修：原来这里另起了个 8 秒的 AbortController，把 signal 传进 api()——
+    // 但 api() 建自己的控制器时会把 signal 整个覆盖掉，那 8 秒从来没生效过，
+    // 实际一直是 25 秒。报错里也永远只会出现「25 秒」，查半天以为别处在管。
     // fresh=1 让服务端当场重新探测外置盘（插拔后点「刷新」立即生效），
     // 普通自动刷新仍吃服务端的短缓存，不反复 fork diskutil。
     // 同源取数，token 走 api() 的 x-token 头 —— 手机上走 tailscale 也不用管端口。
     HR.data = await api('/api/overview?range=' + encodeURIComponent(HR.range)
-      + (fresh ? '&fresh=1' : ''), { signal: ctl.signal });
-    clearTimeout(to);
+      + (fresh ? '&fresh=1' : ''), { timeout: retried ? 60000 : 25000 });
+    HR.cold = false;
     if (HR.data && HR.data.ok === false) throw new Error(HR.data.error || '接口报错');
     HR.err = '';
     // —— 空窗口自愈（2026-11-26）——
@@ -9446,13 +9456,24 @@ async function loadHostRes(force, fresh) {
         HR.at = 0;
         HR.loading = false;
         renderHWRange();
-        return loadHostRes(true);
+        return loadHostRes(true, false, retried);
       }
     }
   } catch (e) {
+    // —— 冷启动补一轮（2026-11-26）——
+    // 刚重启时这一轮要把所有会话流水过一遍，EVO 实测 18.7 秒，Mac 会话更多还要更久，
+    // 一头撞上 25 秒的窗口。一次没赶上就报「没读到这台机器」太武断 —— 再给一轮，
+    // 这轮把窗口放到 60 秒，期间卡片说「首次扫描中」，不是报错。
+    if (!retried && /超时|timeout|fetch|Network|load failed/i.test(String(e && e.message))) {
+      HR.loading = false;
+      HR.at = 0;
+      HR.cold = true;
+      renderHW();
+      return loadHostRes(true, fresh, true);
+    }
+    HR.cold = false;
     HR.data = null;
-    HR.err = e.name === 'AbortError' ? '8 秒没响应'
-      : (/fetch|Network|load failed|HTTP 5/i.test(e.message) ? '口袋没响应' : e.message);
+    HR.err = /fetch|Network|load failed|HTTP 5/i.test(e.message) ? '口袋没响应' : e.message;
   }
   HR.at = Date.now();       // 失败也记时刻，否则每次全页刷新都去戳一遍
   HR.loading = false;
@@ -11200,8 +11221,12 @@ const HW_KIND_ICON = {
    hwTbl 是 token 按模型的明细表。补回来。 */
 function hwWait() {
   if (!HR.data) {
-    return '<div class="hr-empty"><span>' + (HR.err ? '没读到这台机器（' + esc(HR.err) + '）'
-      : '正在读这台机器的状态…') + '</span></div>';
+    /* 三种「空」要说清是哪一种：正在读 / 刚重启在补一轮 / 真读不到。
+       以前只有后两种，冷启动那 20 秒被当成「读不到」，看着像坏了。 */
+    const t = HR.cold ? '首次扫描中，这台机器刚起来，要把会话流水过一遍…'
+      : HR.err ? '没读到这台机器（' + esc(HR.err) + '）'
+        : '正在读这台机器的状态…';
+    return '<div class="hr-empty"><span>' + t + '</span></div>';
   }
   return '';
 }
@@ -12958,18 +12983,16 @@ async function loadHS(force) {
   }
   HS.loading = true; HS.loadingAt = Date.now();
   try {
-    const ctl = new AbortController();
-    const to = setTimeout(() => ctl.abort(), 9000);
-    HS.data = await api('/api/workstat?days=180', { signal: ctl.signal });
-    clearTimeout(to);
+    // 同 loadHostRes：超时交给 api() 的 timeout，别再自己传 signal ——
+    // api() 会覆盖它，那 9 秒从来没生效过（2026-11-26 修）。
+    HS.data = await api('/api/workstat?days=180', { timeout: 9000 });
     if (!HS.data || HS.data.ok === false) {
       throw new Error((HS.data && HS.data.error) || '统计层返回失败');
     }
     HS.err = '';
   } catch (e) {
     HS.data = null;
-    HS.err = e.name === 'AbortError' ? '9 秒没响应'
-      : (/fetch|Network|load failed|HTTP 5/i.test(e.message) ? '口袋没响应' : e.message);
+    HS.err = /fetch|Network|load failed|HTTP 5/i.test(e.message) ? '口袋没响应' : e.message;
   }
   HS.at = Date.now();
   HS.loading = false;
