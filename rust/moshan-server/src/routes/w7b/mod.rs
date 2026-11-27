@@ -15,6 +15,7 @@ pub mod pluginpack;
 pub mod pushupd;
 pub mod transfer;
 pub mod update;
+pub mod updater;
 pub mod util;
 
 use crate::paths::Ctx;

@@ -236,7 +236,7 @@ pub async fn browse(State(ctx): CtxState, headers: HeaderMap, uri: Uri, Query(q)
                         .to_string();
                     let permit = THUMB_SLOTS.acquire().await.ok();
                     let got = tokio::task::spawn_blocking(move || -> Option<String> {
-                        let t = storage::make_thumb(Path::new(&path), INLINE_THUMB_W)?;
+                        let t = crate::imaging::thumb(Path::new(&path), INLINE_THUMB_W)?;
                         let bytes = std::fs::read(t).ok()?;
                         use base64::Engine;
                         Some(format!(

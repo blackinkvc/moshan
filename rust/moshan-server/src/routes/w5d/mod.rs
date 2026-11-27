@@ -10,6 +10,7 @@
 // 调度开关：`MOSHAN_NO_SCHED=1` 时**只关自动循环**，手动路由照常可用；
 // /api/ping 不受影响（main.rs 在监听之后才调 spawn，本函数里也不做阻塞初始化）。
 
+pub mod brief_push;
 pub mod heartbeat;
 pub mod ocr;
 pub mod report;
@@ -62,6 +63,14 @@ pub fn spawn(ctx: Arc<Ctx>) {
     ocr::start(ctx.clone());
     report::start(ctx.clone());
     trends::start(ctx.clone());
+
+    // 简报的定时推送（8–11 点、60 秒一跳）与待定问句的补发（2 秒一跳）。
+    // 两者都只碰微信网关，出错自己吞；`MOSHAN_NO_PUSH` 只关简报那条。
+    #[cfg(feature = "lane_w4b")]
+    {
+        brief_push::start(ctx.clone());
+        crate::routes::w4b::pending::start(ctx.clone());
+    }
 
     let own = data_root(&ctx).join("_本机工作");
     // start_at 会同步采第一笔（几百毫秒），放到线程里，别让 serve 等它。

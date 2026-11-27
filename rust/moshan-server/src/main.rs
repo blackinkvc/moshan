@@ -2,10 +2,18 @@
 // 职责：装配服务端。已迁路由由 Rust 直接应答，其余原样转发给上游 Python。
 // 不做：不建目录、不初始化数据根、不启动后台调度（这些随波次逐个接手，
 //       W1 阶段保持"零副作用"，才能与 Python 逐字节对拍）。
+//
+// 监听矩阵（对齐 `moshan/server.py` 的 main() 尾部）：
+//   - 主端口 host:port：tls 建得起来就 HTTPS，否则明文（host 是通配地址时
+//     强制收回到 127.0.0.1 —— 明文令牌不能广播到局域网）；
+//   - 127.0.0.1:local_port 无条件绑：本机浏览器对 127.0.0.1 上的自签证书
+//     直接拦死，本机必须走明文；
+//   - https 模式下再绑 tailscale_ip:plain_port：安卓不信任自签，手机走隧道明文。
 
 mod auth;
 mod boot;
 mod hostwork;
+mod imaging;
 mod jsonio;
 mod ledger;
 mod live;
@@ -13,16 +21,29 @@ mod paths;
 mod proxy;
 mod routes;
 mod storage;
+mod sysopen;
+mod tls;
+mod wechat;
 
 use axum::routing::{get, post};
 use axum::Router;
+use serde_json::Value;
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::net::TcpListener;
+use tokio::sync::watch;
 
 #[tokio::main]
 async fn main() {
+    // rustls 0.23 要求进程里只有一个默认 provider；但这个构建的依赖树同时打开了
+    // ring 与 aws-lc-rs（reqwest 那条），`ServerConfig::builder()` 会直接 panic。
+    // 显式装 ring —— 与 reqwest 手上那份实现一致，证书链/签名算法不会分叉。
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // 端口三种来源，优先级从高到低：
-    //   1. `MOSHAN_RS_PORT`：测试/多实例/对拍显式指定，此时**不动配置**；
-    //   2. `MOSHAN_NO_BOOT=1`：只读配置里的 local_port，缺省 8400；
+    //   1. `MOSHAN_RS_PORT`：测试/多实例/对拍显式指定，此时**不动配置、不开 TLS**；
+    //   2. `MOSHAN_NO_BOOT=1`：只读配置里的 port/local_port，缺省 8321/8323；
     //   3. 自举：建目录、发令牌、选空闲端口、写回 config.json（独立运行的默认路径）。
     //
     // 自举必须跑在 `Ctx::load()` 之前：它写的就是 `Ctx` 要读的那份配置。
@@ -34,27 +55,336 @@ async fn main() {
     };
 
     let mut loaded = paths::Ctx::load();
-    let port: u16 = explicit
-        .or(booted)
-        .or_else(|| {
-            loaded.cfg
-                .get("local_port")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u16)
-        })
-        .unwrap_or(8400);
 
-    // 自举时配置里的 local_port 就是自己 —— 若还拿它当上游，
-    // 未迁路由会转发给自己，一路递归把线程吃光。这里把「上游=自己」直接作废。
-    if let Some(up) = loaded.upstream.clone() {
+    // ---- 对拍/测试路径：只绑 127.0.0.1 明文，不 TLS、不额外监听。
+    //      整条 GET 对拍链都靠这条路径，改了全线红。
+    if let Some(port) = explicit {
         let me = format!("127.0.0.1:{port}");
-        if up.contains(&me) {
+        if let Some(up) = loaded.upstream.clone() {
+            if up.contains(&me) {
+                eprintln!("[moshan-rs] 上游指向自身（{up}），已禁用转发");
+                loaded.upstream = None;
+            }
+        }
+        let ctx = Arc::new(loaded);
+        let app = build_app(ctx.clone());
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        let listener = match TcpListener::bind(addr).await {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("[moshan-rs] 绑定 {addr} 失败：{e}");
+                std::process::exit(1);
+            }
+        };
+        eprintln!(
+            "[moshan-rs] 监听 http://{addr}  上游={}  状态目录={}",
+            ctx.upstream.as_deref().unwrap_or("（无，未迁路由将 404）"),
+            ctx.state_dir.display()
+        );
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                let _ = tokio::signal::ctrl_c().await;
+            })
+            .await
+            .expect("server");
+        return;
+    }
+
+    // ---- 正常启动 ---------------------------------------------------------
+    let port = num_or(&loaded.cfg, "port", booted.map(|b| b.port).unwrap_or(8321));
+    let local_port = num_or(
+        &loaded.cfg,
+        "local_port",
+        booted.map(|b| b.local_port).unwrap_or(8323),
+    );
+    let plain_port = num_or(&loaded.cfg, "plain_port", 8322);
+    let tls_on = loaded.cfg.get("tls").map(truthy).unwrap_or(true);
+    let tls_dir = loaded
+        .cfg
+        .get("tls_dir")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| PathBuf::from(storage::expanduser(s)))
+        .unwrap_or_else(|| paths::state_dir().join("certs"));
+    let mut host = loaded
+        .cfg
+        .get("host")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if host.is_empty() {
+        host = "0.0.0.0".to_string();
+    }
+
+    // 「上游=自己」会让未迁路由转发给自己，一路递归把线程吃光。
+    // 现在有两个本机端口（主端口 + 明文口），两个都要判。
+    if let Some(up) = loaded.upstream.clone() {
+        if points_to_self(&up, &[port, local_port]) {
             eprintln!("[moshan-rs] 上游指向自身（{up}），已禁用转发");
             loaded.upstream = None;
         }
     }
-    let ctx = Arc::new(loaded);
 
+    // ---- 证书：拿不到就退化明文（Python 侧这里是硬保险，不能把启动带崩）
+    let mut tls_cfg: Option<Arc<rustls::ServerConfig>> = None;
+    if tls_on {
+        match tls::ensure(&tls_dir) {
+            Some((crt, key)) => match server_config(&crt, &key) {
+                Some(c) => {
+                    let trusted = tls::describe(&tls_dir)
+                        .get("trusted_ca")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    eprintln!(
+                        "证书 {}{}",
+                        crt.display(),
+                        if trusted {
+                            "（Tailscale 公信证书）"
+                        } else {
+                            "（自签，手机首次访问需点“继续”）"
+                        }
+                    );
+                    tls_cfg = Some(Arc::new(c));
+                }
+                None => eprintln!(
+                    "[警告] 证书读不出来（{}），退化为明文 HTTP —— 令牌会以明文经过网络。",
+                    crt.display()
+                ),
+            },
+            None => eprintln!(
+                "[警告] 证书生成不了（rcgen），退化为明文 HTTP —— 令牌会以明文经过局域网。"
+            ),
+        }
+    } else {
+        eprintln!("[警告] config.json 里 tls=false：主端口走明文 HTTP。");
+    }
+
+    let scheme = if tls_cfg.is_some() { "https" } else { "http" };
+    // 只有「想开 TLS 但没开成」才收回 loopback：那是怕令牌明文广播出去。
+    // 显式 `tls=false` 是用户的选择，Python 侧照样按 host 监听 —— 这里跟着放行，
+    // 否则局域网明文部署（自己家网段）会被无声地断掉。
+    if tls_on && tls_cfg.is_none() && matches!(host.as_str(), "0.0.0.0" | "::" | "") {
+        host = "127.0.0.1".to_string();
+        eprintln!(
+            "[警告] 退化为明文 HTTP：主端口只监听 127.0.0.1，局域网/手机会连不上（这是有意的）。\
+             修好证书或显式设置 host 后再放开。"
+        );
+    }
+
+    let token = loaded.token.clone();
+    let ctx = Arc::new(loaded);
+    let app = build_app(ctx.clone());
+
+    let ts_ip = tls::tailscale_ip();
+    let ts_name = tls::tailscale_name();
+
+    // ---- 绑定：任一成功就算启动成功；失败的只警告（Python 也只是警告）----
+    enum Role {
+        Main,
+        Local,
+        Network,
+    }
+    struct Bound {
+        addr: SocketAddr,
+        listener: TcpListener,
+        tls: Option<Arc<rustls::ServerConfig>>,
+        role: Role,
+    }
+
+    let mut bounds: Vec<Bound> = Vec::new();
+
+    let main_addr = format!("{host}:{port}");
+    match TcpListener::bind(&main_addr).await {
+        Ok(l) => {
+            let addr = l
+                .local_addr()
+                .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], port)));
+            bounds.push(Bound {
+                addr,
+                listener: l,
+                tls: tls_cfg.clone(),
+                role: Role::Main,
+            });
+        }
+        Err(e) => eprintln!("[警告] 主端口 {main_addr} 绑定失败（{e}）"),
+    }
+
+    if local_port != 0 && local_port != port {
+        let a = format!("127.0.0.1:{local_port}");
+        match TcpListener::bind(&a).await {
+            Ok(l) => bounds.push(Bound {
+                addr: l.local_addr().unwrap(),
+                listener: l,
+                tls: None,
+                role: Role::Local,
+            }),
+            Err(_) => eprintln!("[警告] 本机明文端口 {a} 绑定失败（可能被占用）"),
+        }
+    }
+
+    if tls_cfg.is_some() && plain_port != 0 {
+        if let Some(ip) = ts_ip.as_deref() {
+            let a = format!("{ip}:{plain_port}");
+            if a != main_addr {
+                match TcpListener::bind(&a).await {
+                    Ok(l) => bounds.push(Bound {
+                        addr: l.local_addr().unwrap(),
+                        listener: l,
+                        tls: None,
+                        role: Role::Network,
+                    }),
+                    Err(_) => eprintln!("[警告] 明文端口 {a} 绑定失败（可能被占用）"),
+                }
+            }
+        }
+    }
+
+    if bounds.is_empty() {
+        eprintln!("[moshan-rs] 所有监听都没绑上，退出");
+        std::process::exit(1);
+    }
+
+    // ---- 启动日志：照 Python 的形状打 ------------------------------------
+    for b in &bounds {
+        if !matches!(b.role, Role::Local | Role::Network) {
+            continue;
+        }
+        let tip = if matches!(b.role, Role::Local) {
+            "本机用这个，无证书警告"
+        } else {
+            "手机用这个，无证书警告"
+        };
+        eprintln!("口袋服务 http://{}/?k={token}   （{tip}）", b.addr);
+    }
+    eprintln!("口袋服务 {scheme}://127.0.0.1:{port}");
+    if let Some(name) = ts_name.as_deref() {
+        eprintln!("         {scheme}://{name}:{port}/?k={token}");
+    }
+    let lan_ip = tls::lan_ip();
+    for ip in [ts_ip.as_deref(), lan_ip.as_deref()].into_iter().flatten() {
+        eprintln!("         {scheme}://{ip}:{port}/?k={token}");
+    }
+    eprintln!("访问令牌 {token}");
+    eprintln!("收件箱 {}", ctx.inbox_dir().display());
+    if ctx.upstream.is_none() {
+        eprintln!("[moshan-rs] 未迁路由无上游（将 404）");
+    }
+
+    // 实际监听了哪些地址，逐条落一行，出问题好查。
+    for b in &bounds {
+        let proto = if b.tls.is_some() { "https" } else { "http" };
+        eprintln!("[moshan-rs] 监听 {proto}://{}", b.addr);
+    }
+    boot::announce(scheme, port, local_port, &token);
+
+    // ---- 各自跑，ctrl_c 一起收 ------------------------------------------
+    let (stop_tx, stop_rx) = watch::channel(false);
+    let mut tasks = Vec::new();
+    for b in bounds {
+        let app = app.clone();
+        let rx = stop_rx.clone();
+        match b.tls {
+            Some(cfg) => tasks.push(tokio::spawn(serve_tls(b.listener, cfg, app, rx))),
+            None => tasks.push(tokio::spawn(async move {
+                let mut rx = rx;
+                let _ = axum::serve(b.listener, app)
+                    .with_graceful_shutdown(async move {
+                        let _ = rx.changed().await;
+                    })
+                    .await;
+            })),
+        }
+    }
+
+    let _ = tokio::signal::ctrl_c().await;
+    let _ = stop_tx.send(true);
+    for t in tasks {
+        let _ = t.await;
+    }
+}
+
+/// TLS 监听：`axum::serve` 只吃 TcpListener，TLS 流要自己喂 hyper。
+async fn serve_tls(
+    listener: TcpListener,
+    tls: Arc<rustls::ServerConfig>,
+    app: Router,
+    mut stop: watch::Receiver<bool>,
+) {
+    let acceptor = tokio_rustls::TlsAcceptor::from(tls);
+    loop {
+        let accepted = tokio::select! {
+            r = listener.accept() => r,
+            _ = stop.changed() => break,
+        };
+        let tcp = match accepted {
+            Ok((s, _peer)) => s,
+            Err(e) => {
+                eprintln!("[moshan-rs] TLS 接入失败：{e}");
+                continue;
+            }
+        };
+        let acceptor = acceptor.clone();
+        let app = app.clone();
+        tokio::spawn(async move {
+            let Ok(stream) = acceptor.accept(tcp).await else {
+                return;
+            };
+            let io = hyper_util::rt::TokioIo::new(stream);
+            let svc = hyper_util::service::TowerToHyperService::new(app);
+            let _ = hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new())
+                .serve_connection_with_upgrades(io, svc)
+                .await;
+        });
+    }
+}
+
+fn server_config(crt: &Path, key: &Path) -> Option<rustls::ServerConfig> {
+    let (certs, key) = tls::load_pair(crt, key)?;
+    let mut cfg = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .ok()?;
+    // 不声明 h2：这个构建里 hyper-util 的 http2 没开（auto 只会说 http/1.1），
+    // 声明了反而会在协商后对不上。
+    cfg.alpn_protocols = vec![b"http/1.1".to_vec()];
+    Some(cfg)
+}
+
+/// 上游是不是指向自己（只看回环/通配主机 + 端口）。
+fn points_to_self(up: &str, ports: &[u16]) -> bool {
+    let rest = up.split("://").nth(1).unwrap_or(up);
+    let hostport = rest.split('/').next().unwrap_or(rest);
+    let Some((h, p)) = hostport.rsplit_once(':') else {
+        return false;
+    };
+    let Ok(p) = p.parse::<u16>() else {
+        return false;
+    };
+    ports.contains(&p) && matches!(h, "127.0.0.1" | "localhost" | "0.0.0.0" | "[::1]" | "::1")
+}
+
+fn num_or(cfg: &Value, key: &str, default: u16) -> u16 {
+    cfg.get(key)
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u16)
+        .filter(|p| *p != 0)
+        .unwrap_or(default)
+}
+
+/// 与 Python 的 `bool(x)` 同口径。
+fn truthy(v: &Value) -> bool {
+    match v {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        Value::Number(n) => n.as_f64().map(|f| f != 0.0).unwrap_or(true),
+        Value::String(s) => !s.is_empty(),
+        _ => true,
+    }
+}
+
+fn build_app(ctx: Arc<paths::Ctx>) -> Router {
     // 泳道全关时 `mut` 用不上，这是迁移期的正常状态，不必报警。
     #[allow(unused_mut)]
     let mut app = Router::new()
@@ -154,32 +484,12 @@ async fn main() {
     // ---- 其余未迁路由：镜像给 Python，行为完全不变
     let app = app.fallback(proxy::forward).with_state(ctx.clone());
 
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-    let listener = match tokio::net::TcpListener::bind(addr).await {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("[moshan-rs] 绑定 {addr} 失败：{e}");
-            std::process::exit(1);
-        }
-    };
-
-    eprintln!(
-        "[moshan-rs] 监听 http://{addr}  上游={}  状态目录={}",
-        ctx.upstream.as_deref().unwrap_or("（无，未迁路由将 404）"),
-        ctx.state_dir.display()
-    );
-
     // 后台调度器：心跳/采样/巡检/OCR 各自按 Python 的节奏跑。
     // 放在监听之后起，是为了让 `/api/ping` 立刻可用（探针不看调度器）。
     #[cfg(feature = "lane_w5d")]
-    routes::w5d::spawn(ctx.clone());
+    routes::w5d::spawn(ctx);
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
-        .await
-        .expect("server");
+    app
 }
 
 /// `MOSHAN_*` 这类开关只认「非空且不是 0/false」——与 Python 侧读环境变量的口径一致。

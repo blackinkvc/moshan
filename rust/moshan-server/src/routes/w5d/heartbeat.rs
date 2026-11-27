@@ -188,7 +188,7 @@ fn pid_alive(pid: i64) -> bool {
     if pid <= 0 {
         return false;
     }
-    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+    crate::hostwork::platform::proc_alive(pid)
 }
 
 // ---------------------------------------------------------------- 检查

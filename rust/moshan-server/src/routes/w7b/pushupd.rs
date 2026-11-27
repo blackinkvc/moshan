@@ -6,7 +6,7 @@
 //       等于把正在对拍的服务杀掉。这里**写同样的脚本、回同样的形状**，但不 Popen。
 //       汇报里把这条列为已知分叉。
 //
-// zip 解包用系统 `/usr/bin/unzip`：Cargo.toml 不归本泳道，不能加 zip crate。
+// zip 解包用 `zip` crate（Cargo 已有）：系统 unzip 在 Windows 上不存在。
 // 白名单、`..` 拒绝、大小上限全部由本文件自己判定，与 `pushupd._safe_name` 同口径。
 
 #![allow(dead_code)]
@@ -16,7 +16,6 @@ use base64::Engine;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const MAX_PKG_BYTES: usize = 64 * 1048576;
 const MAX_UNPACK_BYTES: u64 = 512 * 1048576;
@@ -89,61 +88,39 @@ struct Unpacked {
     skipped_n: usize,
 }
 
-/// 读 ZIP 中央目录里的条目名。
+/// 打开 zip：错误文案与 Python 的 `zipfile.BadZipFile` 对齐，调用方按原文案回给前端。
+fn open_zip(path: &Path) -> Result<zip::ZipArchive<std::fs::File>, String> {
+    let f = std::fs::File::open(path).map_err(|e| format!("File is not a zip file（{e}）"))?;
+    zip::ZipArchive::new(f).map_err(|_| "File is not a zip file".to_string())
+}
+
+/// 读 ZIP 中央目录里的条目名（顺序与 `zipfile.namelist()` 一致）。
 ///
-/// 为什么不用 `unzip -Z1`：Info-ZIP 6.0 在 macOS 上会把 UTF-8 名字按本地字符集
-/// 转码，中文目录名出来是 `?`（`unzip -p` 本身认 UTF-8，所以只影响列表）。
-/// 中央目录格式很简单，自己读能拿到与 Python `zipfile.namelist()` 一样的 bytes。
-fn zip_names(path: &Path) -> Result<Vec<String>, String> {
-    let data = std::fs::read(path).map_err(|e| format!("File is not a zip file（{e}）"))?;
-    let bad = || "File is not a zip file".to_string();
-    if data.len() < 22 {
-        return Err(bad());
-    }
-    // EOCD 可能在末尾注释之后，最多回退 65557 字节。
-    let start = data.len().saturating_sub(65557);
-    let mut eocd = None;
-    for i in (start..=data.len() - 22).rev() {
-        if data[i..i + 4] == [0x50, 0x4b, 0x05, 0x06] {
-            eocd = Some(i);
-            break;
-        }
-    }
-    let eocd = eocd.ok_or_else(bad)?;
-    let total = u16::from_le_bytes([data[eocd + 10], data[eocd + 11]]) as usize;
-    let mut off = u32::from_le_bytes([
-        data[eocd + 16],
-        data[eocd + 17],
-        data[eocd + 18],
-        data[eocd + 19],
-    ]) as usize;
-    let mut names = Vec::with_capacity(total);
-    for _ in 0..total {
-        if off + 46 > data.len() || data[off..off + 4] != [0x50, 0x4b, 0x01, 0x02] {
-            return Err(bad());
-        }
-        let nlen = u16::from_le_bytes([data[off + 28], data[off + 29]]) as usize;
-        let elen = u16::from_le_bytes([data[off + 30], data[off + 31]]) as usize;
-        let clen = u16::from_le_bytes([data[off + 32], data[off + 33]]) as usize;
-        let nstart = off + 46;
-        if nstart + nlen > data.len() {
-            return Err(bad());
-        }
-        let raw = &data[nstart..nstart + nlen];
-        names.push(String::from_utf8_lossy(raw).to_string());
-        off = nstart + nlen + elen + clen;
+/// 为什么不用系统 `unzip -Z1`：Info-ZIP 6.0 在 macOS 上会把 UTF-8 名字按本地
+/// 字符集转码，中文目录名出来是 `?`；Windows 上更是根本没有 `/usr/bin/unzip`。
+/// 用 `zip` crate 直接读中央目录，三平台同一份结果。
+fn zip_names(ar: &mut zip::ZipArchive<std::fs::File>) -> Result<Vec<String>, String> {
+    let mut names = Vec::with_capacity(ar.len());
+    for i in 0..ar.len() {
+        let f = ar.by_index_raw(i).map_err(|_| "File is not a zip file".to_string())?;
+        names.push(f.name().to_string());
     }
     Ok(names)
 }
 
 /// `_unpack`：逐条校验名字后解到 dest。dest 必须已存在。
+///
+/// 解压走 `zip` crate（Cargo 里已有），不再 fork `/usr/bin/unzip -p`：
+/// 后者在 Windows 上不存在，Linux 上还依赖发行版是否装了 unzip。
 fn unpack(raw_path: &Path, dest: &Path) -> Result<Unpacked, PushError> {
-    let names = zip_names(raw_path).map_err(PushError::Other)?;
+    use std::io::Read;
+    let mut ar = open_zip(raw_path).map_err(PushError::Other)?;
+    let names = zip_names(&mut ar).map_err(PushError::Other)?;
     let mut files = 0i64;
     let mut written: u64 = 0;
     let mut skipped: Vec<String> = Vec::new();
     let mut skipped_n = 0usize;
-    for name in names {
+    for (i, name) in names.iter().enumerate() {
         let name = name.as_str();
         if name.is_empty() || name.ends_with('/') {
             continue;
@@ -155,21 +132,18 @@ fn unpack(raw_path: &Path, dest: &Path) -> Result<Unpacked, PushError> {
             }
             continue;
         };
-        let data = Command::new("/usr/bin/unzip")
-            .arg("-p")
-            .arg(raw_path)
-            .arg(name)
-            .output()
-            .map_err(|e| PushError::Other(format!("{e}")))?;
-        if !data.status.success() {
-            return Err(PushError::Other("解压条目失败".into()));
+        let mut data = Vec::new();
+        {
+            let mut zf = ar.by_index(i).map_err(|_| PushError::Other("解压条目失败".into()))?;
+            zf.read_to_end(&mut data)
+                .map_err(|_| PushError::Other("解压条目失败".into()))?;
         }
         let out_path = dest.join(&rel);
         if let Some(parent) = out_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| PushError::Other(format!("{e}")))?;
         }
-        std::fs::write(&out_path, &data.stdout).map_err(|e| PushError::Other(format!("{e}")))?;
-        written += data.stdout.len() as u64;
+        std::fs::write(&out_path, &data).map_err(|e| PushError::Other(format!("{e}")))?;
+        written += data.len() as u64;
         files += 1;
         if written > MAX_UNPACK_BYTES {
             return Err(PushError::TooBig(format!(

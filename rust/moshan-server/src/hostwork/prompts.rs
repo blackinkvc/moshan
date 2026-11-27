@@ -7,6 +7,7 @@
 // 外加 TRAE / Cherry / Claude 的自报轮次。字数按**字符**算，token 按中文 0.6 / 其他 0.3 折。
 #![allow(dead_code)]
 
+use super::platform;
 use super::sessions;
 use super::util::{fnum, now_ymd, round_n, str_or, truthy};
 use crate::paths::Ctx;
@@ -74,8 +75,7 @@ fn mtime_ms(p: &Path) -> f64 {
 }
 
 fn ino_of(p: &Path) -> u64 {
-    use std::os::unix::fs::MetadataExt;
-    std::fs::metadata(p).map(|m| m.ino()).unwrap_or(0)
+    std::fs::metadata(p).map(|m| platform::file_inode(&m)).unwrap_or(0)
 }
 
 fn now_ms() -> i64 {
@@ -172,8 +172,7 @@ fn scan_file(p: &Path, prev: Option<&FileBucket>) -> FileBucket {
         Ok(s) => s,
         Err(_) => return FileBucket::default(),
     };
-    use std::os::unix::fs::MetadataExt;
-    let ino = st.ino();
+    let ino = platform::file_inode(&st);
     let size = st.len();
     let same = prev
         .map(|b| b.ino == ino && b.size <= size)

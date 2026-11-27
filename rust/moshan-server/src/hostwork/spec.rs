@@ -520,7 +520,11 @@ fn plists(dir: &Path) -> Vec<(String, String, String)> {
 
 fn compute_units() -> Value {
     let now = now_secs();
-    let gui = launch_pids(&format!("gui/{}", unsafe { libc::getuid() }));
+    #[cfg(unix)]
+    let uid = unsafe { libc::getuid() };
+    #[cfg(not(unix))]
+    let uid = 0; // Windows 没有 launchd；下面 launch_pids 会直接回空
+    let gui = launch_pids(&format!("gui/{}", uid));
     let mut brew_svc: Vec<(String, String)> = Vec::new();
     let brew = brew_bin();
     if !brew.is_empty() {

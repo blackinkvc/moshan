@@ -1699,7 +1699,7 @@ pub async fn open(
     if !p.exists() {
         return http_err(404, "没有这份报告");
     }
-    match std::process::Command::new("open").arg(p.to_string_lossy().to_string()).spawn() {
+    match crate::sysopen::open_path(&p) {
         Ok(_) => Json(json!({"ok": true, "file": p.to_string_lossy()})).into_response(),
         Err(_) => internal_error(),
     }

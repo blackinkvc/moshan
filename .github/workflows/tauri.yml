@@ -71,11 +71,53 @@ jobs:
             libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
             librsvg2-dev patchelf build-essential libssl-dev file
 
+      # 可移植性审计：跑一次就够（纯源码静态检查，与 runner 平台无关）。
+      # 它查的是「每处 std::os::unix / libc:: 是否真被『对面平台会编掉』的 cfg 挡住」——
+      # 本机与 CI 的 mac/linux runner 都是 unix，裸 #[cfg(unix)] 编得过但 Windows 会炸，
+      # 只有这条能在编译之前就把它拦住。
+      - name: 可移植性审计（平台专有调用是否被 cfg 隔离）
+        if: matrix.os == 'ubuntu-22.04'
+        run: python3 scripts/rust-portability.py --ci
+
       # 服务端已全量 Rust，不再需要 PyInstaller 与 requirements.txt。
       # 下面冒烟步骤里的 python3 只用来读 config.json（runner 自带）。
       - name: 打 sidecar（编译 Rust 服务端并按 target triple 命名）
         shell: bash
         run: bash scripts/stage-sidecar.sh
+
+      # 服务端自己的冒烟：Linux/Windows 上「能编译」不等于「能跑」——
+      # 打开路径、缩略图、解压这些分支过去只在 macOS 走过，这里至少把
+      # 进程拉起来并拿到 /api/ping 的 200，才会进到壳的构建。
+      # 只用 bash（runner 自带），不碰产物名与矩阵结构。
+      - name: 服务端冒烟（Linux/Windows）
+        if: matrix.os != 'macos-latest'
+        shell: bash
+        run: |
+          set -eu
+          BIN="src-tauri/binaries/moshan-${{ matrix.triple }}"
+          if [ ! -f "$BIN" ] && [ -f "$BIN.exe" ]; then BIN="$BIN.exe"; fi
+          test -f "$BIN" || { echo "::error::没有 sidecar 产物：$BIN"; exit 1; }
+          # 用 runner 的原生临时目录：Windows 上 mktemp 给的是 MSYS 路径（/tmp/…），
+          # 原生的 moshan-server.exe 认不出来，会把状态目录建到奇怪的地方。
+          TMPM="${RUNNER_TEMP:-/tmp}/moshan-rs-smoke-$$"
+          mkdir -p "$TMPM"
+          MOSHAN_HOME="$TMPM" MOSHAN_NO_SCHED=1 MOSHAN_NO_PUSH=1 MOSHAN_RS_PORT=18400 \
+            "$BIN" >"$TMPM/server.log" 2>&1 &
+          PID=$!
+          trap 'kill $PID 2>/dev/null || taskkill //F //PID $PID 2>/dev/null || true; rm -rf "$TMPM"' EXIT
+          CODE=000
+          for i in $(seq 1 60); do
+            CODE=$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' -m 3 \
+                     http://127.0.0.1:18400/api/ping || true)
+            [ "$CODE" = "200" ] && break
+            sleep 1
+          done
+          echo "GET /api/ping -> $CODE"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::服务端起来了但不应答（Linux/Windows 分支有编译期之外的问题）"
+            tail -60 "$TMPM/server.log" || true
+            exit 1
+          fi
 
       - name: 构建桌面壳
         working-directory: src-tauri

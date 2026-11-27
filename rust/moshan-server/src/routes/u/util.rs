@@ -339,73 +339,22 @@ pub fn which(name: &str) -> Option<String> {
     let path = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path) {
         let cand = dir.join(name);
-        if let Ok(m) = std::fs::metadata(&cand) {
-            if m.is_file() {
-                use std::os::unix::fs::PermissionsExt;
-                if m.permissions().mode() & 0o111 != 0 {
-                    return Some(cand.to_string_lossy().to_string());
-                }
-            }
+        if crate::hostwork::platform::is_exec_file(&cand) {
+            return Some(cand.to_string_lossy().to_string());
         }
     }
     None
 }
 
-/// 本机 Tailscale 地址：`tls.tailscale_ip()` 的先网卡后 CLI 两条路。
+/// 本机 Tailscale 地址：先看网卡里有没有 100.x，再退回 `tailscale ip -4`。
 /// 页面上用于「连不上时自己切 100.x 明文口」。
+///
+/// 与 `tls::tailscale_ip()` 同一份实现 —— 两个模块各写一遍会漂移
+/// （之前 Windows 的 `tailscale.exe` 路径只写在 tls 那边）。
 pub fn tailscale_ip() -> Option<String> {
-    if let Some(ip) = iface_ip_by_prefix("100.") {
-        return Some(ip);
-    }
-    for bin in [
-        "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
-        "/usr/local/bin/tailscale",
-        "/opt/homebrew/bin/tailscale",
-    ] {
-        if !Path::new(bin).exists() {
-            continue;
-        }
-        if let Ok(out) = std::process::Command::new(bin).args(["ip", "-4"]).output() {
-            if out.status.success() {
-                let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if !s.is_empty() {
-                    return Some(s.lines().next().unwrap_or("").trim().to_string());
-                }
-            }
-        }
-    }
-    None
+    crate::tls::tailscale_ip()
 }
 
-/// getifaddrs 遍历：与 psutil.net_if_addrs() 同一份数据源，返回第一个匹配前缀的 IPv4。
-fn iface_ip_by_prefix(prefix: &str) -> Option<String> {
-    unsafe {
-        let mut head: *mut libc::ifaddrs = std::ptr::null_mut();
-        if libc::getifaddrs(&mut head) != 0 {
-            return None;
-        }
-        let mut cur = head;
-        let mut found: Option<String> = None;
-        while !cur.is_null() {
-            let ifa = &*cur;
-            if !ifa.ifa_addr.is_null() {
-                let sa = &*ifa.ifa_addr;
-                if sa.sa_family as i32 == libc::AF_INET {
-                    let sin = &*(ifa.ifa_addr as *const libc::sockaddr_in);
-                    let octets = sin.sin_addr.s_addr.to_ne_bytes();
-                    let ip = format!("{}.{}.{}.{}", octets[0], octets[1], octets[2], octets[3]);
-                    if ip.starts_with(prefix) {
-                        found = Some(ip);
-                        break;
-                    }
-                }
-            }
-            cur = ifa.ifa_next;
-        }
-        libc::freeifaddrs(head);
-        found
-    }
-}
 
 /// Python 的 `round()`（银行家舍入）；appearance 的十六进制换算要用。
 pub fn py_round(x: f64) -> f64 {

@@ -482,28 +482,9 @@ pub fn replace_image(ctx: &Ctx, iid: &str, raw: &[u8], filename: &str) -> Value 
         return json!({"ok": false, "error": "写不进原图"});
     }
     let dest = d.join("图").join(format!("{iid}.jpg"));
-    let mut ok = false;
-    for argv in [
-        vec![
-            "sips".to_string(), "-Z".to_string(), "1000".to_string(),
-            "-s".to_string(), "format".to_string(), "jpeg".to_string(),
-            tmp.to_string_lossy().to_string(), "--out".to_string(),
-            dest.to_string_lossy().to_string(),
-        ],
-        vec![
-            "sips".to_string(), "-Z".to_string(), "1000".to_string(),
-            tmp.to_string_lossy().to_string(), "--out".to_string(),
-            dest.to_string_lossy().to_string(),
-        ],
-    ] {
-        if let Some((code, _o, _e)) = py::run_cmd(&argv, 30, None) {
-            if code == 0 && dest.exists() {
-                ok = true;
-                break;
-            }
-        }
-    }
-    if !ok {
+    // sips 是 mac 专属；非 mac 由 imaging 探测 ImageMagick/ffmpeg，都没有就原图直接落过去
+    // （Python 在同一步也是这么兜的：转换失败就 copy）。
+    if !crate::imaging::make_thumb(&tmp, &dest, 1000) {
         let _ = std::fs::copy(&tmp, &dest);
     }
     ledger::update(
@@ -643,7 +624,7 @@ pub async fn image(
     Json(replace_image(&ctx, &id, &data, &fname)).into_response()
 }
 
-/// `POST /api/ledger/open`：在 Finder 里打开记账目录。
+/// `POST /api/ledger/open`：在文件管理器里打开记账目录。
 pub async fn open(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Response {
     if let Some(r) = peek(&ctx, &headers, &uri) {
         return r;
@@ -657,13 +638,7 @@ pub async fn open(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Respons
         )
             .into_response();
     }
-    match std::process::Command::new("open")
-        .arg(d.to_string_lossy().to_string())
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-    {
+    match crate::sysopen::open_path(&d) {
         Ok(_) => Json(json!({"ok": true, "dir": d.to_string_lossy()})).into_response(),
         Err(e) => Json(json!({"ok": false, "error": e.to_string()})).into_response(),
     }

@@ -657,20 +657,27 @@ fn thumb_target(p: &Path, md: &std::fs::Metadata, w: u32) -> PathBuf {
     thumb_dir().join(format!("{hex}.jpg"))
 }
 
-/// 用系统自带 `sips` 缩图并落盘缓存。失败返回 None，前端退回显示原图。
-/// 两条命令是有原因的：某些格式不吃 `-s format jpeg`，要退回纯 `-Z`。
+/// 用系统自带的图像工具缩图并落盘缓存。失败返回 None，前端退回显示原图。
+///
+/// macOS 走 `sips`（两条命令是有原因的：某些格式不吃 `-s format jpeg`，
+/// 要退回纯 `-Z`）；其它平台交给 `crate::imaging`（探测 ImageMagick / ffmpeg），
+/// 一个都没有也返回 None —— 与 Python 在那些平台上的表现一致（那边只有 sips）。
 pub fn make_thumb(p: &Path, w: u32) -> Option<PathBuf> {
-    // 注意：Rust 的 target_os 是 `macos`，Python 的 sys.platform 才叫 `darwin`。
-    // 写成 "darwin" 编译能过（cfg! 只当布尔），但永远为假 —— 缩略图会静默失效。
-    if !cfg!(target_os = "macos") {
-        return None; // sips 是 macOS 专属，其他平台让前端退回原图
-    }
     let md = std::fs::metadata(p).ok()?;
     let out = thumb_target(p, &md, w);
     if std::fs::metadata(&out).map(|m| m.len() > 0).unwrap_or(false) {
         return Some(out);
     }
     std::fs::create_dir_all(thumb_dir()).ok()?;
+    // 注意：Rust 的 target_os 是 `macos`，Python 的 sys.platform 才叫 `darwin`。
+    // 写成 "darwin" 编译能过（cfg! 只当布尔），但永远为假 —— 缩略图会静默失效。
+    if !cfg!(target_os = "macos") {
+        return if crate::imaging::make_thumb_q(p, &out, w, 60) {
+            Some(out)
+        } else {
+            None
+        };
+    }
     let stem = out.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
     let tmp = thumb_dir().join(format!("{stem}.{}.tmp", std::process::id()));
     let ws = w.to_string();

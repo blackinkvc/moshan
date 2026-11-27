@@ -2,15 +2,20 @@
 // 职责：`storage.make_zip()` 的字节级复刻（zipfile.ZIP_DEFLATED / allowZip64）。
 // 不做：不支持 >4GB 的 zip64 扩展（夹具与真实下载都远小于这个量级）。
 //
-// 为什么自己写：Cargo.toml 里没有 zip/flate2，而判定标准是「与 Python 逐字节一致」。
-// macOS 自带 libz，Python 的 zlib 也是它（1.2.12），所以直接用 FFI 调 deflateInit2
-// 就能拿到同一段 deflate 流 —— 自己实现压缩算法反而更难对齐。
+// 为什么 mac 上仍然自己写：判定标准是「与 Python 逐字节一致」，而 Python 的
+// zlib 就是系统 libz（1.2.12）。直接用 FFI 调 deflateInit2 能拿到同一段 deflate
+// 流与同一组版本字段 —— 换成 `zip` crate 会改容器头（version made by 等），
+// 逐字节比对当场失败。
+// Windows / Linux 没有稳定的 libz 可链，改走 `zip` crate：**条目名、顺序、
+// 内容一致**，容器级字节（version/flags/attr）与 zipfile 可能有差，已在文档标注。
 
 #![allow(dead_code)]
 
+#[cfg(target_os = "macos")]
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
 
+#[cfg(target_os = "macos")]
 #[repr(C)]
 struct ZStream {
     next_in: *const u8,
@@ -29,6 +34,7 @@ struct ZStream {
     reserved: u64,
 }
 
+#[cfg(target_os = "macos")]
 #[link(name = "z")]
 extern "C" {
     fn deflateInit2_(
@@ -45,6 +51,7 @@ extern "C" {
     fn deflateEnd(strm: *mut ZStream) -> i32;
 }
 
+#[cfg(target_os = "macos")]
 const Z_OK: i32 = 0;
 const Z_STREAM_END: i32 = 1;
 const Z_BUF_ERROR: i32 = -5;
@@ -52,6 +59,7 @@ const Z_FINISH: i32 = 4;
 
 /// raw deflate（windowBits=-15），level=6/默认策略 —— 与
 /// `zlib.compressobj(None, zlib.DEFLATED, -15)` 完全同参数。
+#[cfg(target_os = "macos")]
 fn deflate_raw(input: &[u8]) -> Vec<u8> {
     let version = CString::new("1.2.12").unwrap();
     let mut z: ZStream = unsafe { std::mem::zeroed() };
@@ -95,6 +103,7 @@ fn deflate_raw(input: &[u8]) -> Vec<u8> {
     out
 }
 
+#[cfg(target_os = "macos")]
 fn crc32(data: &[u8]) -> u32 {
     static mut TABLE: [u32; 256] = [0; 256];
     static INIT: std::sync::Once = std::sync::Once::new();
@@ -116,6 +125,7 @@ fn crc32(data: &[u8]) -> u32 {
     }
 }
 
+#[cfg(target_os = "macos")]
 struct Entry {
     name: String,
     crc: u32,
@@ -128,6 +138,7 @@ struct Entry {
     flags: u16,
 }
 
+#[cfg(target_os = "macos")]
 fn dos_datetime(md: &std::fs::Metadata) -> (u16, u16) {
     use chrono::{Datelike, Local, TimeZone, Timelike};
     let secs = md
@@ -152,15 +163,18 @@ fn dos_datetime(md: &std::fs::Metadata) -> (u16, u16) {
     (time, date)
 }
 
+#[cfg(target_os = "macos")]
 fn push_u16(out: &mut Vec<u8>, v: u16) {
     out.extend_from_slice(&v.to_le_bytes());
 }
+#[cfg(target_os = "macos")]
 fn push_u32(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
 }
 
 /// 把一组文件/目录打成一个 zip，返回 zip 文件路径。
 /// `tmp_dir` 由调用方建好，清理也由调用方负责（Python 用 BackgroundTask）。
+#[cfg(target_os = "macos")]
 pub fn make_zip(targets: &[PathBuf], tmp_dir: &Path, name: &str) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(tmp_dir)?;
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
@@ -216,6 +230,7 @@ pub fn make_zip(targets: &[PathBuf], tmp_dir: &Path, name: &str) -> std::io::Res
     Ok(out)
 }
 
+#[cfg(target_os = "macos")]
 fn add_file(p: &Path, arcname: &str, body: &mut Vec<u8>, entries: &mut Vec<Entry>) {
     let Ok(raw) = std::fs::read(p) else { return };
     let md = match std::fs::metadata(p) {
@@ -264,6 +279,7 @@ fn add_file(p: &Path, arcname: &str, body: &mut Vec<u8>, entries: &mut Vec<Entry
 }
 
 /// `os.walk` 同序：目录自身先产出（这里只写文件），子目录按 readdir 原序深度优先。
+#[cfg(target_os = "macos")]
 fn walk_zip(dir: &Path, base: &Path, body: &mut Vec<u8>, entries: &mut Vec<Entry>) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     let mut subdirs: Vec<PathBuf> = Vec::new();
@@ -314,4 +330,115 @@ fn short_hex(n: usize) -> String {
         }
     }
     buf.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+// ---------------------------------------------------------------- 非 mac：zip crate
+
+/// 与 mac 版同序：目录内先按 readdir 顺序写文件，再按 readdir 顺序下钻子目录
+/// （等价于 Python `os.walk` 的产出顺序）。隐藏文件/目录跳过。
+#[cfg(not(target_os = "macos"))]
+fn add_file_zip(
+    zw: &mut zip::ZipWriter<std::fs::File>,
+    p: &Path,
+    arcname: &str,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let raw = match std::fs::read(p) {
+        Ok(v) => v,
+        Err(_) => return Ok(()), // Python 也是 except OSError: continue
+    };
+    let md = std::fs::metadata(p)?;
+    let mut opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    if let Some(t) = zip_dt(&md) {
+        opts = opts.last_modified_time(t);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        opts = opts.unix_permissions(md.mode() & 0o7777);
+    }
+    zw.start_file(arcname, opts)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    zw.write_all(&raw)?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn zip_dt(md: &std::fs::Metadata) -> Option<zip::DateTime> {
+    use chrono::{Datelike, Local, TimeZone, Timelike};
+    let secs = md
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)?;
+    let dt = Local.timestamp_opt(secs, 0).single()?;
+    // zip 的 DOS 时间下限是 1980，越界就交给默认值。
+    zip::DateTime::from_date_and_time(
+        dt.year().clamp(1980, 2107) as u16,
+        dt.month() as u8,
+        dt.day() as u8,
+        dt.hour() as u8,
+        dt.minute() as u8,
+        dt.second() as u8,
+    )
+    .ok()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn walk_zip_crate(
+    zw: &mut zip::ZipWriter<std::fs::File>,
+    dir: &Path,
+    base: &Path,
+) -> std::io::Result<()> {
+    let Ok(rd) = std::fs::read_dir(dir) else { return Ok(()) };
+    let mut subdirs: Vec<PathBuf> = Vec::new();
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {
+            continue;
+        }
+        let p = PathBuf::from(e.path());
+        let is_link = e.file_type().map(|t| t.is_symlink()).unwrap_or(false);
+        let Ok(md) = std::fs::metadata(&p) else { continue };
+        if md.is_dir() {
+            if !is_link {
+                subdirs.push(p);
+            }
+            continue;
+        }
+        if md.is_file() {
+            let rel = p
+                .strip_prefix(base)
+                .map(|x| x.to_string_lossy().to_string())
+                .unwrap_or_else(|_| name.clone());
+            add_file_zip(zw, &p, &rel)?;
+        }
+    }
+    for d in subdirs {
+        walk_zip_crate(zw, &d, base)?;
+    }
+    Ok(())
+}
+
+/// 三平台同名入口。mac 走上面的字节级实现，其它平台走 `zip` crate。
+#[cfg(not(target_os = "macos"))]
+pub fn make_zip(targets: &[PathBuf], tmp_dir: &Path, name: &str) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(tmp_dir)?;
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let rnd = short_hex(4);
+    let out = tmp_dir.join(format!("{name}-{stamp}-{rnd}.zip"));
+    let f = std::fs::File::create(&out)?;
+    let mut zw = zip::ZipWriter::new(f);
+    for p in targets {
+        if p.is_dir() {
+            let base = p.parent().map(|x| x.to_path_buf()).unwrap_or_else(|| PathBuf::from("/"));
+            walk_zip_crate(&mut zw, p, &base)?;
+        } else if p.is_file() {
+            let name = p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            add_file_zip(&mut zw, p, &name)?;
+        }
+    }
+    zw.finish().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    Ok(out)
 }

@@ -481,13 +481,17 @@ fn kc_probe() -> String {
     match std::fs::File::open(kc_db()) {
         Ok(_) => "文件能打开，是 SQLite 那一层失败（库被占用或已损坏）".to_string(),
         Err(e) => {
+            // 用 ErrorKind 判，不用 errno 常量：EPERM/EACCES/ENOENT 是 POSIX 的，
+            // Windows 上是另一套错误码（这个文件本来就只在 mac 有数据，但不该编不过）。
             let eno = e.raw_os_error().unwrap_or(0);
-            if eno == libc::EPERM || eno == libc::EACCES {
-                "连打开都被拒（EPERM），是 TCC 没授权，不是路径或 SQL 的问题".to_string()
-            } else if eno == libc::ENOENT {
-                "文件不存在（这台机器没开过屏幕使用时间？）".to_string()
-            } else {
-                format!("打不开库文件（errno={}）", eno)
+            match e.kind() {
+                std::io::ErrorKind::PermissionDenied => {
+                    "连打开都被拒（EPERM），是 TCC 没授权，不是路径或 SQL 的问题".to_string()
+                }
+                std::io::ErrorKind::NotFound => {
+                    "文件不存在（这台机器没开过屏幕使用时间？）".to_string()
+                }
+                _ => format!("打不开库文件（errno={}）", eno),
             }
         }
     }

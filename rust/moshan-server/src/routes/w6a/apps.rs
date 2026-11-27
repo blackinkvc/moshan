@@ -778,7 +778,6 @@ fn run_capture(bin: &str, args: &[&str], timeout_ms: u64) -> Option<String> {
 
 /// `dash._spawn`：脱离当前进程组，输出进 ~/Library/Logs。
 fn spawn_detached(cmd: &[String], log_name: &str) -> std::io::Result<()> {
-    use std::os::unix::process::CommandExt;
     let home = std::env::var("HOME").unwrap_or_default();
     let logdir = Path::new(&home).join("Library").join("Logs");
     let dir = if std::fs::create_dir_all(&logdir).is_ok() {
@@ -796,8 +795,20 @@ fn spawn_detached(cmd: &[String], log_name: &str) -> std::io::Result<()> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::from(out))
         .stderr(std::process::Stdio::from(err))
-        .env("CUNTU_NO_OPEN", "1")
-        .process_group(0);
+        .env("CUNTU_NO_OPEN", "1");
+    // 脱离当前进程组：父进程（本服务）被关掉时子进程不能跟着死。
+    #[cfg(all(unix, not(feature = "sim_windows")))]
+    {
+        use std::os::unix::process::CommandExt;
+        c.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        c.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+    }
     c.spawn()?;
     Ok(())
 }
@@ -1203,16 +1214,26 @@ fn start_recipe(ctx: &Ctx, rid: &str) -> Value {
         d.join(format!("pocket-ext-{rid}.log"))
     };
     let spawn = (|| -> std::io::Result<()> {
-        use std::os::unix::process::CommandExt;
         let out = std::fs::OpenOptions::new().create(true).append(true).open(&log)?;
         let err = out.try_clone()?;
-        std::process::Command::new(&argv[0])
-            .args(&argv[1..])
+        let mut c = std::process::Command::new(&argv[0]);
+        c.args(&argv[1..])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::from(out))
-            .stderr(std::process::Stdio::from(err))
-            .process_group(0)
-            .spawn()?;
+            .stderr(std::process::Stdio::from(err));
+        #[cfg(all(unix, not(feature = "sim_windows")))]
+        {
+            use std::os::unix::process::CommandExt;
+            c.process_group(0);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            c.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+        }
+        c.spawn()?;
         Ok(())
     })();
     if let Err(e) = spawn {

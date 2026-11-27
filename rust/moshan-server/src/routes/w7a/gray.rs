@@ -317,6 +317,7 @@ fn launch_next() {
 
 /// 一根 pipe，读端给本进程，写端给子进程的 stdout 与 stderr（各自 dup 一份）。
 /// 写端设 CLOEXEC：别的子进程不该继承它，否则读端永远等不到 EOF。
+#[cfg(unix)]
 fn merged_pipe() -> std::io::Result<(std::fs::File, std::fs::File, std::fs::File)> {
     use std::os::unix::io::FromRawFd;
     let mut fds = [0i32; 2];
@@ -332,6 +333,16 @@ fn merged_pipe() -> std::io::Result<(std::fs::File, std::fs::File, std::fs::File
         let w2 = w1.try_clone()?;
         Ok((rd, w1, w2))
     }
+}
+
+/// 灰测是 macOS 专用的任务机（短信/语音那套），Windows 上没有对等物；
+/// 保留同名函数只为让整棵树编得过，调用会拿到一条明确的错误。
+#[cfg(not(unix))]
+fn merged_pipe() -> std::io::Result<(std::fs::File, std::fs::File, std::fs::File)> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "这个平台不支持合并子进程输出",
+    ))
 }
 
 fn consume(tid: &str, rd: std::fs::File, child: Arc<Mutex<Child>>) {
@@ -353,14 +364,24 @@ fn consume(tid: &str, rd: std::fs::File, child: Arc<Mutex<Child>>) {
         task_mut(&mut gs, tid, |m| push(m, &line));
     }
     let code = {
-        use std::os::unix::process::ExitStatusExt;
         let mut ch = child.lock().unwrap();
         match ch.wait() {
-            Ok(st) => match st.code() {
-                Some(c) => c,
-                // Python 的 Popen.returncode 对信号退出是负数（-15）
-                None => -st.signal().unwrap_or(0),
-            },
+            Ok(st) => {
+                // POSIX：信号退出时 `code()` 是 None，Python 的 `Popen.returncode`
+                // 这时给负数（-15）。Windows 没有信号，`code()` 永远有值。
+                #[cfg(all(unix, not(feature = "sim_windows")))]
+                {
+                    use std::os::unix::process::ExitStatusExt;
+                    match st.code() {
+                        Some(c) => c,
+                        None => -st.signal().unwrap_or(0),
+                    }
+                }
+                #[cfg(not(all(unix, not(feature = "sim_windows"))))]
+                {
+                    st.code().unwrap_or(-1)
+                }
+            }
             Err(_) => -1,
         }
     };
@@ -716,10 +737,8 @@ pub async fn stop(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Respons
         // Python 是 proc.terminate()（SIGTERM），等 6 秒还不走才 kill。
         // 这里不抓着子进程锁等：读输出那条线程要拿同一把锁收尾（写 code/state/补尾行），
         // Python 那边也是 _consume 先落定、stop() 再补「已手动停止」，顺序得一致。
-        let pid = { child.lock().unwrap().id() as i32 };
-        unsafe {
-            libc::kill(pid, libc::SIGTERM);
-        }
+        let pid = { child.lock().unwrap().id() as i64 };
+        crate::hostwork::platform::terminate(pid);
         let finished = || -> bool {
             let gs = gray().lock().unwrap();
             match task_get(&gs, active.as_deref().unwrap_or("")) {

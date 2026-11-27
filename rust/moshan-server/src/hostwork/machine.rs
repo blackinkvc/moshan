@@ -304,12 +304,9 @@ pub fn uptime_h() -> f64 {
 
 /// `_load()`：os.getloadavg()。
 pub fn load() -> Vec<Value> {
-    let mut v = [0f64; 3];
-    let n = unsafe { libc::getloadavg(v.as_mut_ptr(), 3) };
-    if n == 3 {
-        v.iter().map(|x| fnum(round2(*x))).collect()
-    } else {
-        vec![fnum(0.0), fnum(0.0), fnum(0.0)]
+    match platform::load_avg() {
+        Some(v) => v.iter().map(|x| fnum(round2(*x))).collect(),
+        None => vec![fnum(0.0), fnum(0.0), fnum(0.0)],
     }
 }
 

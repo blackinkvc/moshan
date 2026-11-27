@@ -7,9 +7,8 @@
 // `x-token` 或 `?k=` 等于主令牌 **或 view_token**，否则 401 `{"detail":"token 无效"}`。
 // 所以这里不能直接复用 `common::peek`（那只认主令牌，会把 view_token 挡在门外）。
 //
-// 已知边界：发微信要走网关（127.0.0.1:18789）的 WebSocket RPC，Rust 侧没有
-// WebSocket 客户端依赖。端口不通时与 Python 同形（网关没接）；端口通时这里
-// 会如实回「未接 WebSocket」，不假装发出去了。
+// 发微信走网关（127.0.0.1:18789）的 WebSocket RPC（`crate::wechat`）：
+// 发送在 spawn_blocking 里做，失败只回「网关没接」，不假装发出去了。
 
 use crate::paths::Ctx;
 use crate::routes::common::{q, CtxState};
@@ -32,7 +31,6 @@ pub fn router() -> Router<Arc<Ctx>> {
 }
 
 const DEV_BASE: &str = "http://127.0.0.1:8778";
-const WECHAT_PORT: u16 = 18789;
 
 /// `_ok(k, x_token)`：主令牌 **或** view_token，空串不算。
 fn pair_ok(ctx: &Ctx, headers: &HeaderMap, uri: &Uri) -> bool {
@@ -83,12 +81,19 @@ fn quote(s: &str) -> String {
 }
 
 fn strerror(code: i32) -> String {
+    // macOS/Linux 要的是 `os.strerror()` 那句纯文案（对拍按字节比）；
+    // Windows 没有 libc::strerror，用 std 的错误文案顶上。
+    #[cfg(unix)]
     unsafe {
         let p = libc::strerror(code);
         if p.is_null() {
             return format!("OS error {}", code);
         }
         std::ffi::CStr::from_ptr(p).to_string_lossy().to_string()
+    }
+    #[cfg(not(unix))]
+    {
+        std::io::Error::from_raw_os_error(code).to_string()
     }
 }
 
@@ -263,20 +268,16 @@ async fn pair_send(
             .unwrap_or_else(|_| json!({"ok": false, "error": "取不到地址"}));
         text = compose(&data);
     }
-    // 网关端口不通 → 与 Python 的 send 返回 False 同形。
-    let reachable = std::net::TcpStream::connect_timeout(
-        &std::net::SocketAddr::from(([127, 0, 0, 1], WECHAT_PORT)),
-        Duration::from_millis(600),
-    )
-    .is_ok();
-    if !reachable {
-        return Json(json!({"ok": false, "text": text, "error": "网关没接（微信助手没跑？）"}))
-            .into_response();
-    }
+    // 真发：网关不通 / 发送失败都只回「网关没接」，与 Python `send()` 的 False 同形。
+    // 握手要 200~800ms，丢进阻塞线程，别占 tokio 工作线程。
+    let text_for_send = text.clone();
+    let ok = tokio::task::spawn_blocking(move || crate::wechat::send(&text_for_send))
+        .await
+        .unwrap_or(false);
     Json(json!({
-        "ok": false,
+        "ok": ok,
         "text": text,
-        "error": "微信没发出去：RuntimeError: Rust 侧未接 WebSocket 推送",
+        "error": if ok { "" } else { "网关没接（微信助手没跑？）" },
     }))
     .into_response()
 }

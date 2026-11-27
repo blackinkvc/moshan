@@ -11,7 +11,7 @@ use super::util::{
     about_gate, init_cfg, json_status, now_epoch, py_str, py_truthy, repo_from_cfg, set_update_cfg,
     snapshot, upd,
 };
-use super::{pluginpack, pushupd};
+use super::{pluginpack, pushupd, updater};
 use crate::paths::Ctx;
 use crate::routes::common::{peek, q, query_map, CtxState};
 use axum::body::Bytes;
@@ -325,42 +325,10 @@ pub fn existing_package(ctx: &Ctx) -> Option<PathBuf> {
     best.map(|(p, _)| p)
 }
 
-/// `updater.in_place_blocked()`。
+/// `updater.in_place_blocked()`。实现搬到 `updater.rs`（与 apply_in_place 同处，
+/// 免得五道门散在两个文件里），这里只留一个转发给 state / apply 用。
 pub fn in_place_blocked(ctx: &Ctx) -> String {
-    if !cfg!(target_os = "macos") {
-        return "这个平台走安装程序".into();
-    }
-    if !ctx.frozen {
-        return "源码运行，没有 .app 可以替换".into();
-    }
-    let exe = std::fs::canonicalize(std::env::current_exe().unwrap_or_default())
-        .unwrap_or_default();
-    let mut app: Option<PathBuf> = None;
-    for p in exe.ancestors() {
-        if p.extension().map(|s| s == "app").unwrap_or(false) {
-            app = Some(p.to_path_buf());
-            break;
-        }
-    }
-    let Some(app) = app else {
-        return "找不到 .app 本体（可能被改名或挪出了 bundle）".into();
-    };
-    let s = app.to_string_lossy().to_string();
-    if s.contains("/AppTranslocation/") {
-        return "这个 app 正从下载目录 / dmg 里直接运行，系统给了临时路径。先把 Moshan 拖进「应用程序」，之后就能一键更新。".into();
-    }
-    if s.starts_with("/Volumes/") {
-        return "这个 app 在 dmg 里运行。先拖进「应用程序」，之后就能一键更新。".into();
-    }
-    if let Some(parent) = app.parent() {
-        let ok = std::fs::metadata(parent)
-            .map(|m| !m.permissions().readonly())
-            .unwrap_or(false);
-        if !ok {
-            return format!("{} 不可写（可能装成了别人的）。重装到自己的应用程序目录再更新。", parent.to_string_lossy());
-        }
-    }
-    String::new()
+    updater::in_place_blocked(ctx)
 }
 
 pub async fn state(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Response {
@@ -418,49 +386,11 @@ async fn source_zip(repo: &str, tag: &str) -> Result<Vec<u8>, String> {
     strip_top(&raw)
 }
 
-/// `_strip_top`：用系统的 unzip/zip 重打包（Cargo.toml 不归本泳道，没有 zip crate）。
+/// `_strip_top`：codeload 的 zip 顶层多一层 `moshan-0.3.1/` 壳，削掉它。
+/// 实现搬到 `updater.rs`（那里已经在用 zip crate 解包，读写同一套 API；
+/// 且不必为了测它去打开一条线上路由）。行为与失败文案都不变。
 fn strip_top(raw: &[u8]) -> Result<Vec<u8>, String> {
-    let work = std::env::temp_dir().join(format!("moshan-src-{}", super::util::rand_hex(8)));
-    let _ = std::fs::remove_dir_all(&work);
-    std::fs::create_dir_all(&work).map_err(|e| format!("{e}"))?;
-    let z = work.join("in.zip");
-    std::fs::write(&z, raw).map_err(|e| format!("{e}"))?;
-    let out = work.join("x");
-    let st = std::process::Command::new("/usr/bin/unzip")
-        .args(["-q", "-o"])
-        .arg(&z)
-        .arg("-d")
-        .arg(&out)
-        .status()
-        .map_err(|e| format!("{e}"))?;
-    if !st.success() {
-        let _ = std::fs::remove_dir_all(&work);
-        return Err("不是有效的 zip".into());
-    }
-    let tops: Vec<PathBuf> = std::fs::read_dir(&out)
-        .map_err(|e| format!("{e}"))?
-        .flatten()
-        .map(|e| e.path())
-        .collect();
-    if tops.len() != 1 || !tops[0].is_dir() {
-        let _ = std::fs::remove_dir_all(&work);
-        return Ok(raw.to_vec());
-    }
-    let rezip = work.join("out.zip");
-    let st = std::process::Command::new("/usr/bin/zip")
-        .current_dir(&tops[0])
-        .args(["-q", "-r", "-X"])
-        .arg(&rezip)
-        .arg(".")
-        .status()
-        .map_err(|e| format!("{e}"))?;
-    if !st.success() {
-        let _ = std::fs::remove_dir_all(&work);
-        return Err("重打包失败".into());
-    }
-    let data = std::fs::read(&rezip).map_err(|e| format!("{e}"))?;
-    let _ = std::fs::remove_dir_all(&work);
-    Ok(data)
+    updater::strip_top(raw)
 }
 
 /// `_apply_source_from_github`：源码部署从 GitHub 取包，再走 pushupd.push。
@@ -601,30 +531,45 @@ pub async fn apply(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Respon
         reason = "这个包没有校验值，只能手动安装".into();
     }
     if reason.is_empty() && is_zip {
-        // 真替换要解压 .app、验签、起 helper、再 os._exit；迁移期**只回形状**。
-        let work = ctx
-            .state_dir
-            .join("updates")
-            .join(format!("apply-{}", now_epoch() as i64));
-        let _ = std::fs::create_dir_all(&work);
-        return Json(json!({
-            "ok": true, "in_place": true,
-            "hint": "正在更新：程序会自己关掉再打开，约 3 秒。设置和文件都不会动。",
-            "path": pkg.to_string_lossy(),
-            "log": work.join("apply.log").to_string_lossy(),
-        }))
-        .into_response();
+        // 真替换：解压 → 验签 → 起 helper → 自己 1.5 秒后退出。
+        match updater::apply_in_place(&pkg, &ctx.state_dir) {
+            Ok(info) => {
+                // 先把这句提示发出去，再自我了断 —— helper 正等着这个 pid 消失才动手。
+                // 1.5 秒是给 HTTP 响应留的余量，不是给用户看的动画。
+                // （tokio 的 "time" 特性没开、Cargo.toml 不归本泳道，所以用线程睡。）
+                std::thread::spawn(|| {
+                    std::thread::sleep(Duration::from_millis(1500));
+                    // Python 是 `os._exit(0)`：整进程立刻消失，别的监听器一起走。
+                    // 这正是 helper 等的信号，别为了「优雅退出」改成不退出。
+                    std::process::exit(0);
+                });
+                return Json(json!({
+                    "ok": true, "in_place": true,
+                    "hint": info.hint,
+                    "path": pkg.to_string_lossy(),
+                    "log": info.work.join("apply.log").to_string_lossy(),
+                }))
+                .into_response();
+            }
+            Err(e) => return json_status(500, json!({"ok": false, "error": e})),
+        }
     }
-    let mut hint = if cfg!(target_os = "macos") {
-        "已打开安装包，把 Moshan 拖进「应用程序」即可，原有设置与文件不会丢失。".to_string()
-    } else if cfg!(windows) {
-        "安装程序已启动，按提示覆盖安装即可，原有设置与文件不会丢失。".to_string()
-    } else {
-        "已用系统默认程序打开安装包。".to_string()
+    // 不能原地替换就如实退回「打开安装包」，不假装成功。
+    let hint = match updater::launch_installer(&pkg) {
+        Ok(h) => h,
+        Err(e) => {
+            // Python 这里抛的是 UpdateError，外层按 `f"{type(exc).__name__}: {exc}"` 回。
+            return json_status(
+                500,
+                json!({"ok": false, "error": format!("UpdateError: {e}")}),
+            );
+        }
     };
-    if !reason.is_empty() {
-        hint = format!("{hint}（本机没法自动更新：{reason}）");
-    }
+    let hint = if reason.is_empty() {
+        hint
+    } else {
+        format!("{hint}（本机没法自动更新：{reason}）")
+    };
     Json(json!({
         "ok": true, "in_place": false, "hint": hint, "path": pkg.to_string_lossy(),
     }))
@@ -688,4 +633,3 @@ pub async fn updates(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Resp
     }))
     .into_response()
 }
-

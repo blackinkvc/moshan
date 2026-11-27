@@ -816,99 +816,9 @@ pub fn walk_inbox(ctx: &Ctx, limit: usize) -> Vec<(PathBuf, f64)> {
     out
 }
 
-fn local_hostname() -> String {
-    let s = platform::run_cmd(&["scutil", "--get", "LocalHostName"], Duration::from_secs(3));
-    if !s.trim().is_empty() {
-        format!("{}.local", s.trim())
-    } else {
-        format!("{}.local", platform::hostname_short())
-    }
-}
-
-fn lan_ip() -> Option<String> {
-    for iface in ["en0", "en1", "en2"] {
-        let s = platform::run_cmd(&["ipconfig", "getifaddr", iface], Duration::from_secs(3));
-        if !s.trim().is_empty() {
-            return Some(s.trim().to_string());
-        }
-    }
-    let s = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
-    if s.connect("223.5.5.5:80").is_err() {
-        return None;
-    }
-    s.local_addr().ok().map(|a| a.ip().to_string())
-}
-
-const TS_BINS: &[&str] = &[
-    "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
-    "/usr/local/bin/tailscale",
-    "/opt/homebrew/bin/tailscale",
-];
-
-fn tailscale_ip() -> Option<String> {
-    for ip in platform::iface_ips() {
-        if ip.starts_with("100.") {
-            return Some(ip);
-        }
-    }
-    for bin in TS_BINS {
-        if !Path::new(bin).exists() {
-            continue;
-        }
-        let s = platform::run_cmd(&[bin, "ip", "-4"], Duration::from_secs(4));
-        if !s.trim().is_empty() {
-            return Some(s.trim().lines().next().unwrap_or("").trim().to_string());
-        }
-    }
-    None
-}
-
-fn tailscale_name() -> Option<String> {
-    for bin in TS_BINS {
-        if !Path::new(bin).exists() {
-            continue;
-        }
-        let (code, out, _) = platform::run_cmd_full(&[bin, "status", "--json"], Duration::from_secs(5));
-        if code != 0 || out.trim().is_empty() {
-            continue;
-        }
-        if let Ok(v) = serde_json::from_str::<Value>(&out) {
-            let name = v
-                .get("Self")
-                .and_then(|s| s.get("DNSName"))
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .trim_end_matches('.')
-                .to_string();
-            if !name.is_empty() {
-                return Some(name);
-            }
-        }
-    }
-    None
-}
-
-pub fn alt_hosts() -> Vec<String> {
-    let mut hosts = vec!["localhost".to_string(), "127.0.0.1".to_string(), local_hostname()];
-    for ip in [lan_ip(), tailscale_ip()].into_iter().flatten() {
-        if !ip.is_empty() {
-            hosts.push(ip);
-        }
-    }
-    if let Some(name) = tailscale_name() {
-        hosts.push(name.clone());
-        hosts.push(name.split('.').next().unwrap_or("").to_string());
-    }
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-    for h in hosts {
-        let h = h.trim().to_string();
-        if !h.is_empty() && seen.insert(h.clone()) {
-            out.push(h);
-        }
-    }
-    out
-}
+// 本机地址 / Tailscale / 主机名这套探测已经收进 `crate::tls`
+// （`alt_hosts/lan_ip/tailscale_ip/tailscale_name`）—— 证书与 `/api/status`
+// 必须用同一份口径，各留一份迟早会对不上。原来的六个函数已删除。
 
 /// GW.tools()：POST /mcp tools/list；失败就当空表（网关不在不影响 /api/status）。
 async fn gw_tool_names(ctx: &Ctx) -> Vec<String> {
@@ -969,7 +879,6 @@ pub async fn status(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Respo
                 PathBuf::from(expand_tilde(&raw))
             }
         };
-        let using_ts = cert_dir.join("tailscale.crt").exists();
         let dav_root = {
             let raw = str_or(c.cfg.get("dav_root"));
             if raw.trim().is_empty() {
@@ -989,12 +898,9 @@ pub async fn status(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Respo
             "dav": if truthy(&c.cfg.get("dav_enabled").cloned().unwrap_or(Value::Null)) { json!("/dav") } else { Value::Null },
             "dav_root": dav_root.to_string_lossy(),
             "tls": c.cfg.get("tls").map(truthy).unwrap_or(true),
-            "cert": {
-                "dir": cert_dir.to_string_lossy(),
-                "file": if using_ts { "tailscale.crt" } else { "server.crt" },
-                "trusted_ca": using_ts,
-                "hosts": alt_hosts(),
-            },
+            // 证书信息只能有一个来源：`crate::tls::describe`（它和签发/复用是同一套判定），
+            // 在这儿再写一遍「哪个文件、覆不覆盖哪个名字」迟早会和实际加载的证书对不上。
+            "cert": crate::tls::describe(&cert_dir),
             "private_only": c.cfg.get("allow_private_only").map(truthy).unwrap_or(true),
             "trash_count": crate::storage::list_trash(&c).len(),
             "usage": crate::storage::usage(&inbox),

@@ -587,11 +587,7 @@ fn find_launcher(root: &Path) -> String {
 }
 
 fn chmod_x(p: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    if let Ok(md) = std::fs::metadata(p) {
-        let mode = md.permissions().mode();
-        let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode | 0o111));
-    }
+    crate::hostwork::platform::add_exec_bits(p);
 }
 
 // ---------------------------------------------------------------- plugins.json

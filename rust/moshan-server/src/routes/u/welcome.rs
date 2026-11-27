@@ -257,7 +257,7 @@ pub async fn pull_post(
         }
         // Python 是 `stderr=subprocess.STDOUT`：进度条在 stderr 上，必须合流，
         // 否则 tail 里只剩第一行。这里自己开一条 pipe，两个 fd 都指过去。
-        #[cfg(unix)]
+        #[cfg(all(unix, not(feature = "sim_windows")))]
         let merged = unsafe {
             let mut fds = [0i32; 2];
             if libc::pipe(fds.as_mut_ptr()) == 0 {
@@ -266,21 +266,29 @@ pub async fn pull_post(
                 None
             }
         };
-        #[cfg(not(unix))]
+        #[cfg(not(all(unix, not(feature = "sim_windows"))))]
         let merged: Option<(i32, i32)> = None;
 
-        let read_end;
-        if let Some((rfd, wfd)) = merged {
+        // unix：两条 fd 指向同一条管道，tail 才能看到进度条（stderr）与正文交织。
+        // Windows：没有可移植的 dup-into-另一个进程的办法，退回分开的两条管道。
+        #[cfg(all(unix, not(feature = "sim_windows")))]
+        let read_end = if let Some((rfd, wfd)) = merged {
             use std::os::unix::io::FromRawFd;
             let w2 = unsafe { libc::dup(wfd) };
             cmd.stdout(unsafe { std::process::Stdio::from_raw_fd(w2) });
             cmd.stderr(unsafe { std::process::Stdio::from_raw_fd(wfd) });
-            read_end = Some(unsafe { std::fs::File::from_raw_fd(rfd) });
+            Some(unsafe { std::fs::File::from_raw_fd(rfd) })
         } else {
             cmd.stdout(std::process::Stdio::piped());
             cmd.stderr(std::process::Stdio::piped());
-            read_end = None;
-        }
+            None
+        };
+        #[cfg(not(all(unix, not(feature = "sim_windows"))))]
+        let read_end: Option<std::fs::File> = {
+            cmd.stdout(std::process::Stdio::piped());
+            cmd.stderr(std::process::Stdio::piped());
+            None
+        };
         // cmd 在 spawn 后必须立刻 drop：它持有我们 from_raw_fd 出来的写端，
         // 不释放父进程这一份就永远等不到 EOF（tail 会卡在最后一行）。
         let spawned = {

@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // 职责：`moshan/transfer.py` 的移植 + `/api/transfer*` 六条路由。
-// 不做：不实现「网页 → 手机微信」的推送本体（那要网关的 WebSocket 客户端，
-//       Cargo.toml 不归本泳道）。因此这里不写 `推送失败.jsonl`，也不记 tf_push；
-//       `/api/transfer/repush` 只做「挑出要重推的条目并计数」，不真发。
-//       空队列时两边响应完全一致；有 web 来源的新条目时，push 汇总会分叉，
-//       这是已知分叉，汇报里写清楚。
+// 不做：不实现微信媒体通道本身（那是 `crate::wechat`）。回推走后台线程：
+//       add/upload/repush 立刻返回，推送结果逐次记进 `推送失败.jsonl`（`log_push`），
+//       卡片红条与巡检的 `transfer_push` 都读这本账。
 
 #![allow(dead_code)]
 
@@ -585,6 +583,155 @@ pub fn push_summary(ctx: &Ctx) -> Value {
     push_summary_at(&push_log_path(ctx), 6)
 }
 
+// ---------------------------------------------------------------- 网页 → 微信回推
+
+/// 一次推送最多试三回，间隔越试越久（微信媒体通道会整段坏几分钟）。
+const TF_PUSH_BACKOFF: [u64; 3] = [0, 20, 90];
+
+fn kind_label(kind: &str) -> &'static str {
+    match kind {
+        "image" => "图片",
+        "video" => "视频",
+        "voice" => "语音",
+        _ => "文件",
+    }
+}
+
+/// `_tf_push_try`：推一次，返回 (本体到了吗, 渠道原话)。
+///
+/// **「本体到了」不等于「这次调用成功」**：媒体推不出去时退回一句话
+/// （［图片］xxx.png），手机上算收到了一条，但那不是人想要的东西 ——
+/// 账本按「本体」算，红条才说得清「图没到」。
+fn tf_push_try(ctx: &Ctx, item: &Value, fallback: bool) -> (bool, String) {
+    let kind_raw = item.get("kind").map(py_str).unwrap_or_default();
+    let kind = if kind_raw.is_empty() { "text".to_string() } else { kind_raw };
+    if kind == "text" || kind == "link" {
+        let text = item.get("text").map(py_str).unwrap_or_default().trim().to_string();
+        if text.is_empty() {
+            return (false, "空文本".to_string());
+        }
+        let ok = crate::wechat::send(&text);
+        return if ok {
+            (true, String::new())
+        } else {
+            let e = crate::wechat::last_error();
+            (false, if e.is_empty() { "文本没发出去".to_string() } else { e })
+        };
+    }
+
+    let label = kind_label(&kind);
+    let name = {
+        let n = item.get("name").map(py_str).unwrap_or_default();
+        if n.is_empty() { "未命名".to_string() } else { n }
+    };
+    let caption = format!("［{}］{}", label, name);
+    let p = file_of(ctx, &item.get("id").map(py_str).unwrap_or_default());
+    let mut ok = false;
+    if let Some(p) = p {
+        // 媒体本体不带标题行（2026-11-21 用户要求）：caption 只留给失败兜底。
+        ok = crate::wechat::send_media(&p, "");
+    }
+    if ok {
+        return (true, String::new());
+    }
+    let mut err = crate::wechat::last_error();
+    if err.is_empty() {
+        err = "本体没发出去".to_string();
+    }
+    if fallback {
+        // 只试第一回 —— 重试时再补一句会刷屏。
+        if crate::wechat::send(&caption) {
+            err.push_str("；只补了一句话");
+        }
+    }
+    (false, err)
+}
+
+/// `log_push`：每次尝试都记一行（巡检靠同一个 id 的最后一行判断有没有恢复）。
+fn log_push(ctx: &Ctx, item: &Value, ok: bool, error: &str, attempts: usize) {
+    let kind = {
+        let k = item.get("kind").map(py_str).unwrap_or_default();
+        if k.is_empty() { "text".to_string() } else { k }
+    };
+    let row = json!({
+        "at": super::util::now_iso(),
+        "id": item.get("id").map(py_str).unwrap_or_default(),
+        "name": item.get("name").map(py_str).unwrap_or_default(),
+        "kind": kind,
+        "ok": ok,
+        "attempts": attempts,
+        "error": trunc(error, 200),
+    });
+    let p = push_log_path(ctx);
+    if let Some(parent) = p.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&p) {
+        let _ = f.write_all((dump_default(&row) + "\n").as_bytes());
+    }
+    if std::fs::metadata(&p).map(|m| m.len() > 200_000).unwrap_or(false) {
+        if let Ok(text) = std::fs::read_to_string(&p) {
+            let lines: Vec<&str> = text.lines().collect();
+            if lines.len() > PUSH_KEEP {
+                let tail = lines[lines.len() - PUSH_KEEP..].join("\n") + "\n";
+                let tmp = p.with_file_name(format!(
+                    "{}.tmp",
+                    p.file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default()
+                ));
+                if std::fs::write(&tmp, tail).is_ok() {
+                    let _ = std::fs::rename(&tmp, &p);
+                }
+            }
+        }
+    }
+}
+
+/// `_tf_push_wechat`：三回（0 / 20 / 90 秒），每回一行账。
+fn tf_push_wechat(ctx: &Ctx, item: &Value) {
+    for (i, delay) in TF_PUSH_BACKOFF.iter().enumerate() {
+        if *delay > 0 {
+            std::thread::sleep(std::time::Duration::from_secs(*delay));
+        }
+        let (ok, err) = tf_push_try(ctx, item, i == 0);
+        log_push(ctx, item, ok, &err, i + 1);
+        let mut ev = Map::new();
+        ev.insert("event".into(), json!("tf_push"));
+        ev.insert("ok".into(), json!(ok));
+        ev.insert(
+            "kind".into(),
+            item.get("kind").cloned().unwrap_or(Value::Null),
+        );
+        ev.insert(
+            "name".into(),
+            json!(trunc(&item.get("name").map(py_str).unwrap_or_default(), 60)),
+        );
+        ev.insert("attempt".into(), json!(i + 1));
+        ev.insert(
+            "error".into(),
+            json!(if ok { String::new() } else { trunc(&err, 160) }),
+        );
+        journal(ctx, ev);
+        eprintln!(
+            "[moshan-rs] {}",
+            json!({"event": "tf_push", "ok": ok,
+                   "kind": item.get("kind").cloned().unwrap_or(Value::Null),
+                   "name": trunc(&item.get("name").map(py_str).unwrap_or_default(), 60),
+                   "attempt": i + 1,
+                   "error": if ok { String::new() } else { trunc(&err, 160) }})
+        );
+        if ok {
+            return;
+        }
+    }
+}
+
+/// Python 的 `threading.Thread(target=_tf_push_wechat, daemon=True)`。
+fn spawn_push(ctx: &std::sync::Arc<Ctx>, item: Value) {
+    let ctx = ctx.clone();
+    std::thread::spawn(move || tf_push_wechat(&ctx, &item));
+}
+
 pub fn payload(ctx: &Ctx, limit: i64, qs: &str, kind: &str) -> Value {
     let mut d = items(ctx, limit, qs, kind);
     d["stats"] = stats(ctx);
@@ -644,8 +791,8 @@ pub async fn add_route(
     let ok = py_truthy(r.get("ok"));
     let push_default = body.get("push").map(|v| py_truthy(Some(v))).unwrap_or(true);
     if ok && src == "web" && push_default {
-        // Python 这里会起后台线程回推微信；本泳道没有 WebSocket 客户端，
-        // 不发、也不写「推送失败.jsonl」——见文件头与汇报里的已知分叉。
+        // 微信来的不回推，否则自己发的东西自己再收一遍。
+        spawn_push(&ctx, r.get("item").cloned().unwrap_or_else(|| json!({})));
     }
     Json(r).into_response()
 }
@@ -751,7 +898,18 @@ pub async fn upload(
         }
     }
     if !ok.is_empty() {
-        // 同 add：不真回推微信（6 条 + 汇总那句都不发）。
+        // 网页传上来的文件逐个回推（本体，不是只发一句话）；超过 6 个补一句汇总。
+        let n = ok.len();
+        for it in ok.iter().take(6) {
+            spawn_push(&ctx, it.clone());
+        }
+        if n > 6 {
+            spawn_push(
+                &ctx,
+                json!({"kind": "text",
+                       "text": format!("另外 {} 个文件已存进传输助手，去网页看", n - 6)}),
+            );
+        }
     }
     Json(json!({"ok": !ok.is_empty(), "items": ok, "failed": bad})).into_response()
 }
@@ -805,9 +963,10 @@ pub async fn repush(
     let mut queued = 0;
     let mut missing: Vec<String> = Vec::new();
     for i in &want {
-        if rows.contains_key(i) {
+        if let Some(row) = rows.get(i) {
             queued += 1;
-            // Python 起线程重推；这里只计数。
+            // Python 是 daemon 线程重推；这里同样放后台，接口立刻返回。
+            spawn_push(&ctx, row.clone());
         } else if missing.len() < 10 {
             missing.push(i.clone());
         }

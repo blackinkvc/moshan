@@ -784,6 +784,12 @@ def main() -> int:
     )
     ap.add_argument("--rs-bin", default="/tmp/moshan-rs-target/release/moshan-server")
     ap.add_argument("--keep", action="store_true", help="保留临时数据根，便于排查")
+    ap.add_argument(
+        "--dump",
+        metavar="DIR",
+        default=None,
+        help="把每条端点的两侧响应体落盘到 DIR（文件名按路径转义），差在哪自己看",
+    )
     args = ap.parse_args()
 
     if args.suite in ("w3", "w4", "w6"):
@@ -860,6 +866,12 @@ def main() -> int:
         for p in paths:
             ps, pb = fetch(py_port, p, token)
             rstatus, rb = fetch(rs_port, p, token)
+            if args.dump:
+                d = Path(args.dump)
+                d.mkdir(parents=True, exist_ok=True)
+                slug = p.strip("/").replace("/", "__") or "root"
+                (d / f"{slug}.py.json").write_bytes(pb)
+                (d / f"{slug}.rs.json").write_bytes(rb)
             same_status = ps == rstatus
             exact = same_status and pb == rb
             same_masked = same_status and mask(pb) == mask(rb)

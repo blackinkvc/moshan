@@ -83,15 +83,45 @@ bash scripts/tauri-build.sh --debug    # 开发构建
 ### CI
 
 `.github/workflows/tauri.yml`，三个桌面目标跑同一套步骤（装 CLI → 装系统依赖 →
-打 sidecar → 构建 → 冒烟），Android 单独一个 job。
+打 sidecar → 服务端冒烟 → 构建 → 壳冒烟），Android 单独一个 job。
 
 冒烟判据与 `build.yml` 一致：**进程起来不算数，要拿到 `/api/ping` 的 200**。
-Linux runner 没有显示服务，GUI 起不来，所以只验证两件事：`ldd` 无 `not found`（壳的依赖完整）
-+ sidecar 能应答。GUI 由 macOS / Windows 两个 job 覆盖。
+打 sidecar 那一步已经在 Linux/Windows 上 `cargo build` 过服务端，紧接着的「服务端冒烟」
+直接跑这个二进制（`MOSHAN_HOME` 指到临时目录、`MOSHAN_RS_PORT=18400`、关调度），
+把「能编译」推进到「能应答」。它和壳的冒烟分开：服务端挂了不该被壳的 GUI 问题掩盖。
+Linux runner 没有显示服务，GUI 起不来，所以壳那一侧只验证两件事：`ldd` 无 `not found`
+（壳的依赖完整）+ sidecar 能应答。GUI 由 macOS / Windows 两个 job 覆盖。
 
 ---
 
-## 五、已验证 / 未验证
+## 五、三平台差异表（服务端行为）
+
+macOS 以外没有 `open` / `sips` / `unzip` 这些系统命令，服务端把这几类动作收敛到了两个
+crate 级模块：`src/sysopen.rs`（打开路径/网址）与 `src/imaging.rs`（缩略图/格式转换），
+解压打包走 `zip` crate。下表是**当前代码的真实行为**，不是计划：
+
+| 动作 | macOS | Linux | Windows | 降级 / 说明 |
+|---|---|---|---|---|
+| 打开目录或文件（`/api/inbox/open`、`/api/ledger/open`、`/api/report/open`、`/api/reveal`） | `open <路径>` | `xdg-open <路径>` | `cmd /C start "" <路径>` | Linux 没装 `xdg-open` 时起进程就失败：`/api/ledger/open` 回 `{"ok":false,"error":…}`，`/api/inbox/open` 静默（与 Python 的返回形状一致） |
+| 在文件管理器里**定位选中**某个文件（`sysopen::reveal_path`） | `open -R <路径>` | `xdg-open <父目录>` | `explorer /select,<路径>` | Linux 没有 `-R` 等价物，只能打开父目录；当前没有路由调用它（Python 也没有「定位到某文件」的接口） |
+| 用默认浏览器打开网址（`MOSHAN_OPEN=1` 时自举打开 `/welcome`） | `open <url>` | `xdg-open <url>` | `cmd /C start "" <url>` | Windows 的 `start` 第一个引号参数是窗口标题，代码固定传空串，否则带空格的 URL 会被当标题吞掉 |
+| 缩略图（`/api/thumb`、`/api/ledger/img`、`/api/browse?inline=1`、账本换图 `replace_image`） | `sips -Z`（与 Python 逐字节一致） | `magick` → `convert` → `ffmpeg` 依次探测 | 同 Linux（`magick.exe` / `convert.exe` / `ffmpeg.exe`） | 四个入口现在都收敛到 `storage::make_thumb` → `imaging`；三个外挂都没有就返回失败，调用方退回原图。**Python 在非 mac 上直接 `return None`**，这里是比 Python 好，不是必须 —— 判「Linux 有缩略图」前先确认机器上真装了这三个之一 |
+| heic/heif → jpg（图集入库） | `sips -s format jpeg` | 跳过这张图 | 跳过这张图 | Python 的 `linkbox.SIPS` 也写死 `/usr/bin/sips`，失败路径相同；跳过不会让整个图集失败 |
+| 打包下载（`/api/zip`） | 自写 zlib FFI，与 `zipfile` **逐字节一致** | `zip` crate | `zip` crate | 非 mac 的容器头（version made by 等）可能与 `zipfile` 不同；**条目名、顺序、内容一致**，解压结果相同 |
+| 推送包解包（`/api/update/push`） | `zip` crate | `zip` crate | `zip` crate | 三平台同一份实现；zip-slip（`../`）与后缀白名单在解包前逐条判定，与 Python `pushupd._safe_name` 同口径 |
+| 证书 / 日志 / 版本目录 | `~/Library/Application Support/Moshan/{certs,logs,versions}` | `$XDG_STATE_HOME/moshan/…`（缺省 `~/.local/state/moshan/…`） | `%APPDATA%\Moshan\…` | 由 `paths.rs` 与 `boot.rs` 建目录，位置与 `moshan/paths.py` 一致 |
+| 进程存活 / 终止（心跳、灰测取消） | `kill(pid, 0)` / `SIGTERM` | 同 macOS | `OpenProcess` / `TerminateProcess` | 原来散在几个文件里直接调 `libc::kill`，Windows 编不过；现在统一在 `hostwork::platform::{proc_alive, terminate}` |
+| 「这个文件能不能跑」（`which`、找 CLI） | `mode & 0o111` | 同 macOS | 扩展名在 `PATHEXT` 里 | `platform::is_exec_file`；`shutil.which()` 的对位实现 |
+| `chmod +x`（生成的脚本、解包出来的二进制） | 真改权限位 | 同 macOS | 空实现 | `platform::add_exec_bits` |
+| 负载（`os.getloadavg`） | 有 | 有 | **没有这个口径**，返回 `null` | `platform::load_avg()`。返回 `None` 而不是 `[0,0,0]`：0 看起来像「机器很闲」，与「没这个指标」是两件事 |
+| 文件 inode（增量扫判「换文件了没」） | `st_ino` | `st_ino` | NTFS 文件索引号（`file_index()`） | `platform::file_inode`；`sim_windows` 在 mac 上取不到 Windows 的 `MetadataExt`，退化成 0（每次当新文件重扫，只影响缓存命中率） |
+| 开机时刻 / 物理内存 / CPU 计数 | `sysctl` + `mach` | `/proc` + `sysconf` | `GetTickCount64` + `GetSystemInfo` | 都在 `hostwork::platform` 里按 `target_os` 分派；`sim_linux` / `sim_windows` 两个 feature 用 `all(unix, not(feature = "sim_windows"))` 这种写法把分支翻到对面，好在 mac 上过类型 |
+| 数据根 | `~/Documents/Moshan` | 同 macOS | 同 macOS | 可用 `MOSHAN_HOME` 或 `config.json` 的 `library_dir` 覆盖；**位置与格式都不许动**，否则用户已有数据会「消失」 |
+| 自启动 / 服务安装 | 不做 | 不做 | 不做 | 服务端不写 launchd plist、systemd unit 或计划任务；自启由安装包 / 桌面壳负责（mac `.app`、Windows NSIS、Linux `.deb`/AppImage 的桌面项）。代码里对 `LaunchAgents` 的读取只用于「某个外部插件有没有注册」，不是安装逻辑 |
+
+---
+
+## 六、已验证 / 未验证
 
 | 项 | 状态 | 说明 |
 |---|---|---|
@@ -101,10 +131,32 @@ Linux runner 没有显示服务，GUI 起不来，所以只验证两件事：`ld
 | Linux 壳 | ⚠️ 仅配置正确 | 本机无 Linux，CI 只验依赖与 sidecar |
 | Android APK | ⚠️ 未构建过 | 本机无 Android SDK；CI 里 `tauri android init` 生成工程后再打 |
 | 网页版 | ✅ 未受影响 | 与改造前完全一致，没有改任何路由或端口逻辑 |
+| 三平台「打开」/ 缩略图 / 解压 / 进程 | ⚠️ 仅 macOS 实跑 | macOS 上逐个调过（`open` 打点、缩略图字节、zip 逐字节）；Linux/Windows 分支按源码实现，由 CI 冒烟（`cargo build` + `/api/ping` 200）覆盖，未在真机点过 UI |
+
+### 本地怎么验「另外两个平台能编」
+
+本机只有一个 target（Homebrew 的 rustc，没有 rustup），交叉 `cargo check --target x86_64-pc-windows-msvc`
+也过不去：`ring` 的 build.rs 要为该 target 调 cc/nasm，本机没有 Windows 交叉 C 工具链。
+所以「Windows/Linux 能编过」拆成两条本地可查的判据：
+
+```bash
+cd rust
+# 1) 把平台分支翻到对面，让对面那份代码参与类型检查
+CARGO_TARGET_DIR=/tmp/rs-lin cargo check --features sim_linux   --message-format short
+CARGO_TARGET_DIR=/tmp/rs-win cargo check --features sim_windows --message-format short
+
+# 2) 反向静态检查：每处平台专有 API 是否真落在「对面平台会被编掉」的 cfg 块里
+python3 scripts/rust-portability.py            # 加 --ci 则命中即退出 1
+```
+
+第二条是必要的：`sim_windows` 在 mac 上 `unix` 恒真，裸 `#[cfg(unix)]` 里的
+`std::os::unix` / `libc::` 照样能编过 —— 编译器看不出问题，静态检查能。当前基线是
+`74 处平台专有 API，全部已隔离，未隔离 0`。真正的三平台编译在 CI 的 matrix 上用原生
+`cargo build` 完成。
 
 ---
 
-## 六、许可证落地
+## 七、许可证落地
 
 | 项 | 位置 |
 |---|---|

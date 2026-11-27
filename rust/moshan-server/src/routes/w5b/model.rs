@@ -4,10 +4,11 @@
 //       POST /api/model/test 探一个 OpenAI 兼容端点（`moshan/modelcfg.probe`）
 // 不做：不落盘、不改配置（`/api/model/save` 不在本泳道）。
 //
-// 进程从哪儿来：Python 有 psutil 时走 psutil，没有就 `ps -Ao pid=,ppid=,rss=,command=`。
-// 这里没有第三方进程库，统一走 `ps`，口径与 Python 的 ps 回退分支一致
-// （rss 单位 KB → GB、名字留空由 argv 认族）。`_port_owner` 用 `lsof` 复刻
-// psutil.net_connections 的「端口 → pid」表 —— 少了它，空闲的 Ollama 就报不出端口。
+// 进程从哪儿来：`hostwork::procs::collect_procs()` —— libproc 拿 pid/ppid/name/rss，
+// 再按平台补 argv（macOS KERN_PROCARGS2、Linux /proc/<pid>/cmdline）。
+// **不再走 `ps`**：沙箱里 `ps` 会被拒，退化分支只有 pid + 命令行、rss 全 0，
+// 最后只能按名字排序 —— 那正是「模型 ↔ 进程」归属错位的根源。
+// `_port_owner` 主路径 `lsof`，Linux 退 `/proc/net/tcp*`，Windows 退 `netstat -ano`。
 
 use super::util::{fnum, round1, str_or, sv, truthy};
 use crate::routes::common::{peek, CtxState};
@@ -252,78 +253,70 @@ const CACHE_TTL: f64 = 20.0;
 struct Proc {
     pid: i64,
     ppid: i64,
+    name: String,
     argv: Vec<String>,
+    /// RSS，单位 MB —— 与 Python `psutil.memory_info().rss / 1048576` 同口径，
+    /// 进 cands 时再 `/1024` 变 GB。`ProcRow.rss` 是字节，这里只做一次换算。
     rss: f64,
+    /// Python 的 `age_s`（`create_time` 换算）。`_build` 把它放进 cands 但不进
+    /// /api/llm 响应；保留同口径字段，避免下一段再自己算。
+    #[allow(dead_code)]
+    age_s: Option<u64>,
+}
+
+fn epoch_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 fn iter_procs() -> Vec<Proc> {
+    let now = epoch_secs();
     let mut procs = Vec::new();
-    let out = std::process::Command::new("ps")
-        .args(["-Ao", "pid=,ppid=,rss=,command="])
-        .output();
-    let text = out.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
-    for line in text.lines() {
-        // Python 是 `line.strip().split(None, 3)`：空白**连续段**当一个分隔符。
-        // 不能用 splitn(char::is_whitespace)——ps 的列是空格对齐的，会切出一串空串。
-        let toks: Vec<&str> = line.split_whitespace().collect();
-        if toks.len() < 4 {
+    for row in crate::hostwork::procs::collect_procs() {
+        // Python `if not name and not argv: continue`
+        if row.name.is_empty() && row.argv.is_empty() {
             continue;
         }
-        let (Ok(pid), Ok(ppid), Ok(rss_kb)) = (
-            toks[0].parse::<i64>(),
-            toks[1].parse::<i64>(),
-            toks[2].parse::<f64>(),
-        ) else {
-            continue;
-        };
         procs.push(Proc {
-            pid,
-            ppid,
-            argv: toks[3..].iter().map(|s| s.to_string()).collect(),
-            rss: rss_kb / 1024.0,
-        });
-    }
-    if !procs.is_empty() {
-        return procs;
-    }
-    // `ps` 在某些受限环境里会被策略挡掉（沙箱 / 加固终端）。退到 `pgrep -fl .`：
-    // 只有 pid 和命令行，没有 ppid 与 rss —— 认族、探端口照常，占用内存按 0 算。
-    let out = std::process::Command::new("pgrep").args(["-fl", "."]).output();
-    let text = out.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
-    for line in text.lines() {
-        let Some((pid_s, cmd)) = line.trim().split_once(char::is_whitespace) else {
-            continue;
-        };
-        let Ok(pid) = pid_s.parse::<i64>() else {
-            continue;
-        };
-        procs.push(Proc {
-            pid,
-            ppid: 0,
-            argv: cmd.split_whitespace().map(|s| s.to_string()).collect(),
-            rss: 0.0,
+            pid: row.pid as i64,
+            ppid: row.ppid as i64,
+            name: row.name,
+            argv: row.argv,
+            rss: row.rss as f64 / 1048576.0,
+            age_s: if row.started > 0 {
+                Some(now.saturating_sub(row.started))
+            } else {
+                None
+            },
         });
     }
     procs
 }
 
-fn family_of(argv: &[String]) -> String {
+fn family_of(name: &str, argv: &[String]) -> String {
+    let low = name.trim().to_lowercase();
+    // 1) 进程名精确命中
+    for (key, fam) in FAMILY_BY_NAME {
+        if *key == low {
+            return fam.to_string();
+        }
+    }
+    // 2) 进程名子串（`llama-server-3.2` 这类带版本号的产物）
+    for (key, fam) in FAMILY_BY_NAME {
+        if key.ends_with(".exe") {
+            continue;
+        }
+        if low.contains(key) {
+            return fam.to_string();
+        }
+    }
+    // 3) 命令行里的模块名（vllm / sglang / mlx_lm …）
     let hay = argv.join(" ").to_lowercase();
     for (key, fam) in FAMILY_BY_ARGV {
         if hay.contains(key) {
             return fam.to_string();
-        }
-    }
-    // 进程名这里拿不到（ps 只给命令行），按 argv[0] 的 basename 兜一层
-    if let Some(first) = argv.first() {
-        let base = first.rsplit('/').next().unwrap_or(first).to_lowercase();
-        for (key, fam) in FAMILY_BY_NAME {
-            if key.ends_with(".exe") {
-                continue;
-            }
-            if base.contains(key) {
-                return fam.to_string();
-            }
         }
     }
     String::new()
@@ -353,6 +346,12 @@ fn num_of(s: &str) -> Option<i64> {
         return Some(v);
     }
     t.parse::<f64>().ok().map(|f| f as i64)
+}
+
+/// Python 的 `probe.get("ctx") or cand["ctx"]`：整数 0 在 Python 里是假值，
+/// 必须落到 fallback（Rust 的 `Option::or` 只认 None）。
+fn or_nonzero(v: Option<i64>, fallback: Option<i64>) -> Option<i64> {
+    v.filter(|x| *x != 0).or(fallback)
 }
 
 struct Pretty {
@@ -387,9 +386,11 @@ fn pretty(path: &str) -> Pretty {
     }
 }
 
-/// `_SIZE`（带前后界断言，Rust 正则不支持 lookaround，手工判边界）。
+/// `_SIZE`（`re.I` + 前后界断言）。Rust 正则不支持 lookaround，手工判边界：
+/// 前一个字符不能是数字或 `.`；后一个字符不能是字母（Python `(?![a-z])` 带
+/// IGNORECASE，所以大写字母同样要挡）。单位本身也按 `re.I` 收大小写。
 fn size_tag(stem: &str) -> String {
-    let Ok(re) = Regex::new(r"(\d{1,3}(?:\.\d)?)\s*([BM])") else {
+    let Ok(re) = Regex::new(r"(?i)(\d{1,3}(?:\.\d)?)\s*([BM])") else {
         return String::new();
     };
     for caps in re.captures_iter(stem) {
@@ -399,7 +400,7 @@ fn size_tag(stem: &str) -> String {
             continue;
         }
         let next = stem[m.end()..].chars().next();
-        if next.map(|c| c.is_ascii_lowercase()).unwrap_or(false) {
+        if next.map(|c| c.is_ascii_alphabetic()).unwrap_or(false) {
             continue;
         }
         let num = caps.get(1).map(|x| x.as_str()).unwrap_or("");
@@ -567,14 +568,51 @@ fn py_expires(v: &Value) -> String {
     super::util::str_or(Some(v))
 }
 
-/// `_port_owner()`：在听的端口 → pid。Python 用 psutil.net_connections，
-/// 这里用 `lsof -nP -iTCP -sTCP:LISTEN`（macOS 自带）。
-fn port_owner() -> HashMap<u16, i64> {
+/// 监听端口 → pid。三条取数路径，按平台与可用性逐级降级：
+///
+/// 1. `lsof -nP -iTCP -sTCP:LISTEN` —— mac / 多数 Linux 发行版都有；
+/// 2. Linux：`/proc/net/tcp{,6}` 找 LISTEN 的 inode，再扫 `/proc/<pid>/fd`
+///    把 `socket:[inode]` 反查成 pid；
+/// 3. Windows：`netstat -ano` 的 LISTENING 行（末列就是 pid）。
+///
+/// 三者都拿不到就回空表 —— Python 的 `_port_owner()` 也是这样降级。
+#[derive(Default)]
+struct PortOwners {
+    map: HashMap<u16, i64>,
+    /// 插入顺序（第一次见到这个端口时记下）。Python 的 dict 也按这个顺序
+    /// 遍历，`services` 挑端口时依赖它。
+    order: Vec<(u16, i64)>,
+}
+
+impl PortOwners {
+    /// Python 的 `out.setdefault(port, pid)`：同一个端口只认第一个。
+    fn insert_first(&mut self, port: u16, pid: i64) {
+        if !self.map.contains_key(&port) {
+            self.map.insert(port, pid);
+            self.order.push((port, pid));
+        }
+    }
+}
+
+fn port_owner() -> PortOwners {
+    let mut owners = PortOwners::default();
+    fill_from_lsof(&mut owners);
+    #[cfg(target_os = "linux")]
+    if owners.map.is_empty() {
+        fill_from_proc_net(&mut owners);
+    }
+    #[cfg(windows)]
+    if owners.map.is_empty() {
+        fill_from_netstat(&mut owners);
+    }
+    owners
+}
+
+fn fill_from_lsof(owners: &mut PortOwners) {
     let out = std::process::Command::new("lsof")
         .args(["-nP", "-iTCP", "-sTCP:LISTEN"])
         .output();
-    let mut map = HashMap::new();
-    let Ok(o) = out else { return map };
+    let Ok(o) = out else { return };
     let text = String::from_utf8_lossy(&o.stdout).to_string();
     for line in text.lines().skip(1) {
         let cols: Vec<&str> = line.split_whitespace().collect();
@@ -584,7 +622,7 @@ fn port_owner() -> HashMap<u16, i64> {
         let Some(pid) = cols.get(1).and_then(|s| s.parse::<i64>().ok()) else {
             continue;
         };
-        // NAME 形如 127.0.0.1:11434 或 *:8080
+        // NAME 形如 127.0.0.1:11434、*:8080、[::1]:1234
         let name = cols[8];
         let Some((_, port)) = name.rsplit_once(':') else {
             continue;
@@ -592,14 +630,99 @@ fn port_owner() -> HashMap<u16, i64> {
         let Ok(port) = port.parse::<u16>() else {
             continue;
         };
-        map.entry(port).or_insert(pid);
+        owners.insert_first(port, pid);
     }
-    map
 }
 
-fn is_ollama_blob(argv: &[String]) -> bool {
+/// Linux：`/proc/net/tcp{,6}` 的 LISTEN 行里，local_address 是
+/// `0100007F:1F90`（十六进制小端地址 : 十六进制端口），第 10 列是 socket inode。
+/// 再扫 `/proc/<pid>/fd` 的符号链接，`socket:[inode]` 对上的就是占用者。
+#[cfg(target_os = "linux")]
+fn fill_from_proc_net(owners: &mut PortOwners) {
+    let mut inode_port: HashMap<u64, u16> = HashMap::new();
+    for file in ["/proc/net/tcp", "/proc/net/tcp6"] {
+        let Ok(text) = std::fs::read_to_string(file) else {
+            continue;
+        };
+        for line in text.lines().skip(1) {
+            let cols: Vec<&str> = line.split_whitespace().collect();
+            if cols.len() < 10 || cols[3] != "0A" {
+                continue; // 0A = TCP_LISTEN
+            }
+            let Some((_, port_hex)) = cols[1].rsplit_once(':') else {
+                continue;
+            };
+            let (Ok(port), Ok(inode)) = (
+                u16::from_str_radix(port_hex, 16),
+                cols[9].parse::<u64>(),
+            ) else {
+                continue;
+            };
+            inode_port.insert(inode, port);
+        }
+    }
+    if inode_port.is_empty() {
+        return;
+    }
+    let Ok(procs) = std::fs::read_dir("/proc") else {
+        return;
+    };
+    for ent in procs.flatten() {
+        let Ok(pid) = ent.file_name().to_string_lossy().parse::<i64>() else {
+            continue;
+        };
+        let Ok(fds) = std::fs::read_dir(ent.path().join("fd")) else {
+            continue;
+        };
+        for fd in fds.flatten() {
+            let Ok(link) = std::fs::read_link(fd.path()) else {
+                continue;
+            };
+            let s = link.to_string_lossy();
+            let Some(inode) = s
+                .strip_prefix("socket:[")
+                .and_then(|x| x.strip_suffix(']'))
+                .and_then(|x| x.parse::<u64>().ok())
+            else {
+                continue;
+            };
+            if let Some(port) = inode_port.get(&inode) {
+                owners.insert_first(*port, pid);
+            }
+        }
+    }
+}
+
+/// Windows：`netstat -ano` 的 LISTENING 行：
+///   `  TCP    0.0.0.0:8080    0.0.0.0:0    LISTENING    1234`
+#[cfg(windows)]
+fn fill_from_netstat(owners: &mut PortOwners) {
+    let out = std::process::Command::new("netstat").args(["-ano"]).output();
+    let Ok(o) = out else { return };
+    let text = String::from_utf8_lossy(&o.stdout).to_string();
+    for line in text.lines() {
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() < 5 || !cols[3].eq_ignore_ascii_case("LISTENING") {
+            continue;
+        }
+        let Some((_, port)) = cols[1].rsplit_once(':') else {
+            continue;
+        };
+        let (Ok(port), Ok(pid)) = (port.parse::<u16>(), cols[4].parse::<i64>()) else {
+            continue;
+        };
+        owners.insert_first(port, pid);
+    }
+}
+
+/// `_is_ollama_blob(argv, name)`：Ollama 拉起的 llama-server 子进程。
+/// 除了 argv 里的 blob 路径，进程名本身是 `ollama_llama_server` 也算 ——
+/// 老版本 Ollama 的路径不在 `~/.ollama/models/blobs` 里。
+fn is_ollama_blob(argv: &[String], name: &str) -> bool {
     let hay = argv.join(" ").to_lowercase();
-    hay.contains(".ollama/models/blobs") || hay.contains("lib/ollama/llama-server")
+    hay.contains(".ollama/models/blobs")
+        || hay.contains("lib/ollama/llama-server")
+        || name.to_lowercase().contains("ollama_llama_server")
 }
 
 fn norm_name(s: &str) -> String {
@@ -609,18 +732,25 @@ fn norm_name(s: &str) -> String {
         .collect()
 }
 
-fn best_api_port(name: &str, probes: &HashMap<u16, Value>, used: &HashSet<u16>) -> Option<u16> {
+fn best_api_port(
+    name: &str,
+    probes: &HashMap<u16, Value>,
+    probes_order: &[u16],
+    used: &HashSet<u16>,
+) -> Option<u16> {
     let n = norm_name(name);
     if n.is_empty() {
         return None;
     }
-    let mut ports: Vec<&u16> = probes.keys().collect();
-    ports.sort();
-    for p in ports {
+    // Python 遍历 `probes.items()`（按探到的顺序），不是按端口号排序
+    for p in probes_order {
         if used.contains(p) {
             continue;
         }
-        for mid in probes[p]
+        let Some(got) = probes.get(p) else {
+            continue;
+        };
+        for mid in got
             .get("models")
             .and_then(|v| v.as_array())
             .cloned()
@@ -654,11 +784,11 @@ struct Cand {
 fn build() -> Value {
     let mut cands: Vec<Cand> = Vec::new();
     for p in iter_procs() {
-        let fam = family_of(&p.argv);
+        let fam = family_of(&p.name, &p.argv);
         if fam.is_empty() {
             continue;
         }
-        let blob = is_ollama_blob(&p.argv);
+        let blob = is_ollama_blob(&p.argv, &p.name);
         cands.push(Cand {
             pid: p.pid,
             ppid: p.ppid,
@@ -667,7 +797,9 @@ fn build() -> Value {
             rss_gb: round1(p.rss / 1024.0),
             model_hint: take_flag(&p.argv, MODEL_FLAGS),
             alias: take_flag(&p.argv, ALIAS_FLAGS),
-            port: num_of(&take_flag(&p.argv, PORT_FLAGS)).and_then(|v| u16::try_from(v).ok()),
+            port: num_of(&take_flag(&p.argv, PORT_FLAGS))
+                .filter(|v| *v != 0) // Python: `if c["port"]`，0 视为没写
+                .and_then(|v| u16::try_from(v).ok()),
             ctx: num_of(&take_flag(&p.argv, CTX_FLAGS)),
             ngl: num_of(&take_flag(&p.argv, NGL_FLAGS)),
             child: false,
@@ -722,6 +854,9 @@ fn build() -> Value {
     }
 
     let mut probes: HashMap<u16, Value> = HashMap::new();
+    // Python 的 probes 是 dict，后面几段都按**插入顺序**遍历；HashMap 没有顺序，
+    // 所以单独留一份探到的端口序列，避免用排序后的键改变「先撞上谁」。
+    let mut probes_order: Vec<u16> = Vec::new();
     for p in ports {
         if !listening(p) {
             continue;
@@ -753,6 +888,7 @@ fn build() -> Value {
         }
         if !got.is_empty() {
             probes.insert(p, Value::Object(got));
+            probes_order.push(p);
         }
     }
 
@@ -771,8 +907,18 @@ fn build() -> Value {
                    source: &str,
                    extra: Option<Value>| {
         let info = pretty(path);
+        let name = if info.name.is_empty() {
+            // Python: `info["name"] or (family or "未知模型")`
+            if family.is_empty() {
+                "未知模型".to_string()
+            } else {
+                family.to_string()
+            }
+        } else {
+            info.name
+        };
         let mut row = json!({
-            "name": if info.name.is_empty() { family.to_string() } else { info.name },
+            "name": name,
             "family": if family.is_empty() { "未知".to_string() } else { family.to_string() },
             "quant": info.quant,
             "size": info.size,
@@ -812,18 +958,18 @@ fn build() -> Value {
         if path.is_empty() {
             continue;
         }
-        let api_port = best_api_port(&path, &probes, &used_ports);
+        let api_port = best_api_port(&path, &probes, &probes_order, &used_ports);
         if let Some(ap) = api_port {
             used_ports.insert(ap);
         }
-        let ctx = probe
-            .and_then(|p| p.get("ctx"))
-            .and_then(|v| v.as_i64())
-            .or(c.ctx);
-        let ngl = probe
-            .and_then(|p| p.get("ngl"))
-            .and_then(|v| v.as_i64())
-            .or(c.ngl);
+        let ctx = or_nonzero(
+            probe.and_then(|p| p.get("ctx")).and_then(|v| v.as_i64()),
+            c.ctx,
+        );
+        let ngl = or_nonzero(
+            probe.and_then(|p| p.get("ngl")).and_then(|v| v.as_i64()),
+            c.ngl,
+        );
         let source = probe
             .and_then(|p| p.get("source"))
             .map(sv)
@@ -890,9 +1036,8 @@ fn build() -> Value {
         let mut p = c.port;
         let mut probe = p.and_then(|port| probes.get(&port).cloned());
         if probe.is_none() {
-            let mut keys: Vec<&u16> = probes.keys().collect();
-            keys.sort();
-            for cp in keys {
+            // Python 按 probes 的插入顺序挑第一个「有 path 且没被用过」的
+            for cp in &probes_order {
                 let got = &probes[cp];
                 if used_ports.contains(cp) || truthy(got.get("ollama").unwrap_or(&Value::Null)) {
                     continue;
@@ -915,16 +1060,14 @@ fn build() -> Value {
             }
         };
         if !path.is_empty() {
-            let ctx = probe
-                .as_ref()
-                .and_then(|x| x.get("ctx"))
-                .and_then(|v| v.as_i64())
-                .or(c.ctx);
-            let ngl = probe
-                .as_ref()
-                .and_then(|x| x.get("ngl"))
-                .and_then(|v| v.as_i64())
-                .or(c.ngl);
+            let ctx = or_nonzero(
+                probe.as_ref().and_then(|x| x.get("ctx")).and_then(|v| v.as_i64()),
+                c.ctx,
+            );
+            let ngl = or_nonzero(
+                probe.as_ref().and_then(|x| x.get("ngl")).and_then(|v| v.as_i64()),
+                c.ngl,
+            );
             let source = probe
                 .as_ref()
                 .and_then(|x| x.get("source"))
@@ -970,15 +1113,14 @@ fn build() -> Value {
         .iter()
         .map(|m| norm_name(&str_or(m.get("name"))))
         .collect();
-    let mut probe_keys: Vec<&u16> = probes.keys().collect();
-    probe_keys.sort();
-    for p in probe_keys {
+    // 同 Python `for p, got in probes.items()`：按探到的顺序，不排序
+    for p in &probes_order {
         let got = &probes[p];
         if used_ports.contains(p) || truthy(got.get("ollama").unwrap_or(&Value::Null)) {
             continue;
         }
         let mut fam = "OpenAI 兼容".to_string();
-        if let Some(opid) = owner.get(p) {
+        if let Some(opid) = owner.map.get(p) {
             let ofam = by_pid
                 .get(opid)
                 .map(|i| cands[*i].family.clone())
@@ -1036,13 +1178,11 @@ fn build() -> Value {
         }
         seen_fam.insert(c.family.clone());
         let mut port: Option<u16> = if c.family == "Ollama" { Some(11434) } else { None };
-        let mut ports_sorted: Vec<&u16> = owner.keys().collect();
-        ports_sorted.sort();
-        for p in ports_sorted {
-            let pid = owner[p];
+        // Python `for p, pid in owner.items()`：按 lsof/psutil 给的顺序
+        for (p, pid) in &owner.order {
             if probes.contains_key(p)
                 && by_pid
-                    .get(&pid)
+                    .get(pid)
                     .map(|i| cands[*i].family == c.family)
                     .unwrap_or(false)
             {

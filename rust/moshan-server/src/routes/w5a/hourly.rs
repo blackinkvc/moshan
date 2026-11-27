@@ -17,6 +17,7 @@
 //   · 桶只留最近 30 天；渲染时补齐 24 个空桶。
 #![allow(dead_code)]
 
+use crate::hostwork::platform;
 use axum::extract::State;
 use axum::http::{HeaderMap, Uri};
 use axum::response::{IntoResponse, Response};
@@ -25,7 +26,6 @@ use chrono::{Local, TimeZone};
 use serde_json::{json, Map, Value};
 use std::collections::HashSet;
 use std::io::{Read, Seek, SeekFrom};
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -116,9 +116,9 @@ fn hour_scan_file(path: &Path, prev: Option<&Value>, app: &str) -> Option<Value>
         Ok(m) => m,
         Err(_) => return prev.cloned(),
     };
-    let size = md.size() as i64;
-    let mtime = md.mtime() as f64 + (md.mtime_nsec() as f64) / 1e9;
-    let ino = md.ino();
+    let size = platform::file_size(&md) as i64;
+    let mtime = platform::file_mtime(&md);
+    let ino = platform::file_inode(&md);
 
     let mut off: i64 = 0;
     let mut hours: Map<String, Value> = Map::new();
@@ -446,7 +446,7 @@ fn hourly_tokens(ctx: &crate::paths::Ctx, day: &str, fresh: bool) -> Vec<Value> 
                 }
                 let p = d.join(&fname);
                 let mt = match std::fs::metadata(&p) {
-                    Ok(m) => m.mtime() as f64 + (m.mtime_nsec() as f64) / 1e9,
+                    Ok(m) => platform::file_mtime(&m),
                     Err(_) => continue,
                 };
                 let key = p.to_string_lossy().to_string();

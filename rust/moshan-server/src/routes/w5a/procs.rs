@@ -49,8 +49,8 @@ fn cpu_times() -> Option<(u64, u64, u64, u64)> {
 
 pub fn cpu() -> Value {
     let mut pct: Option<f64> = None;
-    let cores = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) };
-    let cores_v = if cores > 0 { Value::from(cores as i64) } else { Value::Null };
+    let cores = platform::cpu_count();
+    let cores_v = if cores > 0 { Value::from(cores) } else { Value::Null };
     let load = loadavg().map(|l| {
         Value::Array(
             l.iter()
@@ -65,7 +65,13 @@ pub fn cpu() -> Value {
             let du = delta(t1.0, t2.0);
             let dn = delta(t1.1, t2.1);
             let ds = delta(t1.2, t2.2);
-            let di = delta(t1.3, t2.3);
+            // 与 hostwork/procs.rs 同口径：macOS 保持历史上的第 4 个 tick，
+            // Linux / Windows 按真实位置（索引 2）取 idle。
+            let idle_i = if cfg!(target_os = "macos") { 3 } else { 2 };
+            let di = delta(
+                [t1.0, t1.1, t1.2, t1.3][idle_i],
+                [t2.0, t2.1, t2.2, t2.3][idle_i],
+            );
             let tot = (du + dn + ds + di) as f64;
             if tot > 0.0 {
                 let v = ((tot - di as f64) * 100.0 / tot).clamp(0.0, 100.0);
@@ -80,6 +86,7 @@ pub fn cpu() -> Value {
     })
 }
 
+#[cfg(all(unix, not(feature = "sim_windows")))]
 fn loadavg() -> Option<[f64; 3]> {
     let mut v = [0f64; 3];
     let n = unsafe { libc::getloadavg(v.as_mut_ptr(), 3) };
@@ -90,36 +97,13 @@ fn loadavg() -> Option<[f64; 3]> {
     }
 }
 
+#[cfg(any(windows, feature = "sim_windows"))]
+fn loadavg() -> Option<[f64; 3]> {
+    None
+}
+
 fn boot_time() -> Option<f64> {
-    #[cfg(target_os = "macos")]
-    {
-        #[repr(C)]
-        struct TimeVal {
-            tv_sec: i64,
-            tv_usec: i32,
-        }
-        let mut tv = TimeVal { tv_sec: 0, tv_usec: 0 };
-        let mut len = std::mem::size_of::<TimeVal>() as libc::size_t;
-        let name = std::ffi::CString::new("kern.boottime").ok()?;
-        let rc = unsafe {
-            libc::sysctlbyname(
-                name.as_ptr(),
-                &mut tv as *mut _ as *mut libc::c_void,
-                &mut len,
-                std::ptr::null_mut(),
-                0,
-            )
-        };
-        if rc == 0 && tv.tv_sec > 0 {
-            Some(tv.tv_sec as f64 + tv.tv_usec as f64 / 1_000_000.0)
-        } else {
-            None
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        None
-    }
+    platform::boot_time_secs()
 }
 
 pub fn uptime_h() -> Option<f64> {
@@ -171,7 +155,13 @@ pub fn sample() -> Value {
         "uptime_h": match uptime_h() { Some(v) => fnum(v), None => Value::Null },
         "procs": match n { Some(v) => Value::from(v), None => Value::Null },
         "rss_gb": match rss { Some(v) => fnum(v), None => Value::Null },
-        "os": if cfg!(target_os = "macos") { "mac" } else { "posix" },
+        "os": if cfg!(target_os = "macos") {
+            "mac"
+        } else if cfg!(windows) {
+            "win"
+        } else {
+            "posix"
+        },
     })
 }
 

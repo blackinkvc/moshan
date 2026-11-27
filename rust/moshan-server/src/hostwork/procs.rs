@@ -49,8 +49,8 @@ fn cpu_times() -> Option<(u64, u64, u64, u64)> {
 
 pub fn cpu() -> Value {
     let mut pct: Option<f64> = None;
-    let cores = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) };
-    let cores_v = if cores > 0 { Value::from(cores as i64) } else { Value::Null };
+    let cores = platform::cpu_count();
+    let cores_v = if cores > 0 { Value::from(cores) } else { Value::Null };
     let load = loadavg().map(|l| {
         Value::Array(
             l.iter()
@@ -65,7 +65,15 @@ pub fn cpu() -> Value {
             let du = delta(t1.0, t2.0);
             let dn = delta(t1.1, t2.1);
             let ds = delta(t1.2, t2.2);
-            let di = delta(t1.3, t2.3);
+            // platform::cpu_ticks() 三个平台都返回 (user, system, idle, nice)。
+            // macOS 分支历史上把第 4 个当 idle 用 —— 那是本机 raw 的 nice，
+            // 但这是**既有**行为，动了 mac 的 pct 就变了口径，本次不碰；
+            // Linux / Windows 是这次新写的，没有历史包袱，按真实位置取 idle。
+            let idle_i = if cfg!(target_os = "macos") { 3 } else { 2 };
+            let di = delta(
+                [t1.0, t1.1, t1.2, t1.3][idle_i],
+                [t2.0, t2.1, t2.2, t2.3][idle_i],
+            );
             let tot = (du + dn + ds + di) as f64;
             if tot > 0.0 {
                 let v = ((tot - di as f64) * 100.0 / tot).clamp(0.0, 100.0);
@@ -80,6 +88,8 @@ pub fn cpu() -> Value {
     })
 }
 
+/// `os.getloadavg()`：Windows 没有这个口径，返回 None（不是 0 —— 0 看起来像「很闲」）。
+#[cfg(all(unix, not(feature = "sim_windows")))]
 fn loadavg() -> Option<[f64; 3]> {
     let mut v = [0f64; 3];
     let n = unsafe { libc::getloadavg(v.as_mut_ptr(), 3) };
@@ -90,36 +100,13 @@ fn loadavg() -> Option<[f64; 3]> {
     }
 }
 
+#[cfg(any(windows, feature = "sim_windows"))]
+fn loadavg() -> Option<[f64; 3]> {
+    None
+}
+
 fn boot_time() -> Option<f64> {
-    #[cfg(target_os = "macos")]
-    {
-        #[repr(C)]
-        struct TimeVal {
-            tv_sec: i64,
-            tv_usec: i32,
-        }
-        let mut tv = TimeVal { tv_sec: 0, tv_usec: 0 };
-        let mut len = std::mem::size_of::<TimeVal>() as libc::size_t;
-        let name = std::ffi::CString::new("kern.boottime").ok()?;
-        let rc = unsafe {
-            libc::sysctlbyname(
-                name.as_ptr(),
-                &mut tv as *mut _ as *mut libc::c_void,
-                &mut len,
-                std::ptr::null_mut(),
-                0,
-            )
-        };
-        if rc == 0 && tv.tv_sec > 0 {
-            Some(tv.tv_sec as f64 + tv.tv_usec as f64 / 1_000_000.0)
-        } else {
-            None
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        None
-    }
+    platform::boot_time_secs()
 }
 
 pub fn uptime_h() -> Option<f64> {
@@ -171,7 +158,14 @@ pub fn sample() -> Value {
         "uptime_h": match uptime_h() { Some(v) => fnum(v), None => Value::Null },
         "procs": match n { Some(v) => Value::from(v), None => Value::Null },
         "rss_gb": match rss { Some(v) => fnum(v), None => Value::Null },
-        "os": if cfg!(target_os = "macos") { "mac" } else { "posix" },
+        "os": if cfg!(target_os = "macos") {
+            "mac"
+        } else if cfg!(windows) {
+            // 与 moshan/sysinfo.py 一致：win / mac / posix
+            "win"
+        } else {
+            "posix"
+        },
     })
 }
 
@@ -201,8 +195,7 @@ fn _touch(_c: Arc<()>) {}
 
 /// `os.cpu_count() or 1`
 pub fn sample_cpus() -> i64 {
-    let n = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) };
-    if n > 0 { n as i64 } else { 1 }
+    platform::cpu_count()
 }
 
 // ------------------------------------------------------------------ 进程表（hostwork 用）
@@ -211,24 +204,202 @@ pub struct ProcRow {
     pub pid: i32,
     pub ppid: i32,
     pub name: String,
+    /// 可执行文件路径。当前采样只读 name/argv，路径留给「认脚本进程」的调用方。
+    #[allow(dead_code)]
     pub path: String,
+    /// RSS，字节（pti_resident_size）。调用方按 Python 的 `/1048576` 换算。
     pub rss: u64,
+    /// 累计 user+system 微秒。当前采样不读，保留与 w5a 的进程表同形。
+    #[allow(dead_code)]
     pub cpu_us: u64,
+    /// 启动时刻，epoch 秒（pbi_start_tvsec）。age = now - started。
     pub started: u64,
+    /// 进程参数。macOS 走 KERN_PROCARGS2，Linux 走 `/proc/<pid>/cmdline`，
+    /// Windows 由 `collect_procs` 一次性从 `Win32_Process` 全表取（见下方）。
+    pub argv: Vec<String>,
 }
 
 /// 采一遍进程表。hostwork 的 sample_procs 每 10 秒采一次，这里按需采。
 pub fn collect_procs() -> Vec<ProcRow> {
     let mut out = Vec::new();
+    // Windows 的 argv 必须**一次拿全表**：几百个进程各起一次 PowerShell 慢到不可用。
+    // 其它平台是逐 pid 的 /proc 或 sysctl，就地取即可。
+    #[cfg(any(windows, feature = "sim_windows"))]
+    let win_argv = windows_argv_table();
     let pids = platform::list_pids();
     for pid in pids {
+        // proc_bsdinfo 的返回是 (pid, ppid, start_tvsec, name)：
+        // 取 ppid 必须用 x.1 —— 以前这里误取了 x.0，所有进程的 ppid 都等于自己，
+        // 「Ollama / 宿主服务拉子进程」那两段归属会全部认错。
         let (ppid, started, name) = match platform::proc_bsdinfo(pid) {
-            Some(x) => (x.0, x.2, x.3),
-            None => continue,
+            Some(x) => (x.1, x.2, x.3),
+            None => continue, // 进程刚好退出 / 无权查看：跳过这一行，不影响整表
         };
         let path = platform::proc_path(pid).unwrap_or_default();
         let (rss, cpu_us) = platform::proc_taskinfo(pid).unwrap_or((0, 0));
-        out.push(ProcRow { pid, ppid, name, path, rss, cpu_us, started });
+        // argv 拿不到（EPERM/ESRCH/平台没有实现）就是空 vec，不是错误。
+        #[cfg(any(windows, feature = "sim_windows"))]
+        let argv = win_argv.get(&pid).cloned().unwrap_or_default();
+        #[cfg(not(any(windows, feature = "sim_windows")))]
+        let argv = platform::proc_argv(pid);
+        out.push(ProcRow { pid, ppid, name, path, rss, cpu_us, started, argv });
     }
     out
+}
+
+// ------------------------------------------------------------------ Windows 命令行全表
+
+/// 一次拿全部进程的命令行。优先 PowerShell 的 `Get-CimInstance Win32_Process`
+/// （Win11 已经删掉 wmic），失败再退 `wmic process get ProcessId,CommandLine /format:list`。
+/// 返回 pid → argv；整表拿不到就是空 map（argv 缺失不影响其它字段）。
+#[cfg(any(windows, feature = "sim_windows"))]
+fn windows_argv_table() -> std::collections::HashMap<i32, Vec<String>> {
+    // 先强制输出 UTF-8：PowerShell 默认按控制台代码页写管道，中文路径会变乱码。
+    let ps = r#"[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)`t$($_.CommandLine)" }"#;
+    let (code, out, _) =
+        platform::run_cmd_piped(&["powershell", "-NoProfile", "-NonInteractive", "-Command", ps], Duration::from_secs(10));
+    if code == 0 {
+        let t = parse_ps_process_table(&out);
+        if !t.is_empty() {
+            return t;
+        }
+    }
+    let (code, out, _) = platform::run_cmd_piped(
+        &["wmic", "process", "get", "ProcessId,CommandLine", "/format:list"],
+        Duration::from_secs(10),
+    );
+    if code == 0 {
+        return parse_wmic_process_table(&out);
+    }
+    std::collections::HashMap::new()
+}
+
+/// PowerShell 输出的一行是 `<pid>\t<commandline>`（脚本里用 `` `t `` 拼的）。
+#[allow(dead_code)] // 只有 Windows 走它；单测在 macOS 上也跑，所以不加 cfg
+fn parse_ps_process_table(text: &str) -> std::collections::HashMap<i32, Vec<String>> {
+    let mut out = std::collections::HashMap::new();
+    for line in text.lines() {
+        let Some((pid_s, cmd)) = line.split_once('\t') else {
+            continue;
+        };
+        let Ok(pid) = pid_s.trim().parse::<i32>() else {
+            continue;
+        };
+        let cmd = cmd.trim();
+        if pid > 0 && !cmd.is_empty() {
+            out.insert(pid, split_windows_cmdline(cmd));
+        }
+    }
+    out
+}
+
+/// `wmic ... /format:list` 是多行块：`CommandLine=...` / `ProcessId=123` / 空行。
+/// CommandLine 可能整行缺失（受保护进程），这种 pid 不塞空 vec。
+#[allow(dead_code)]
+fn parse_wmic_process_table(text: &str) -> std::collections::HashMap<i32, Vec<String>> {
+    let mut out = std::collections::HashMap::new();
+    let mut cmd: Option<String> = None;
+    for line in text.lines() {
+        let line = line.trim_end_matches('\r');
+        if let Some(v) = line.strip_prefix("CommandLine=") {
+            cmd = Some(v.to_string());
+        } else if let Some(v) = line.strip_prefix("ProcessId=") {
+            if let (Ok(pid), Some(c)) = (v.trim().parse::<i32>(), cmd.take()) {
+                if pid > 0 && !c.trim().is_empty() {
+                    out.insert(pid, split_windows_cmdline(&c));
+                }
+            }
+        } else if line.trim().is_empty() {
+            cmd = None;
+        }
+    }
+    out
+}
+
+/// 按 Win32 的引号规则把命令行切成 argv（够 `_take(argv, "--ctx")` 这类取参用）。
+/// 反斜杠转义只处理「引号前」这一种最常见情形，与 CommandLineToArgvW 同向。
+#[allow(dead_code)]
+fn split_windows_cmdline(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut in_q = false;
+    let mut started = false;
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                in_q = !in_q;
+                started = true;
+            }
+            '\\' if matches!(chars.peek(), Some('"')) => {
+                cur.push('"');
+                chars.next();
+                started = true;
+            }
+            c if c.is_whitespace() && !in_q => {
+                if started {
+                    out.push(std::mem::take(&mut cur));
+                    started = false;
+                }
+            }
+            c => {
+                cur.push(c);
+                started = true;
+            }
+        }
+    }
+    if started {
+        out.push(cur);
+    }
+    out
+}
+
+// ------------------------------------------------------------------ Windows 解析单测
+//
+// 解析器是纯文本函数，故意不加 `cfg(windows)`：这样普通 `cargo test`（macOS）
+// 就能跑。真正调 Win32 的 `windows_argv_table` 才受 cfg 管。
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn ps_table_splits_pid_and_commandline() {
+        let text = "4242\t\"C:\\Program Files\\Ollama\\ollama.exe\" serve --ctx 8192\r\n\
+                    777\tpython \"C:\\a b\\main.py\" -u\n\
+                    \tno pid, skipped\n";
+        let t = super::parse_ps_process_table(text);
+        assert_eq!(t.len(), 2);
+        assert_eq!(
+            t[&4242],
+            vec!["C:\\Program Files\\Ollama\\ollama.exe", "serve", "--ctx", "8192"]
+        );
+        // 引号里的空格不切
+        assert_eq!(t[&777], vec!["python", "C:\\a b\\main.py", "-u"]);
+    }
+
+    #[test]
+    fn wmic_list_blocks_pair_cmdline_with_pid() {
+        let text = "\r\nCommandLine=llama-server.exe --model m.gguf --ctx 4096 \r\n\
+                    ProcessId=1234\r\n\r\n\
+                    CommandLine=\r\nProcessId=555\r\n\r\n\
+                    ProcessId=999\r\n\r\n";
+        let t = super::parse_wmic_process_table(text);
+        assert_eq!(t.len(), 1, "空 CommandLine 的 pid 不该塞空 vec");
+        assert_eq!(
+            t[&1234],
+            vec!["llama-server.exe", "--model", "m.gguf", "--ctx", "4096"]
+        );
+        assert!(!t.contains_key(&999), "没有 CommandLine 的块要丢掉");
+    }
+
+    #[test]
+    fn windows_cmdline_respects_quotes_and_escapes() {
+        assert_eq!(
+            super::split_windows_cmdline(r#"a "b c" d"#),
+            vec!["a", "b c", "d"]
+        );
+        assert_eq!(
+            super::split_windows_cmdline(r#"x "C:\dir\quote\"name" y"#),
+            vec!["x", "C:\\dir\\quote\"name", "y"]
+        );
+        assert_eq!(super::split_windows_cmdline("   "), Vec::<String>::new());
+    }
 }

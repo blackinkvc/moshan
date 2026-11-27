@@ -6,11 +6,11 @@
 // 顺序即契约：先鉴权（common::peek）→ 再解析查询/请求体 → 再干活。
 // 这些接口全是 auth 保护，鉴权不过一律 403，别让 422 抢在 403 前面。
 
-mod brief;
+pub(crate) mod brief;
 mod dashrs;
 mod hostwork;
 mod notes;
-mod pending;
+pub(crate) mod pending;
 mod plan;
 mod util;
 

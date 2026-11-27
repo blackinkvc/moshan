@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // 职责：`moshan/brief.py` 的 Rust 版 —— 每日简报的生成 / 读 / 推送入口（3 条路由）。
-// 不做：不实现 `scheduler_loop`（常驻调度）、`_tick` 的抢牌与 sent 账 —— 那是进程内
-//       定时器，属另一条泳道。也不发微信（`push()` 需要 wechat_push 的 websocket 网关，
-//       Rust 侧没有；会回与 Python「模块不可用」同一形状的错误）。
+// 不做：定时器本身（`scheduler_loop` / `_tick` 的抢牌与 sent 账）在
+//       `routes/w5d/brief_push.rs`，那里复用本文件的 `build` 与 `push_only`。
 //
 // 数据文件：`<数据根>/10-系统记录/简报/<日期>.json`（indent=1）与 `<日期>.md`。
 
@@ -930,18 +929,54 @@ pub fn days_for(ctx: &Ctx, limit: usize) -> Vec<String> {
     days(&brief_root(ctx), limit)
 }
 
-/// `push()`：Rust 侧没有 wechat_push（websocket 网关），回与 Python 同一个错误形状。
+/// `push()`：逐条发微信。**一条一条发**是这个功能的前提，不是优化项。
+///
+/// 与 Python 同形：`dry` 只回将发的内容；真发时每段之间停 1.2 秒
+/// （连着灌五条网关会挤在一起）。失败不让调用方 500 —— 只记进 `fail`。
 pub fn push(data: &Value, dry: bool) -> Value {
+    push_only(data, dry, None)
+}
+
+/// 定时补推用：只发 `only` 里的段（其余已发成功的不重发）。
+pub fn push_only(data: &Value, dry: bool, only: Option<&[String]>) -> Value {
+    let sections = data
+        .get("sections")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default();
     if dry {
-        let sent: Vec<Value> = data
-            .get("sections")
-            .and_then(|x| x.as_array())
-            .cloned()
-            .unwrap_or_default()
+        let sent: Vec<Value> = sections
             .iter()
             .map(|s| json!({"id": s_or(get(s, "id")), "text": s_or(get(s, "text"))}))
             .collect();
         return json!({"ok": true, "dry": true, "sent": sent});
     }
-    json!({"ok": false, "error": "wechat_push 不可用：Rust 侧未接入微信推送网关（websocket）"})
+    let mut sent: Vec<String> = Vec::new();
+    let mut fail: Vec<Value> = Vec::new();
+    let mut first = true;
+    for s in &sections {
+        let sid = s_or(get(s, "id"));
+        if let Some(list) = only {
+            if !list.iter().any(|x| x == &sid) {
+                continue;
+            }
+        }
+        if !first {
+            // Python 在每段（含失败那段）之后都 sleep(1.2)。
+            std::thread::sleep(std::time::Duration::from_millis(1200));
+        }
+        first = false;
+        let ok = crate::wechat::send(&s_or(get(s, "text")));
+        if ok {
+            sent.push(sid);
+        } else {
+            fail.push(json!({"id": sid, "error": "网关返回失败"}));
+        }
+    }
+    json!({
+        "ok": fail.is_empty(),
+        "sent": sent,
+        "fail": fail,
+        "day": data.get("day").cloned().unwrap_or(Value::Null),
+    })
 }

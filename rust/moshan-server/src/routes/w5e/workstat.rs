@@ -12,6 +12,7 @@
 //   · 永久存档 = 一天一条落在数据根里，只增不减（`_max_merge`）。
 #![allow(dead_code)]
 
+use crate::hostwork::platform;
 use crate::hostwork::sessions as hs;
 use crate::hostwork::util::{py_int, round_n, str_or, truthy};
 use crate::paths::Ctx;
@@ -25,7 +26,6 @@ use regex::Regex as SRegex;
 use serde_json::{json, Map, Value};
 use std::collections::HashSet;
 use std::io::{Read, Seek, SeekFrom};
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -551,8 +551,8 @@ fn scan_file(path: &Path, prev: Option<&FileState>, am: &mut OrdMap<String, Stri
         Ok(m) => m,
         Err(_) => return prev.cloned(),
     };
-    let ino = st.ino() as i64;
-    let size = st.size() as i64;
+    let ino = platform::file_inode(&st) as i64;
+    let size = platform::file_size(&st) as i64;
     let same = match prev {
         Some(p) => p.ino == ino && p.size <= size,
         None => false,

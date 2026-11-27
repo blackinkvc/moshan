@@ -9,6 +9,8 @@ rust/moshan-server/src/
   main.rs               装配路由 + 自举 + 角色开关
   boot.rs               首启自举：建目录、发令牌、选端口、写 config.json
   paths.rs              目录与配置口径（对齐 paths.py）
+  sysopen.rs            打开路径/网址/在文件管理器里定位（mac/Linux/Windows 三份命令）
+  imaging.rs            缩略图与 heic→jpg（mac 用 sips，其它平台探测外挂工具）
   auth.rs               三令牌通道（header → ?k= → cookie）
   storage.rs            文件层（路径守卫、回收站、分享、缩略图）
   ledger.rs             记账账本
@@ -71,26 +73,64 @@ python3 scripts/rust-coverage.py
 数字换成占位符，字段是否存在、顺序、类型、数组长度仍然照比。判定"抖动"还有一层自证：
 两边不同时再打一次 Python，如果对照侧自己两次也不同，就不算迁移引入的差异。
 
-最近一次结果：**220/220 由 Rust 应答**；102 条 GET 里一致 97 / 抖动 3 / 实质差异 0；
-w2 15 步、w3 27 步、w4 16 步、w4c 46 步、w5b 52 步全为 0；w4b 68 步里 2 处差异已定位到
-「Python 的进程内 120 秒 MEM 缓存 + 简报定时推送的 sent 记账」，属于推送通道未迁的连带项。
+最近一次结果：**220/220 由 Rust 应答**；102 条 GET 里一致 99 / 抖动 2 / 实质差异 1
+（那一条是 `/api/report/list` 的夹具时序，见「已知边界」）；
+w2 15 步、w3 27 步、w4 16 步、w4c 46 步全为 0；w5b 52 步里 2 步读的是**实时数据**
+（`/api/worklog` 的「当轮在做的事」、`/api/llm` 的本机模型），两边取样时刻不同就会不同，
+其余 50 步为 0（其中「空请求体」那步只比状态码：错误文案来自 pydantic，见「已知边界」）。
+简报推送已接通：`<日期>.sent.json` 掩掉 `at` 后与 Python 逐字节相等，假网关（18790）上的
+四帧 `connect / conversations.list / conversations.send / send` 参数逐字段对齐。
 
 ## 已知边界（不是"没迁"，是"环境里没有"）
 
-- **微信推送通道（websocket）**：`/api/brief/push` 与定时补推只对齐到"网关不可用"这一支，
-  连上网关真发消息没有实现；`<日期>.sent.json` 因此不会生成。
-- **局域网 HTTPS（0.0.0.0:8321 + 自签 CA）**：Rust 侧只绑 127.0.0.1。手机/别的机器访问
-  仍走原来的 Python 服务，或用反向代理终结 TLS。
-- **`/api/update/apply`**：刻意不替换自身可执行文件、不拉安装器，只回与 Python 相同的
-  流程与文案（真要替换，用原来的 Python 更新器或手动安装）。测试只覆盖失败分支。
+- **畸形/缺失请求体的错误体**：Python 是 FastAPI，`body: dict` 校验失败回 422 + pydantic 的
+  `detail` 数组；Rust 已对齐**状态码 422 与 `detail` 结构**，但不模仿 pydantic 额外带的
+  `url`（指向 `errors.pydantic.dev/2.14/…`）—— 那是库内部文案，写死等于把上游版本号焊进响应。
+  `parity_w5b.py` 里这一步只比状态码。
+- **`/api/llm` 的模型↔进程归属**：Python 用 `psutil.net_connections()` 建「端口 → pid」表，
+  系统不给看时（本机沙箱、没装 psutil）整张表为空，探到的端口只能退回「OpenAI 兼容」；
+  Rust 走 `lsof` / `/proc/net/tcp` / `netstat -ano`，能归位到真正的族名。同一个端口上
+  两边可能给出不同 `family` —— 这是**对照侧降级**，不是迁移差异。
+- **`/api/report/list` 的 `state.samples`**：对拍夹具让两边的调度器共用同一份 `快照.jsonl`，
+  后 tick 的一边多看见一条样本就会写日报（`rollup_day` 要 `<2 → None`）。三次实验
+  （独立根 / 共享根先 py / 共享根先 rs）都证明"谁后 tick 谁写"，判定语义本身一致；
+  `--paths /api/report/list --seed` 单独跑为一致。
 - **灰测 / 虫巢**：Python 主服务本就没挂这两套（`fleet.register()` 被注释、`gray` 无人 import），
   迁完后默认同样不挂，需要时用角色开关打开。
-- **`/api/llm` 的模型↔进程归属**：Python 会把「哪个进程加载了哪个模型」算进 `rss_gb`，
-  再按内存倒序；Rust 侧这项归属只在能读到进程表时才算得出，读不到就退化成按名字排序，
-  于是同分模型的先后可能不同。
 - **OCR 收尾**（`post_process` / `refetch_missing`）：只跑 `ocr.py --sweep`，
   `classified/summarized/img_fixed` 恒 0，其余字段与 Python 一致。
-- **平台**：只在本机 macOS 上实测过；Windows/Linux 分支按源码与文档实现，未在真机跑过。
+- **缩略图**：`/api/thumb` / `/api/ledger/img` / `/api/browse?inline=1` / 账本换图四个入口
+  现在都走 `storage::make_thumb` —— mac 用 `sips`（与 Python 逐字节一致），其它平台交给
+  `imaging`（`magick` → `convert` → `ffmpeg`），三个都没有就退回原图。Python 在非 mac 上
+  本来就没有缩略图（`sips` 写死），所以这里只多不少。
+- **HEIC → JPEG**：只有 mac 能转（`sips`）。Linux/Windows 上这类图会被跳过，图集其余图片照常入库；
+  Python 的 `linkbox` 同样写死 `/usr/bin/sips`。
+- **打包（非 macOS）**：`/api/zip` 在 mac 上仍是自写 zlib FFI（与 `zipfile` 逐字节一致）；
+  Linux/Windows 走 `zip` crate，条目名/顺序/内容一致，但容器头（version made by 等）可能与
+  `zipfile` 有字节差。需要「逐字节」判据时只在 mac 上比。
+- **自启动 / 服务安装**：服务端不写 launchd plist、systemd user unit 或计划任务，也不注册登录项。
+  自启由安装包与桌面壳负责（mac `.app`、Windows NSIS、Linux `.deb`/AppImage 的桌面项）。
+- **在文件管理器里定位到某个文件**：`sysopen::reveal_path` 已实现（mac `open -R` /
+  Windows `explorer /select,` / Linux 打开父目录），但仓库里还没有这样的路由，暂无调用点。
+- **应用启动器（`/api/apps` 的 `.app` / `open -a`）**：仍是 macOS 语义，非 mac 上这部分不可用；
+  它不属于「打开路径」这一类，没有做跨平台映射。
+- **平台**：macOS 上实测过（含 `open` 打点、缩略图字节、zip 逐字节对拍、微信推送、局域网
+  HTTPS、原地更新）；Windows/Linux 分支按源码实现，本地用 `--features sim_linux|sim_windows`
+  + `scripts/rust-portability.py` 双向卡住，再由 CI 的 matrix 原生 `cargo build` +
+  服务端冒烟（`/api/ping` 200）覆盖到「能跑」，未在真机点过 UI。
+
+### 三平台怎么在 mac 上验
+
+```bash
+cd rust
+CARGO_TARGET_DIR=/tmp/rs-lin cargo check --features sim_linux   --message-format short
+CARGO_TARGET_DIR=/tmp/rs-win cargo check --features sim_windows --message-format short
+cd .. && python3 scripts/rust-portability.py     # 未隔离的平台专有调用应当是 0
+```
+
+`sim_*` 只是把 cfg 分支翻到对面（写成 `all(unix, not(feature = "sim_windows"))` 而不是裸
+`unix`），在 mac 上做类型检查；`rust-portability.py` 反过来查每处 `std::os::unix` / `libc::`
+是不是真被「对面平台会编掉」的 cfg 挡住 —— 编译器看不出裸 `#[cfg(unix)]` 的问题，它能。
 
 ## 迁移期留下的东西，什么时候可以删
 

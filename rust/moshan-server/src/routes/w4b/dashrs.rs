@@ -91,16 +91,10 @@ fn pct(a: f64, b: f64) -> f64 {
 }
 
 fn disk_usage(root: &Path) -> Option<(f64, f64)> {
-    use std::os::unix::ffi::OsStrExt;
-    let c = std::ffi::CString::new(root.as_os_str().as_bytes()).ok()?;
-    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
-    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
-        return None;
-    }
-    let frsize = if st.f_frsize > 0 { st.f_frsize } else { st.f_bsize } as f64;
-    let total = st.f_blocks as f64 * frsize;
-    let free = st.f_bavail as f64 * frsize;
-    Some((total, free))
+    // 磁盘口径只留一份：`platform::disk_usage` 是 statvfs / GetDiskFreeSpaceEx 的
+    // 三平台封装，自己再抄一遍 statvfs 等于在 Windows 上留一处编译不过的代码。
+    let (total, free) = crate::hostwork::platform::disk_usage(root)?;
+    Some((total as f64, free as f64))
 }
 
 /// `_disk(root)`：只回简报用得到的四个键。

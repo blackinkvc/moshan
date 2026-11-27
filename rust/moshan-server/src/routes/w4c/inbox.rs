@@ -141,18 +141,13 @@ fn names_guard<F: FnOnce() -> Value>(f: F) -> Value {
     f()
 }
 
-/// `GET /api/inbox/open`：在 Finder 里打开收件箱。
-/// 与 Python 的 `os.system('open "…"')` 同效：起 `open`、等它退出、忽略结果。
+/// `GET /api/inbox/open`：在文件管理器里打开收件箱。
+/// 与 Python 的 `subprocess.Popen(["open", …])` 同效：起打开器、立刻返回、忽略结果。
 pub async fn open(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Response {
     if let Some(r) = peek(&ctx, &headers, &uri) {
         return r;
     }
     let dir = ctx.inbox_dir();
-    let _ = std::process::Command::new("open")
-        .arg(dir.to_string_lossy().to_string())
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+    let _ = crate::sysopen::open_path(&dir);
     Json(json!({"ok": true, "path": dir.to_string_lossy()})).into_response()
 }

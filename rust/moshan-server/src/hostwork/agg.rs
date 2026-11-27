@@ -11,11 +11,11 @@
 // 版本号/字段/缩进任何一样不对，Python 侧 `agg["last"]` 就会 KeyError。
 #![allow(dead_code)]
 
+use super::platform;
 use regex::Regex;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -841,8 +841,8 @@ fn scan_file(path: &Path, prev: Option<&Value>) -> Value {
         Ok(m) => m,
         Err(_) => return prev.cloned().unwrap_or_else(|| json!({})),
     };
-    let ino = st.ino();
-    let size = st.size();
+    let ino = platform::file_inode(&st);
+    let size = platform::file_size(&st);
     let mtime = st
         .modified()
         .ok()

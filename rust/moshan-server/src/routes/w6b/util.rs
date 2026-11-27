@@ -410,12 +410,19 @@ pub fn py_os_err_path(e: &std::io::Error, path: &Path) -> String {
 }
 
 fn strerror(code: i32) -> String {
+    // macOS/Linux 要的是 `os.strerror()` 那句纯文案（对拍按字节比）；
+    // Windows 没有 libc::strerror，用 std 的错误文案顶上。
+    #[cfg(unix)]
     unsafe {
         let p = libc::strerror(code);
         if p.is_null() {
             return format!("OS error {}", code);
         }
         std::ffi::CStr::from_ptr(p).to_string_lossy().to_string()
+    }
+    #[cfg(not(unix))]
+    {
+        std::io::Error::from_raw_os_error(code).to_string()
     }
 }
 

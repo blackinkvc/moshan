@@ -457,7 +457,10 @@ curl -s http://127.0.0.1:8323/api/sys
 不建议把端口直接映射到公网 —— 网络守卫会拒绝，这是设计如此。
 
 **缩略图在 Windows 上没有**
-macOS 用系统自带 `sips` 缩图；Windows 没有这个命令，列表退回显示原图。已知降级，不影响功能。
+macOS 用系统自带 `sips` 缩图；Linux / Windows 没有这个命令，会依次试 ImageMagick
+（`magick` / `convert`）和 `ffmpeg`，装了其中一个就有缩略图，都没装就退回显示原图。
+`/api/thumb` 与记账卡片图那两条接口在非 mac 上仍然直接回原图（实现还在旧的
+`storage.rs` 里），列表内联缩略图和换图已经支持外挂工具。已知降级，不影响功能。
 
 **工作台页面（`/dash`）打不开**
 `/dash` 读的是资料库里的 `_工作台/dash.html`，你自己放一个 HTML 进去就能用；
@@ -479,11 +482,16 @@ macOS 用系统自带 `sips` 缩图；Windows 没有这个命令，列表退回�
   cuntu 插件集（未随包分发）。不装时这些入口会明确报「没有 cuntu」而不是把服务拖崩；
   想用就把 `MOSHAN_CUNTU` 指向自己的副本。
 - **macOS 未公证**，首次需右键打开（见上方折叠说明）。
-- **Windows 无缩略图**（缺 `sips` 的等价实现）、**无 OCR**（WinRT 那套还没接）、
+- **Windows / Linux 上的降级**：缩略图要装 ImageMagick 或 ffmpeg 才有（没装就显示原图，
+  `/api/thumb` 仍只有 mac 支持）；HEIC 转 JPEG 只有 mac 能做；打包下载在非 mac 上由
+  `zip` crate 生成，解压结果与 Python 一致但压缩包容器字节可能不同。
+  「打开目录 / 在 Finder 里定位」三平台都可用（mac `open`、Linux `xdg-open`、
+  Windows `explorer`/`start`）。**Windows 无 OCR**（WinRT 那套还没接）、
   **视频封面不可用**（需 ffmpeg）。哪块用什么补、要不要额外装东西，见
   [`docs/WINDOWS-PARITY.md`](docs/WINDOWS-PARITY.md)。
 - **暂无 Intel Mac 官方包**（CI 只构 arm64，可本地自建）。
-- **暂无 Linux 包**，但代码本身没有 macOS 专属依赖（除缩略图一条），理论上可直接跑源码。
+- **暂无 Linux 包**：服务端、打开目录/定位、解压打包都已三平台化；仍带 macOS 语义的只剩
+  应用启动器（`/api/apps` 的 `.app`/`open -a`）、HEIC 转码和 `/api/thumb` 缩略图。
 - **更新不是原子替换**：走 GitHub 的那条交给系统安装器；走主机推送的那条是原地替换
   （有备份、sha256 校验、白名单解包、一键 rollback），但替换途中进程是停的。
 - **无托盘图标**：关闭浏览器标签不会退出服务，要退出请从启动器窗口 `Ctrl+C`，或结束进程。

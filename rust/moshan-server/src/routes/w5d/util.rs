@@ -342,11 +342,7 @@ pub fn which(name: &str) -> Option<PathBuf> {
 }
 
 pub fn is_exec_file(p: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    match std::fs::metadata(p) {
-        Ok(m) => m.is_file() && (m.permissions().mode() & 0o111) != 0,
-        Err(_) => false,
-    }
+    crate::hostwork::platform::is_exec_file(p)
 }
 
 /// `socket.create_connection(("127.0.0.1", port), timeout)` 的简化。

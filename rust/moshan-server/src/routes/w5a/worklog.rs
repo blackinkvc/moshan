@@ -1594,12 +1594,31 @@ pub async fn worklog_add(
     State(ctx): CtxState,
     headers: HeaderMap,
     uri: Uri,
-    body: Option<Json<Value>>,
+    body: axum::body::Bytes,
 ) -> Response {
     if let Some(r) = peek(&ctx, &headers, &uri) {
         return r;
     }
-    let b = body_obj(body);
+    // FastAPI 对 `body: dict` 的**缺失或畸形**请求体回 422（pydantic 校验错误），不是 400；
+    // axum 的 `Json` 抽取器默认回 400 + 一行纯文本。这里对齐状态码与 `detail` 形状。
+    // 唯一不跟的是 pydantic 额外带的 `url`（指向 errors.pydantic.dev 的版本化文档）——
+    // 那是库内部文案，会随版本变，模仿它等于把上游库的版本号写进我们的响应。
+    //
+    // 注意用 `Bytes` 而不是 `Option<Json<_>>`：抽取器在进函数体之前就跑了，用后者会让
+    // 「没带令牌 + 畸形体」先拿到 422 而不是 401（Python 是依赖先跑、再校验体）。
+    let b = match serde_json::from_slice::<Value>(&body) {
+        Ok(v @ Value::Object(_)) => v,
+        _ => {
+            return (
+                axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({"detail": [{
+                    "type": "missing", "loc": ["body"],
+                    "msg": "Field required", "input": null
+                }]})),
+            )
+                .into_response()
+        }
+    };
     let task: String = super::util::str_or(b.get("task")).trim().chars().take(80).collect();
     if task.is_empty() {
         return Json(json!({"ok": false, "error": "先说清楚做了什么"})).into_response();

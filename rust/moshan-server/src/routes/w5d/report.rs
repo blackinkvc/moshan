@@ -252,15 +252,20 @@ fn tick(ctx: &Ctx) {
 
 /// 后台循环。Python 先睡 FIRST_DELAY 再开始，之后每 SAMPLE_EVERY 一轮。
 pub fn start(ctx: Arc<Ctx>) {
-    crate::live::report_update(|st| {
-        if st.started == 0.0 {
-            st.started = util::now_f(); // report_runner.start() 里的 STATE["started"]
-        }
-    });
+    // `report_runner.start()`：`if STATE["started"]: return` —— 起过一次就不再起，
+    // 否则会有两条采样线程同时写快照。
+    if crate::live::report_get().started != 0.0 {
+        return;
+    }
+    crate::live::report_update(|st| st.started = util::now_f());
     std::thread::Builder::new()
         .name("moshan-report".into())
         .spawn(move || {
             std::thread::sleep(Duration::from_secs(FIRST_DELAY));
+            // `_loop()` 睡醒后再置一次：对外看到的 started 是「第一轮采样开始的时刻」，
+            // 不是进程启动时刻（上面 start() 那次只用于「线程已启动」的判断）。
+            let woke = util::now_f();
+            crate::live::report_update(|st| st.started = woke);
             loop {
                 let t0 = Instant::now();
                 let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tick(&ctx)));

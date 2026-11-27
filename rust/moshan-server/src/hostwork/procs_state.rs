@@ -58,12 +58,8 @@ fn now_secs() -> f64 {
 }
 
 fn cpu_count() -> i64 {
-    let n = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) };
-    if n > 0 {
-        n
-    } else {
-        1
-    }
+    // 平台层已经按 sysconf / GetSystemInfo 各写了一份，这里别自己再调 sysconf。
+    super::platform::cpu_count().max(1)
 }
 
 /// 整机 CPU 使用率：user + system + nice 的增量 ÷ 总增量。

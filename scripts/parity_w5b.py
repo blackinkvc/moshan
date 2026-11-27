@@ -265,6 +265,10 @@ DATA_FILES = [
 ]
 
 
+# 只比状态码的步骤：错误体是上游库的内部文案，不逐字节模仿。
+STATUS_ONLY = {"补记无体"}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--rs-bin", default="/tmp/rs-w5b/release/moshan-server")
@@ -283,10 +287,17 @@ def main() -> int:
     bad = 0
     print(f"{'步骤':16s} {'py':>4s} {'rs':>4s}  结果")
     for (note, sa, ra), (_, sb, rb) in zip(results["py"], results["rs"]):
-        ok = sa == sb and ra == rb
+        # 有一步只比状态码：畸形/缺失请求体的错误文案来自 pydantic（带一条指向
+        # errors.pydantic.dev 的版本化 url），Rust 侧结构对齐但不模仿库内部文案。
+        # 语义（"这种请求要被拒、拒成 4xx 的哪一个"）仍然照比。
+        only_status = note in STATUS_ONLY
+        ok = sa == sb and (only_status or ra == rb)
         if not ok:
             bad += 1
-        print(f"{note:16s} {sa:4d} {sb:4d}  {'一致' if ok else '差异'}")
+        tag = "一致" if ok else "差异"
+        if ok and only_status and ra != rb:
+            tag = "一致（只比状态码）"
+        print(f"{note:16s} {sa:4d} {sb:4d}  {tag}")
         if not ok:
             print("    " + rp.first_diff(ra, rb))
 

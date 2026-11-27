@@ -411,20 +411,9 @@ fn move_images(src: &Path, dest: &Path) -> Vec<String> {
             out.push(format!("images/{name}"));
         } else {
             let name = format!("{seq:02}.jpg");
-            let argv = vec![
-                "/usr/bin/sips".to_string(),
-                "-s".to_string(),
-                "format".to_string(),
-                "jpeg".to_string(),
-                "-s".to_string(),
-                "formatOptions".to_string(),
-                "85".to_string(),
-                p.to_string_lossy().to_string(),
-                "--out".to_string(),
-                dest.join(&name).to_string_lossy().to_string(),
-            ];
-            let _ = py::run_cmd(&argv, 60, None);
-            if !dest.join(&name).exists() {
+            // HEIC 只有 mac 转得出来（sips）；其它平台跳过这张，与 Python
+            // （`linkbox.SIPS` 写死 /usr/bin/sips）的失败路径一致。
+            if !crate::imaging::heic_to_jpg(&p, &dest.join(&name)) {
                 continue;
             }
             out.push(format!("images/{name}"));

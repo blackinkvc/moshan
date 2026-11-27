@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // 职责：`moshan/pending.py` 的 Rust 版 —— 「存图还是文章」待确认队列（3 条路由）。
-// 不做：不跑后台发送线程（`flush` 要靠 wechat_push 的 websocket 网关），
-//       也不注册 linkbox/articlebox 的处理函数 —— 所以 gallery/article 两种回答
+// 不做：不注册 linkbox/articlebox 的处理函数 —— 所以 gallery/article 两种回答
 //       在 Rust 侧落成 `failed`，只有 `drop`（算了）与 Python 语义完全一致。
 //
 // 状态机与落盘时机照抄：working 先落盘再干活（处理要几秒，别让同一个问题被答两次），
 // 关闭时 `_prune` 只留最近 40 条已答。
+//
+// 问句的补发（`flush`）与回答后的回执都走 `crate::wechat`：发不出去只记日志，
+// 不清标记（`next_try` 指数退避），网关一活自己会到。
 
 use super::util::{self, get, s_or, truthy};
 use crate::paths::Ctx;
@@ -17,6 +19,7 @@ use std::sync::OnceLock;
 const MAX_AGE: f64 = 7.0 * 86400.0;
 const SHORT_AGE: f64 = 6.0 * 3600.0;
 const KEEP_DONE: usize = 40;
+const RETRY_MAX: f64 = 600.0;
 
 pub fn pend_path(ctx: &Ctx) -> PathBuf {
     ctx.library_dir.join("04-存图").join("_待定.json")
@@ -96,6 +99,150 @@ pub fn open_items(ctx: &Ctx) -> Vec<Value> {
 
 fn get_item(ctx: &Ctx, pid: &str) -> Option<Value> {
     open_items(ctx).into_iter().find(|i| s_or(get(i, "id")) == pid)
+}
+
+// ---------------------------------------------------------------- 问句补发
+
+/// `_one_line(e)`：「《标题》：N 张图、M 字」。
+fn one_line(e: &Value) -> String {
+    let title = s_or(get(e, "title")).trim().to_string();
+    let name = if title.is_empty() {
+        "这条链接".to_string()
+    } else {
+        format!("《{}》", title)
+    };
+    let n = util::int0(get(e, "n_img"));
+    let c = util::int0(get(e, "text_len"));
+    let v = util::int0(get(e, "n_video"));
+    let what = if v != 0 && n <= v {
+        format!("{} 段视频", v)
+    } else if v != 0 {
+        format!("{} 张图 + {} 段视频", n - v, v)
+    } else {
+        format!("{} 张图", n)
+    };
+    format!("{}：{}、{} 字", name, what, c)
+}
+
+fn question(e: &Value) -> String {
+    format!(
+        "{}，两边都像 —— 回1「存图」；回2「存文章」；回3「算了」就当没存；",
+        one_line(e)
+    )
+}
+
+/// 一条问一句；多条合成一条，别拿一串消息轰炸手机。
+fn compose(items: &[Value]) -> String {
+    if items.is_empty() {
+        return String::new();
+    }
+    if items.len() == 1 {
+        return question(&items[0]);
+    }
+    let mut lines = vec![format!("有 {} 条拿不准，回一句就行：", items.len())];
+    for (k, e) in items.iter().enumerate() {
+        lines.push(format!("{}. {}", k + 1, one_line(e)));
+    }
+    lines.push(
+        "回「存图」/「存文章」＝最近那条；要全部一样就回「都存图」/「都存文章」；\
+         「算了」＝都不存。"
+            .to_string(),
+    );
+    lines.join("\n")
+}
+
+fn log_event(entry: Value) {
+    eprintln!("[moshan-rs] {}", entry);
+}
+
+/// `flush()`：把还没发出去的挂起单发到聊天窗，返回这一次发了几条。
+///
+/// 发送失败不清标记，只把 `next_try` 往后推（30s 起，翻倍到 10 分钟）——
+/// 网关半夜挂了也不用管，它一活最多十分钟内那句问话自己会到。
+pub fn flush(ctx: &Ctx) -> i64 {
+    let items: Vec<Value> = open_items(ctx)
+        .into_iter()
+        .filter(|i| !truthy(get(i, "pushed_at")))
+        .collect();
+    if items.is_empty() {
+        return 0;
+    }
+    let now = now_ts();
+    let ready: Vec<Value> = items
+        .into_iter()
+        .filter(|i| {
+            let nt = util::as_f64(get(i, "next_try")).unwrap_or(0.0);
+            now >= nt
+        })
+        .collect();
+    if ready.is_empty() {
+        return 0;
+    }
+    let text = compose(&ready);
+    let agent = {
+        let a = s_or(get(&ready[0], "agent"));
+        if a.is_empty() {
+            "main".to_string()
+        } else {
+            a
+        }
+    };
+    let channel = {
+        let c = s_or(get(&ready[0], "channel"));
+        if c.is_empty() {
+            crate::wechat::CHANNEL.to_string()
+        } else {
+            c
+        }
+    };
+    let ok = crate::wechat::send_to(&text, &agent, &channel);
+    let ids: Vec<String> = ready.iter().map(|i| s_or(get(i, "id"))).collect();
+    {
+        let mut all = load(ctx);
+        for i in all.iter_mut() {
+            let id = s_or(get(i, "id"));
+            if !ids.iter().any(|x| x == &id) {
+                continue;
+            }
+            if ok {
+                set(i, "pushed_at", json!(now));
+                set(i, "next_try", json!(0.0));
+            } else {
+                let tries = util::int0(get(i, "push_tries")) + 1;
+                set(i, "push_tries", json!(tries));
+                let delay = 30.0 * 2f64.powi((tries - 1) as i32);
+                set(i, "next_try", json!(now + delay.min(RETRY_MAX)));
+            }
+        }
+        save(ctx, &all);
+    }
+    log_event(json!({"event": "pending_push", "ok": ok, "n": ready.len(),
+                     "text": util::cut(&text, 200)}));
+    if ok {
+        ready.len() as i64
+    } else {
+        0
+    }
+}
+
+/// 后台补发线程（幂等）。server 启动时调一次，与 Python 的 `start()` 同节奏。
+pub fn start(ctx: std::sync::Arc<Ctx>) {
+    use std::sync::OnceLock;
+    static STARTED: OnceLock<()> = OnceLock::new();
+    if STARTED.set(()).is_err() {
+        return;
+    }
+    std::thread::Builder::new()
+        .name("pending-deliver".into())
+        .spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| flush(&ctx))) {
+                Ok(_) => {}
+                Err(_) => log_event(json!({"event": "pending_push_error",
+                                           "error": "RuntimeError: flush 崩溃"})),
+            }
+        })
+        .ok();
 }
 
 fn set(v: &mut Value, k: &str, val: Value) {
@@ -355,6 +502,37 @@ fn dispatch(ctx: &Ctx, e: &Value, mode: &str, by: &str) {
         json!({"ok": false, "message": "处理失败：Rust 侧未接入 linkbox/articlebox"})
     };
     close(ctx, &pid, mode, by, &res);
+
+    // 回答后的回执：办完把结果发回聊天窗。Python 在 _work 的线程里发，
+    // 这里也丢给一条独立线程，别让 HTTP 处理等多一次握手。
+    let msg = s_or(get(&res, "message")).trim().to_string();
+    if !msg.is_empty() {
+        let agent = {
+            let a = s_or(get(e, "agent"));
+            if a.is_empty() {
+                "main".to_string()
+            } else {
+                a
+            }
+        };
+        let channel = {
+            let c = s_or(get(e, "channel"));
+            if c.is_empty() {
+                crate::wechat::CHANNEL.to_string()
+            } else {
+                c
+            }
+        };
+        let mode2 = mode.to_string();
+        std::thread::spawn(move || {
+            let ok = crate::wechat::send_to(&msg, &agent, &channel);
+            eprintln!(
+                "[moshan-rs] {}",
+                json!({"event": "pending_done_push", "ok": ok, "mode": mode2,
+                       "text": util::cut(&msg, 120)})
+            );
+        });
+    }
 }
 
 fn close(ctx: &Ctx, pid: &str, mode: &str, by: &str, res: &Value) {

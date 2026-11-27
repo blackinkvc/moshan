@@ -274,18 +274,7 @@ async fn reveal_route(State(ctx): CtxState, headers: HeaderMap, uri: Uri, body: 
             json!({"ok": false, "error": format!("目录建不出来：{}", util::py_os_err_path(&e, &p))}),
         );
     }
-    let r = if cfg!(target_os = "macos") {
-        std::process::Command::new("open").arg(&p).spawn()
-    } else if cfg!(target_os = "windows") {
-        std::process::Command::new("cmd")
-            .arg("/C")
-            .arg("start")
-            .arg("")
-            .arg(&p)
-            .spawn()
-    } else {
-        std::process::Command::new("xdg-open").arg(&p).spawn()
-    };
+    let r = crate::sysopen::open_path(&p);
     if let Err(e) = r {
         return json_status(
             500,

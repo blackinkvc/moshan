@@ -34,9 +34,17 @@ fn env_path(key: &str) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-/// 与 Python 的 `Path(...).resolve()` 对齐：macOS 上 `/var` 是 `/private/var` 的软链接，
-/// 解析与不解析会让 `/api/about` 里同一台机器出现两种路径写法，对拍时误判成差异。
+/// 与 Python 的 `Path(...).expanduser().resolve()` 对齐：macOS 上 `/var` 是
+/// `/private/var` 的软链接，解析与不解析会让 `/api/about` 里同一台机器出现两种
+/// 路径写法，对拍时误判成差异。
+///
+/// `expanduser` 不能省：Python 两处 `MOSHAN_HOME` 都先 expanduser 再 resolve，
+/// 用户写 `MOSHAN_HOME=~/moshan-data` 时如果不展开，`~` 会被当成字面目录名。
 fn resolve(p: PathBuf) -> PathBuf {
+    let p = match p.to_str() {
+        Some(s) if s == "~" || s.starts_with("~/") => crate::storage::expanduser(s),
+        _ => p,
+    };
     std::fs::canonicalize(&p).unwrap_or(p)
 }
 
@@ -51,14 +59,21 @@ pub fn state_dir() -> PathBuf {
     }
     #[cfg(windows)]
     {
+        // 与 Python 的 `os.environ.get("APPDATA") or (Path.home()/"AppData"/"Roaming")` 同口径：
+        // 变量存在但为空串时也要退回 Roaming，不能拼出相对路径 `Moshan`。
         std::env::var_os("APPDATA")
+            .filter(|v| !v.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| home().join("AppData").join("Roaming"))
             .join(APP_NAME)
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
+        // Python 是 `Path(os.environ.get("XDG_STATE_HOME", ~/.local/state))`。
+        // 空串按 XDG 规范当「未设置」处理（Python 那边会得到相对路径 `./moshan`，
+        // 那是它的漏洞，不复刻）。
         std::env::var_os("XDG_STATE_HOME")
+            .filter(|v| !v.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| home().join(".local").join("state"))
             .join(APP_NAME.to_lowercase())
@@ -81,7 +96,8 @@ pub fn library_dir(cfg: &Value) -> PathBuf {
         .trim()
         .to_string();
     if !from_cfg.is_empty() {
-        return PathBuf::from(from_cfg);
+        // Python 是 `Path(v).expanduser()` —— 配置文件里写 `~/Documents/墨山` 要展开。
+        return crate::storage::expanduser(&from_cfg);
     }
     home().join("Documents").join(APP_NAME)
 }
