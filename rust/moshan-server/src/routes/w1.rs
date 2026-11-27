@@ -9,7 +9,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use std::sync::Arc;
 
 type CtxState = State<Arc<Ctx>>;
@@ -127,119 +127,9 @@ pub async fn about(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Respon
 }
 
 pub async fn appearance(State(ctx): CtxState) -> Json<Value> {
-    let folder = paths::workbench_dir(&ctx);
-    let wall_dir = folder.join("wallpapers");
-
-    // load()：只认 skin/accent/bg 三个键，其余忽略；文件读不出来就整份用默认值。
-    let data: Map<String, Value> = std::fs::read_to_string(folder.join("appearance.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-        .and_then(|v| v.as_object().cloned())
-        .unwrap_or_default();
-
-    const SKINS: [&str; 4] = ["classic", "g1", "g2", "g3"];
-    let skin = data
-        .get("skin")
-        .and_then(|v| v.as_str())
-        .filter(|s| SKINS.contains(s))
-        .unwrap_or("classic");
-    let accent = norm_hex(data.get("accent").and_then(|v| v.as_str()).unwrap_or(""))
-        .unwrap_or_else(|| "#0a84ff".to_string());
-    let bg_raw = data.get("bg").and_then(|v| v.as_str()).unwrap_or("");
-    const BG_KEYS: [&str; 7] = ["dawn", "mist", "glass", "dusk", "moss", "graphite", "custom"];
-    let bg = if bg_raw == "auto" || BG_KEYS.contains(&bg_raw) {
-        bg_raw
-    } else {
-        "auto"
-    };
-
-    let has_wall = |key: &str| -> bool {
-        if !BG_KEYS.contains(&key) {
-            return false;
-        }
-        wall_dir.join(format!("{key}.jpg")).is_file()
-    };
-
-    let presets = [
-        ("系统蓝", "#0a84ff"),
-        ("靛紫", "#5451e8"),
-        ("青", "#0d8f86"),
-        ("绿", "#0f8f56"),
-        ("琥珀", "#a86a04"),
-        ("朱红", "#cf3a3a"),
-        ("玫红", "#cc2e76"),
-        ("石墨", "#3b4252"),
-    ];
-    let preset_bgs = [
-        ("dawn", "晨光", "暖米金主光，拟物默认"),
-        ("mist", "冷雾", "冷蓝紫雾，毛玻璃默认"),
-        ("glass", "玻璃", "冷色折射，液态玻璃默认"),
-        ("dusk", "暮色", "深靛紫，暗色模式最好看"),
-        ("moss", "苔原", "灰绿米白，低饱和"),
-        ("graphite", "石墨", "中性灰，最不抢戏"),
-    ];
-
-    let mut bgs: Vec<Value> = preset_bgs
-        .iter()
-        .map(|(k, n, d)| {
-            json!({ "key": k, "name": n, "note": d, "has": has_wall(k), "ver": "" })
-        })
-        .collect();
-    // custom 那张是替换式的（同名覆盖），带 mtime 做查询串才能破浏览器一天的缓存。
-    let custom_ver = std::fs::metadata(wall_dir.join("custom.jpg"))
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| format!("?v={}", d.as_secs()))
-        .unwrap_or_default();
-    bgs.push(json!({
-        "key": "custom", "name": "自定义", "note": "自己传图，只留这一张",
-        "has": has_wall("custom"), "ver": custom_ver
-    }));
-
-    let skin_bg = json!({ "classic": "", "g1": "dawn", "g2": "mist", "g3": "glass" });
-    let eff_key = if bg == "auto" {
-        match skin {
-            "g1" => "dawn",
-            "g2" => "mist",
-            "g3" => "glass",
-            _ => "",
-        }
-    } else {
-        bg
-    };
-    let bg_eff = if !eff_key.is_empty() && has_wall(eff_key) {
-        eff_key
-    } else {
-        ""
-    };
-
-    Json(json!({
-        "skin": skin,
-        "accent": accent,
-        "bg": bg,
-        "v": 2,
-        "skins": [
-            { "id": "classic", "name": "经典", "note": "工作台原本的靛紫 + 中性 slate" },
-            { "id": "g1", "name": "拟物", "note": "Aqua / iOS 6：亚麻底、斜面高光、小圆角" },
-            { "id": "g2", "name": "扁平毛玻璃", "note": "iOS 7–18：色块 + vibrancy，密度最高" },
-            { "id": "g3", "name": "液态玻璃", "note": "iOS 26：镜面白边、大圆角、字重更粗" },
-        ],
-        "presets": presets.iter().map(|(n, h)| json!({"name": n, "hex": h})).collect::<Vec<_>>(),
-        "bgs": bgs,
-        "bg_eff": bg_eff,
-        "skin_bg": skin_bg,
-    }))
-}
-
-/// 强调色只接受 `#rgb` / `#rrggbb`，统一小写 —— 与 `appearance._norm_hex` 同一套规则。
-fn norm_hex(s: &str) -> Option<String> {
-    let t = s.trim();
-    let hex = t.strip_prefix('#')?;
-    if !(hex.len() == 3 || hex.len() == 6) || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
-        return None;
-    }
-    Some(format!("#{}", hex.to_lowercase()))
+    // 清单、默认值、壁纸 has/ver 只在 `appearance::state` 里维护一份：
+    // 保存接口回的也是同一个结构，读和写不可能各长一套字段。
+    Json(crate::routes::u::appearance::state(&ctx.cfg))
 }
 
 fn truthy(v: Option<&Value>) -> bool {

@@ -409,6 +409,71 @@ pub async fn appearance_wall(State(ctx): CtxState, Path(name): Path<String>) -> 
     file_response(&p, "image/jpeg", Some("public, max-age=86400"), None, None)
 }
 
+/// `POST /api/appearance`：改皮肤 / 强调色 / 背景，返回落盘后的完整设置。
+///
+/// 迁移时只搬了读的那半（`GET`），写这半分在了「不做」名单里，于是设置面板
+/// 里点什么都弹「没存上：HTTP 405」——界面全画好了、一个开关也不生效。
+/// 强调色的明度调整、`bg=custom` 必须有图，这些判定都在 `appearance::save` 里，
+/// 和 Python 同一套规则（前端那条 `reloadAppearanceCss()` 依赖它）。
+pub async fn appearance_save(
+    State(ctx): CtxState,
+    headers: HeaderMap,
+    uri: Uri,
+    Json(body): Json<Value>,
+) -> Response {
+    if let Some(deny) = peek(&ctx, &headers, &uri) {
+        return deny;
+    }
+    appearance::save(&ctx.cfg, &body);
+    let mut out = appearance::state(&ctx.cfg);
+    out["ok"] = json!(true);
+    Json(out).into_response()
+}
+
+/// `POST /api/appearance/wall`：自定义壁纸。
+///
+/// 前端已经把图缩到 1800 宽、转成 dataURL 再 POST 上来（浏览器有 canvas，
+/// 服务端这台机器没有 Pillow）。这里只做三件事：验前缀、限大小、落盘 ——
+/// 不解析图像，也不引图像库。存成固定名 `custom.jpg`：壁纸是「一张底」，
+/// 不是相册，换就是替换，前端靠 `?v=mtime` 破缓存。
+pub async fn appearance_wall_upload(
+    State(ctx): CtxState,
+    headers: HeaderMap,
+    uri: Uri,
+    Json(body): Json<Value>,
+) -> Response {
+    use base64::Engine as _;
+    if let Some(deny) = peek(&ctx, &headers, &uri) {
+        return deny;
+    }
+    let raw = body.get("data").and_then(|v| v.as_str()).unwrap_or("");
+    if !raw.starts_with("data:image/") {
+        return http_err(400, "不是图片数据");
+    }
+    let b64 = raw.split_once(',').map(|(_, b)| b).unwrap_or("");
+    let Ok(blob) = base64::engine::general_purpose::STANDARD.decode(b64) else {
+        return http_err(400, "图片解码失败");
+    };
+    if blob.len() < 1024 {
+        return http_err(400, "图片太小了");
+    }
+    if blob.len() > 12 * 1024 * 1024 {
+        return http_err(413, "图片太大（上限 12MB）");
+    }
+    let p = appearance::wall_path(&ctx.cfg, "custom");
+    if let Some(dir) = p.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if std::fs::write(&p, &blob).is_err() {
+        return http_err(500, "壁纸写不进磁盘");
+    }
+    // 传完直接切过去，省用户再点一次「自定义」——Python 侧也是这么做的。
+    appearance::save(&ctx.cfg, &json!({ "bg": "custom" }));
+    let mut out = appearance::state(&ctx.cfg);
+    out["ok"] = json!(true);
+    Json(out).into_response()
+}
+
 // ---------------------------------------------------------------- 分享下载
 
 fn read_shares(ctx: &Ctx) -> Map<String, Value> {

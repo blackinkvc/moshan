@@ -8,6 +8,7 @@
 // 见 pages.rs 顶部说明）。
 
 use crate::paths::Ctx;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use axum::Router;
 use std::sync::Arc;
@@ -39,6 +40,16 @@ pub fn router() -> Router<Arc<Ctx>> {
         .route("/__appearance.css", get(files::appearance_css))
         .route("/__appearance-bg.jpg", get(files::appearance_bg))
         .route("/__wall/{name}", get(files::appearance_wall))
+        // ---- 外观（写）：设置面板的那三个开关。GET 在 main.rs 的 W1 里，
+        //      这里只补 POST；同路径不同方法由 axum 合并，不会互相覆盖。
+        //      壁纸那条放宽到 20MB —— 前端 dataURL 是 base64（×1.33），
+        //      上限 12MB 的原图到这儿已经十六七 MB，默认 2MB 会先被 413 挡掉。
+        .route("/api/appearance", post(files::appearance_save))
+        .route(
+            "/api/appearance/wall",
+            post(files::appearance_wall_upload)
+                .layer(DefaultBodyLimit::max(20 * 1024 * 1024)),
+        )
         .route("/s/{sid}/{*name}", get(files::public_share))
         .route("/s/{sid}/", get(files::public_share_empty))
         // ---- 新手引导

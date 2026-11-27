@@ -5,7 +5,7 @@
 #![allow(dead_code)]
 
 use crate::jsonio;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 pub const SKINS: [&str; 4] = ["classic", "g1", "g2", "g3"];
@@ -82,7 +82,7 @@ fn root(cfg: &Value) -> PathBuf {
 }
 
 pub fn folder(cfg: &Value) -> PathBuf {
-    root(cfg).join("_工作台")
+    crate::paths::workbench_dir_for(cfg)
 }
 
 pub fn json_path(cfg: &Value) -> PathBuf {
@@ -177,6 +177,118 @@ pub fn effective_bg(cfg: &Value) -> String {
     } else {
         String::new()
     }
+}
+
+/// `appearance.save()`：改皮肤 / 强调色 / 背景，落盘后**重新生成 CSS**。
+///
+/// 三条与 Python 保持一致的取舍，前端是按这些行为写的：
+/// - 强调色存的是**调过明度**的值（`--pri` 当正文色时也要过 4.5:1），
+///   所以返回值可能和传进来的 hex 不同；幂等，再调一次不变。
+/// - `bg=custom` 只在图真存在时才认 —— 否则选了就是一片纯渐变，用户会以为没生效。
+/// - 认不出的键 / 值一律忽略而不是报错：宁可保持原值，也别因为一张图没下好
+///   就让整块设置存不上。
+pub fn save(cfg: &Value, patch: &Value) -> Settings {
+    let mut cur = load(cfg);
+    if let Some(p) = patch.as_object() {
+        if let Some(s) = p.get("skin").and_then(|v| v.as_str()) {
+            let s = s.trim();
+            if SKINS.contains(&s) {
+                cur.skin = s.to_string();
+            }
+        }
+        if let Some(a) = p.get("accent").and_then(|v| v.as_str()) {
+            let h = norm_hex(a);
+            if !h.is_empty() {
+                cur.accent = tune(&h, false);
+            }
+        }
+        if p.contains_key("bg") {
+            let bg = p
+                .get("bg")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let known = bg == "auto"
+                || (BG_KEYS.contains(&bg.as_str()) && (bg != "custom" || has_wall(cfg, "custom")));
+            if known {
+                cur.bg = bg;
+            }
+        }
+    }
+    let body = serde_json::json!({
+        "skin": cur.skin.clone(),
+        "accent": cur.accent.clone(),
+        "bg": cur.bg.clone(),
+        "v": 2,
+    });
+    let p = json_path(cfg);
+    if let Some(d) = p.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    let _ = std::fs::write(&p, jsonio::dumps(&body, 1));
+    // CSS 是「设置 → 制品」：写完 json 立刻重算，前端只要重挂 <link> 就能看到新色。
+    sync(cfg);
+    cur
+}
+
+/// 设置面板要的全部清单：皮肤四选、预设强调色八色、背景七张（含 custom）。
+///
+/// `GET /api/appearance` 与三条写接口的响应都走这里 —— 名字和说明只维护这一份。
+/// 以前 `w1::appearance` 里另抄了一遍同样的列表，改一处漏一处只是时间问题。
+pub fn state(cfg: &Value) -> Value {
+    let a = load(cfg);
+    let presets: [(&str, &str); 8] = [
+        ("系统蓝", "#0a84ff"),
+        ("靛紫", "#5451e8"),
+        ("青", "#0d8f86"),
+        ("绿", "#0f8f56"),
+        ("琥珀", "#a86a04"),
+        ("朱红", "#cf3a3a"),
+        ("玫红", "#cc2e76"),
+        ("石墨", "#3b4252"),
+    ];
+    let preset_bgs: [(&str, &str, &str); 6] = [
+        ("dawn", "晨光", "暖米金主光，拟物默认"),
+        ("mist", "冷雾", "冷蓝紫雾，毛玻璃默认"),
+        ("glass", "玻璃", "冷色折射，液态玻璃默认"),
+        ("dusk", "暮色", "深靛紫，暗色模式最好看"),
+        ("moss", "苔原", "灰绿米白，低饱和"),
+        ("graphite", "石墨", "中性灰，最不抢戏"),
+    ];
+
+    let mut bgs: Vec<Value> = preset_bgs
+        .iter()
+        .map(|(k, n, d)| {
+            json!({
+                "key": k, "name": n, "note": d,
+                "has": has_wall(cfg, k), "ver": wall_ver(cfg, k)
+            })
+        })
+        .collect();
+    bgs.push(json!({
+        "key": "custom", "name": "自定义", "note": "自己传图，只留这一张",
+        "has": has_wall(cfg, "custom"), "ver": wall_ver(cfg, "custom")
+    }));
+
+    json!({
+        "skin": a.skin,
+        "accent": a.accent,
+        "bg": a.bg,
+        "v": 2,
+        "skins": [
+            { "id": "classic", "name": "经典", "note": "工作台原本的靛紫 + 中性 slate" },
+            { "id": "g1", "name": "拟物", "note": "Aqua / iOS 6：亚麻底、斜面高光、小圆角" },
+            { "id": "g2", "name": "扁平毛玻璃", "note": "iOS 7–18：色块 + vibrancy，密度最高" },
+            { "id": "g3", "name": "液态玻璃", "note": "iOS 26：镜面白边、大圆角、字重更粗" },
+        ],
+        "presets": presets.iter().map(|(n, h)| json!({"name": n, "hex": h})).collect::<Vec<_>>(),
+        "bgs": bgs,
+        "bg_eff": effective_bg(cfg),
+        "skin_bg": {
+            "classic": "", "g1": "dawn", "g2": "mist", "g3": "glass"
+        },
+    })
 }
 
 // ---------------------------------------------------------------- 强调色
