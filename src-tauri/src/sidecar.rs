@@ -105,8 +105,11 @@ fn wait_ready(timeout: Duration) -> Option<String> {
 }
 
 /// 找可执行体：显式覆盖 → 与主程序同目录（打包后 Tauri 把 externalBin 放这里，
-/// 名字会去掉三元组后缀）→ 开发态 binaries/moshan-<triple> → 最后才退回
-/// 开发态 python3 launcher.py（只在还没 stage 过 Rust 二进制时用）。
+/// 名字会去掉三元组后缀）→ 开发态 binaries/moshan-<triple>。
+///
+/// **没有「退回 python3 launcher.py」这一档**：服务端已全量 Rust，静默回退会让
+/// 开发态跑起一个 Python 版服务（接口/页面与发布物不一致），看着像在测新版、
+/// 其实测的是旧实现。宁可报错让人先 stage，也不要这种回退。
 fn program() -> Result<(PathBuf, Vec<String>), BootError> {
     if let Some(p) = std::env::var_os("MOSHAN_SIDECAR") {
         return Ok((PathBuf::from(p), vec![]));
@@ -137,17 +140,6 @@ fn program() -> Result<(PathBuf, Vec<String>), BootError> {
         if cand.is_file() {
             return Ok((cand, vec![]));
         }
-    }
-
-    // 开发态兜底：没 stage 过 Rust 二进制时跑旧的 Python 实现。
-    // 正常路径永远不会走到这里 —— 服务端已经全量 Rust。
-    let launcher = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("moshan")
-        .join("launcher.py");
-    if launcher.is_file() {
-        let py = std::env::var("MOSHAN_PY").unwrap_or_else(|_| "python3".to_string());
-        return Ok((PathBuf::from(py), vec![launcher.display().to_string()]));
     }
 
     Err(err(

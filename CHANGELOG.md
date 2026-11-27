@@ -3,6 +3,33 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+**修两件「Rust 版发不出去」的事：Windows 编译不过、macOS 包签名不完整 ——
+它们让 Tauri 线在 CI 里从没成功过，用户下载到的其实一直是 Python 打包的那条旧线。**
+
+### 修复
+- **Windows 包根本编译不过**：`hostwork/platform.rs` 用 `MetadataExt::file_index()`
+  取 inode，而它至今仍是 nightly（feature `windows_by_handle`，issue #63010），
+  stable 工具链直接 `error[E0658]`。改用 stable 的 `last_write_time()` 当伪 inode，
+  方向是安全的：文件被追加或替换时它必变，宁可多重扫一次，也不会把两个不同文件
+  当成同一个续读（恒返回 0 会踩这个坑）。
+- **macOS 包签名不完整**：报 `code has no resources but signature indicates they must
+  be present`，根因是 Tauri 只留下链接器签名、没有密封资源。`tauri.conf.json` 加
+  `bundle.macOS.signingIdentity: "-"`，让它在打包阶段对 sidecar、主壳、整包依次
+  ad-hoc 签名。实测 `codesign --verify --deep --strict` 由失败转为 rc=0，
+  `Sealed Resources version=2 rules=13 files=7`。
+- **桌面壳不再静默回退 Python**：`sidecar.rs` 找不到 Rust 二进制时原本会去跑
+  `python3 launcher.py`，于是开发态跑起一个 Python 版服务，看着像在测新版。删掉
+  这一档，改为直接报错并提示先跑 `scripts/stage-sidecar.sh`。
+
+### 工具
+- **对拍基线可信了**：`rust-parity.py` 原来把「读宿主真实数据」的端点也逐字节比，
+  在对拍用的临时数据根上必然一假一大片。现在分三类：宿主数据端点只比状态码与顶层
+  键（14 条）、刻意演进的引导页明确 skip 并打印原因（2 条）、`/private/var` 与
+  `/var` 的路径写法归一。同一份代码的「实质差异」从 23 降到 3，且这 3 条逐条查明
+  是路径写法与秒级时间戳，不是行为差异。
+
 ## [0.3.13] - 2026-11-26
 
 **「花费与用量」在好久没跑 AI 的机器上不再是一片 0：7 天窗口里一条记录都没有、

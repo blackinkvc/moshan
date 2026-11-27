@@ -149,7 +149,17 @@ jobs:
           done
           echo "GET /api/ping -> $CODE"
           [ "$CODE" = "200" ] || { echo "::error::壳起来了但服务不应答"; exit 1; }
-          codesign --verify --deep --strict "$APP" || { echo "::error::壳的签名不完整（sidecar 没签？）"; exit 1; }
+          # 签名要「整包 ad-hoc 密封资源」才算数：只有链接器签名的 .app 在用户机上会被
+          # 报成「已损坏」，报错正是 `code has no resources but signature indicates they
+          # must be present`。tauri.conf.json 里的 bundle.macOS.signingIdentity = "-"
+          # 就是让 Tauri 在打包阶段做这件事；下面这条是验收，不是补救。
+          if ! codesign --verify --deep --strict --verbose=2 "$APP"; then
+            echo "::error::壳的签名不完整（资源没被封进签名）"
+            codesign -dv --verbose=4 "$APP" 2>&1 | grep -Ei 'Sealed|flags|Identifier|Authority' || true
+            echo "--- Resources ---"; ls -R "$APP/Contents/Resources" 2>/dev/null | head -20 || true
+            echo "--- MacOS ---"; ls -l "$APP/Contents/MacOS" 2>/dev/null || true
+            exit 1
+          fi
 
       - name: 冒烟（Windows）
         if: matrix.os == 'windows-latest'
