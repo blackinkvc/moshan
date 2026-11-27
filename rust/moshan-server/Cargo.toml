@@ -97,3 +97,7 @@ rcgen = { version = "0.13", default-features = false, features = ["pem", "crypto
 # 更新包解压 / 源码包削壳：原来靠 `/usr/bin/unzip` 与 `ditto`，
 # 那是 macOS 专有路径，Windows 上直接「解压失败」。
 zip = { version = "4", default-features = false, features = ["deflate"] }
+# 解包时的 raw deflate。刻意不 `#[link(name = "z")]` 调系统 zlib：Windows 没有
+# 名叫 z 的库（LNK1181: cannot open input file 'z.lib'）。解压是确定性的，纯 Rust
+# 后端与系统 zlib 逐字节一致；zlib-rs 与 zip 用的是同一个后端，不额外多编一份。
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
