@@ -1801,7 +1801,7 @@ pub fn is_ok_view(r: &Value) -> bool {
 
 /// 供路由用：`planmod.payload(planmod.root_of(CFG))`
 pub fn payload_ctx(ctx: &Ctx) -> Value {
-    payload(ctx, &root_of(ctx))
+    payload(ctx, &ctx.runtime_dir)
 }
 
 /// 本机模型建议（`/api/plan/triage` 的 AI 分支）。

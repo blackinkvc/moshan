@@ -8,7 +8,7 @@ use crate::paths::Ctx;
 use serde_json::{json, Value};
 
 pub fn price_path(ctx: &Ctx) -> std::path::PathBuf {
-    ctx.library_dir.join("_本机工作").join("折算.json")
+    ctx.runtime_dir.join("_本机工作").join("折算.json")
 }
 
 pub fn default_price() -> Value {

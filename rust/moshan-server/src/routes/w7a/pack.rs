@@ -61,7 +61,7 @@ fn plugins_dir(cfg: &Value) -> PathBuf {
 }
 
 fn plugins_json(cfg: &Value) -> PathBuf {
-    util::data_root(cfg).join("_工作台").join("plugins.json")
+    crate::paths::workbench_dir_for(cfg).join("plugins.json")
 }
 
 // ---------------------------------------------------------------- zip 读
@@ -1005,7 +1005,7 @@ fn install_tree(
         let src = dest.join(&icon);
         let suffix = util::suffix_of(&src).to_lowercase();
         if src.is_file() && [".png", ".jpg", ".jpeg", ".svg"].contains(&suffix.as_str()) {
-            let ic = util::data_root(cfg).join("_工作台").join("_图标");
+            let ic = crate::paths::workbench_dir_for(cfg).join("_图标");
             let _ = std::fs::create_dir_all(&ic);
             let _ = std::fs::copy(&src, ic.join(format!("{pid}{suffix}")));
         } else {

@@ -176,7 +176,7 @@ fn app_series(hist: &[Value]) -> Value {
 // ------------------------------------------------------------------ 降级账
 
 fn metrics_disk(ctx: &Ctx) -> Value {
-    let sys = ctx.library_dir.join("10-系统记录");
+    let sys = ctx.runtime_dir.join("10-系统记录");
     let target = if sys.exists() { sys } else { home() };
     super::disk::metrics_disk(&target)
 }
@@ -214,7 +214,7 @@ pub fn fallback(ctx: &Ctx, key: &str, reason: &str) -> Value {
     machine.insert("net".into(), json!({"in_bps": 0.0, "out_bps": 0.0, "in_total": 0.0, "out_total": 0.0}));
     machine.insert("gpu".into(), json!({}));
 
-    let snaps_path = ctx.library_dir.join("10-系统记录").join("机器").join("快照.jsonl");
+    let snaps_path = ctx.runtime_dir.join("10-系统记录").join("机器").join("快照.jsonl");
     let snaps = super::disk::load_snapshot(&snaps_path, None);
     let tail: Vec<Value> = if snaps.len() > 60 {
         snaps[snaps.len() - 60..].to_vec()
@@ -330,7 +330,7 @@ pub fn gated(ctx: &Ctx, range_key: &str, fresh: bool) -> Value {
 pub fn overview(ctx: &Ctx, range_key: &str, fresh: bool) -> Value {
     let days = range_days(range_key);
     let cfg = price::price_config(ctx);
-    procs_state::start_at(ctx.library_dir.join("_本机工作"));
+    procs_state::start_at(ctx.runtime_dir.join("_本机工作"));
     let (proc, hist) = procs_state::snapshot();
     let mem = machine::mem();
     let disk = machine::disk(&ctx.library_dir);
@@ -556,7 +556,7 @@ pub fn overview(ctx: &Ctx, range_key: &str, fresh: bool) -> Value {
     let series = machine::snapshots(&ctx.library_dir, series_days);
 
     let apps_v = apps_with_icons(
-        &ctx.library_dir.join("_本机工作").join("图标"),
+        &ctx.runtime_dir.join("_本机工作").join("图标"),
         &proc.get("apps").and_then(|v| v.as_array()).cloned().unwrap_or_default(),
     );
 

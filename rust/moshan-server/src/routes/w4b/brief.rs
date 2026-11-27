@@ -84,10 +84,10 @@ fn middle(ctx: &Ctx, root: &Path) -> Middle {
     let svcs = dashrs::services();
     let disk = dashrs::disk(root);
     let gal = dashrs::gallery(root);
-    let hb_file = root.join("10-系统记录").join("心跳").join("最新.json");
+    let hb_file = crate::paths::rt_join(ctx, "10-系统记录").join("心跳").join("最新.json");
     let hb = match util::load_json(&hb_file) {
         Some(v) if truthy(&v) => v,
-        _ => dashrs::heartbeat(root),
+        _ => dashrs::heartbeat(&ctx.runtime_dir),
     };
     let hb = {
         let checks = hb.get("checks").and_then(|x| x.as_array()).cloned().unwrap_or_default();
@@ -815,7 +815,7 @@ pub fn build(ctx: &Ctx, day: &str, force: bool) -> Value {
         }
     }
     let root = brief_root(ctx);
-    let out_path = brief_dir(&root).join(format!("{}.json", day));
+    let out_path = brief_dir(&ctx.runtime_dir).join(format!("{}.json", day));
     if !force {
         if let Some(cached) = util::load_json(&out_path) {
             if cached.is_object() && truthy(get(&cached, "sections")) {
@@ -841,7 +841,7 @@ pub fn build(ctx: &Ctx, day: &str, force: bool) -> Value {
             "work",
             Box::new(|| Ok(sec_work(&works(&root, &yest, &day, &tok), &yest, &day))),
         ),
-        ("news", Box::new(|| Ok(sec_news(&news(&root, &yest))))),
+        ("news", Box::new(|| Ok(sec_news(&news(&ctx.runtime_dir, &yest))))),
         ("follow", Box::new(|| Ok(sec_follow(&follow(&root, &yest))))),
     ];
     for (sid, f) in builders {
@@ -873,7 +873,7 @@ pub fn build(ctx: &Ctx, day: &str, force: bool) -> Value {
         "errors": errs,
     });
     let _ = util::write_json(&out_path, &data, 1);
-    let _ = write_md(&root, &data);
+    let _ = write_md(&ctx.runtime_dir, &data);
     mem_set(&day, &data);
     data
 }
@@ -926,7 +926,7 @@ pub fn days(root: &Path, limit: usize) -> Vec<String> {
 }
 
 pub fn days_for(ctx: &Ctx, limit: usize) -> Vec<String> {
-    days(&brief_root(ctx), limit)
+    days(&ctx.runtime_dir, limit)
 }
 
 /// `push()`：逐条发微信。**一条一条发**是这个功能的前提，不是优化项。

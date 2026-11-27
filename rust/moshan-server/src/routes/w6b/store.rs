@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );";
 
 fn db_path(ctx: &Ctx) -> PathBuf {
-    ctx.library_dir.join("_工作台").join(DB_NAME)
+    ctx.runtime_dir.join("_工作台").join(DB_NAME)
 }
 
 /// `connect()`：库不在就按同一份 schema 建。

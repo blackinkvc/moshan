@@ -128,6 +128,11 @@ _NORM = [
 def norm(b: bytes, home: Path) -> bytes:
     b = b.replace(str(home).encode(), b"<HOME>")
     b = b.replace(str(home.resolve()).encode(), b"<HOME>")
+    # /tmp 在 macOS 是 /private/tmp 的软链，resolve 过的路径会留下这个前缀。
+    b = b.replace(b"/private<HOME>", b"<HOME>")
+    # 双根：媒体根 <HOME>/library、运行根 <HOME>/data。落在哪个根是配置差异，
+    # 不是行为差异 —— 不抹掉的话 `store` 字段会让账单那几步永远差 3 个字节。
+    b = b.replace(b"<HOME>/library/", b"<RT>/").replace(b"<HOME>/data/", b"<RT>/")
     for rx, rep in _NORM:
         b = rx.sub(rep, b)
     return b
@@ -156,8 +161,26 @@ def _kill_tree(p: subprocess.Popen) -> None:
             p.kill()
 
 
-def _mk(home: Path, rel: str) -> None:
-    (home / "library" / rel).mkdir(parents=True, exist_ok=True)
+# 双根：这几个顶层目录属于「运行数据」，Rust 落在 <home>/data（MOSHAN_HOME 决定），
+# Python 旧版单根，一律落在 <home>/library。位置不同但都对，查文件时各按各的根取，
+# 否则 worklog / 计费账号 / 流水 会全被判成「一边缺文件」。
+RUNTIME_SUBS = {
+    "12-记账", "10-系统记录", "13-算价", "_本机工作", "_工作台",
+    "_巡检", "05-采集", "16-虫巢思维", "16-多机", "14-传输", "19-AI工作计划",
+}
+
+
+def _root_of(home: Path, rel: str, side: str) -> Path:
+    top = rel.split("/", 1)[0]
+    return home / ("data" if (side == "rs" and top in RUNTIME_SUBS) else "library")
+
+
+def _file_of(home: Path, rel: str, side: str) -> Path:
+    return _root_of(home, rel, side) / rel
+
+
+def _mk(home: Path, rel: str, side: str = "rs") -> None:
+    _file_of(home, rel, side).mkdir(parents=True, exist_ok=True)
 
 
 def _identity_ok(port: int, token: str, home: Path) -> bool:
@@ -215,11 +238,11 @@ def run_side(args, side: str) -> tuple[list, Path]:
             if body is not None and not isinstance(body, tuple) and "{acct2}" in json.dumps(body):
                 body = json.loads(json.dumps(body).replace("{acct2}", state.get("acct2", "")))
             if method == "MKDIR":
-                _mk(home, path)
+                _mk(home, path, side)
                 out.append((note, 200, b""))
                 continue
             if method == "WRITE":
-                f = home / "library" / path
+                f = _file_of(home, path, side)
                 f.parent.mkdir(parents=True, exist_ok=True)
                 f.write_text(body, encoding="utf-8")
                 out.append((note, 200, b""))
@@ -304,8 +327,8 @@ def main() -> int:
     print("\n—— 落盘文件 ——")
     file_bad = 0
     for rel in DATA_FILES:
-        a = homes["py"] / "library" / rel
-        b = homes["rs"] / "library" / rel
+        a = _file_of(homes["py"], rel, "py")
+        b = _file_of(homes["rs"], rel, "rs")
         ea, eb = a.exists(), b.exists()
         if not ea and not eb:
             print(f"{rel:40s} 两边都没有")

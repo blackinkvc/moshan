@@ -50,6 +50,27 @@ cargo build --release --no-default-features --features lane_w5a
 | `MOSHAN_GRAY=1` | 挂上灰测（`/api/gray/*`）—— 同上 |
 | `MOSHAN_OPEN=1` | 启动后打开浏览器（桌面壳自己开窗口，所以默认不弹） |
 
+## 两个数据根（媒体 / 运行）
+
+`paths.rs` 里有两个根，不是一个。分家的理由是「大而少」和「小而勤」不是一种磁盘：
+
+| 根 | 缺省 | 放什么 | 覆盖方式 |
+|---|---|---|---|
+| 媒体根 `library_dir` | `~/Documents/Moshan` | `01-研究` `02-媒体` `04-存图` `07-收件箱` `08-阅读` `09-个人工作台` `11-关注追踪` … 体积大、写得少，适合外挂盘 | `MOSHAN_HOME`（→ `$MOSHAN_HOME/library`）或 `config.json` 的 `library_dir` |
+| 运行根 `runtime_dir` | `<状态目录>/data`，mac 上是 `~/Library/Application Support/Moshan/data` | `12-记账` `10-系统记录` `13-算价` `_本机工作` `_工作台` `_巡检` `05-采集` `16-虫巢思维` `16-多机` `14-传输` `19-AI工作计划` … 文件小、高频追加，放系统盘 | 同上，或 `config.json` 的 `runtime_dir` |
+
+归属只认一处：`paths::RUNTIME_SUBDIRS` + `is_runtime_sub(name)`。新写代码时，
+**要写盘/要追加的路径一律走 `rt_join(ctx, "12-记账")` 或 `paths::workbench_dir(ctx)`**，
+不要再用 `ctx.library_dir.join(...)` —— 那会把账目又写回装满图片的盘上。
+
+首次启动会把老用户媒体根里的这些目录搬到运行根（`migrate::runtime_once`）：
+先复制、校验文件数与字节数、一致才删源；任何一步不对就丢副本保源。搬完写
+`.runtime-migrated.json`，之后不再搬。目标已存在且非空则跳过，不覆盖。
+
+macOS 上媒体根常落在「文稿」或外挂卷上，那要「完全磁盘访问权限」。没授权时
+`open()` 会**同步卡死**而不是报错，所以有 `paths::spawn_library_probe` 看门狗兜底，
+细节见 `docs/PLATFORMS.md` 第八节。
+
 ## 怎么证明它跟 Python 一样
 
 判据是**响应字节**，不是"看着差不多"。

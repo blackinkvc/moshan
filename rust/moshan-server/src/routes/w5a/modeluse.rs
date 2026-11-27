@@ -350,6 +350,30 @@ async fn probe_ollama(port: u16) -> Option<Vec<Value>> {
     )
 }
 
+/// 从名字里挑「7B / 4.5B / 30M」这种参数量。
+///
+/// Python 版是 `(?<![\d.])(\d{1,3}(?:\.\d)?)\s*([BM])(?![a-z])`，但 `regex` crate
+/// **不支持前后瞻**，`Regex::new` 会 panic（不是返回 Err，是 panic —— 整个请求线程跟着死，
+/// 表现成连接被直接掐断、curl 拿到空响应）。所以改成「先按主体匹配，再在代码里判边界」。
+fn size_of(stem: &str) -> String {
+    use std::sync::OnceLock;
+    static R: OnceLock<regex::Regex> = OnceLock::new();
+    let re = R.get_or_init(|| regex::Regex::new(r"(?i)(\d{1,3}(?:\.\d)?)\s*([BM])").unwrap());
+    for c in re.captures_iter(stem) {
+        let m = c.get(0).unwrap();
+        // 前一个字符不能是数字或点：`4.5B` 里的 `5B` 不该再算一次。
+        let before_ok = m.start() == 0
+            || !matches!(stem[..m.start()].chars().next_back(), Some(ch) if ch.is_ascii_digit() || ch == '.');
+        // 后一个字符不能是小写字母：否则 `1bit` 会被当成 `1B`。
+        let after_ok = m.end() == stem.len()
+            || !matches!(stem[m.end()..].chars().next(), Some(ch) if ch.is_ascii_lowercase());
+        if before_ok && after_ok {
+            return format!("{}{}", &c[1], c[2].to_uppercase());
+        }
+    }
+    String::new()
+}
+
 fn pretty(path: &str) -> (String, String, String) {
     let base = path.trim().rsplit(['/', '\\']).next().unwrap_or(path.trim()).to_string();
     let stem = regex::Regex::new(r"(?i)\.(gguf|safetensors|bin|pt|pth|mlx)$")
@@ -361,11 +385,7 @@ fn pretty(path: &str) -> (String, String, String) {
         .captures(&stem)
         .map(|c| c.get(1).unwrap().as_str().to_uppercase())
         .unwrap_or_default();
-    let size = regex::Regex::new(r"(?i)(?<![\d.])(\d{1,3}(?:\.\d)?)\s*([BM])(?![a-z])")
-        .unwrap()
-        .captures(&stem)
-        .map(|c| format!("{}{}", c.get(1).unwrap().as_str(), c.get(2).unwrap().as_str().to_uppercase()))
-        .unwrap_or_default();
+    let size = size_of(&stem);
     let name = if stem.is_empty() { path.to_string() } else { stem };
     (name, quant, size)
 }

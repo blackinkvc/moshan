@@ -460,7 +460,7 @@ pub fn tasks_view(ctx: &Ctx, range_key: &str) -> Value {
         put(&mut buckets, "TRAE", &task, "", &str_or(row.get("source")), "", "", None);
     }
     // 3) TRAE 逐轮
-    for it in sessions::trae_items(&ctx.library_dir, since_ms) {
+    for it in sessions::trae_items(&ctx.runtime_dir, since_ms) {
         let srcs = it.get("sources").and_then(|v| v.as_array()).cloned().unwrap_or_default();
         let has_cmd = srcs.iter().any(|s| str_or(s.get("name")) == "命令记录");
         let task = str_or(it.get("task"));

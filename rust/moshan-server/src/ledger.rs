@@ -19,7 +19,8 @@ pub fn root(ctx: &Ctx) -> PathBuf {
 }
 
 pub fn ledger_dir(ctx: &Ctx) -> PathBuf {
-    root(ctx).join(DIR_NAME)
+    // 账本属于运行数据：分盘后跟运行根走，图片仍留在媒体根。
+    crate::paths::rt_join(ctx, DIR_NAME)
 }
 
 fn ensure(ctx: &Ctx) -> PathBuf {
@@ -315,8 +316,23 @@ pub fn image_file(ctx: &Ctx, iid: &str, raw: bool) -> Option<PathBuf> {
     if rel.is_empty() {
         return None;
     }
-    let p = root(ctx).join(rel);
-    p.is_file().then_some(p)
+    // 账本里的 image/raw 是**相对数据根**的路径（如 `12-记账/图/x.jpg`）。
+    // 设计上图片留在媒体根，但双根分离时 `migrate::runtime_once` 会把整个
+    // `12-记账`（含 图/原图）搬进运行根 —— 只认媒体根就会 404。
+    // 两个根都试；两个根相同时第二次是无害的重复。
+    // 先挡住绝对路径与 `..`：这个字段来自账本 JSON，不该让它跳出数据根。
+    let relp = Path::new(rel);
+    if relp.is_absolute() || relp.components().any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return None;
+    }
+    for base in [root(ctx), ctx.runtime_dir.clone()] {
+        let p = base.join(relp);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
 }
 
 pub fn truthy(v: Option<&Value>) -> bool {

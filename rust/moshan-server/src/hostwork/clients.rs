@@ -68,7 +68,7 @@ pub fn trae_client_view(ctx: &Ctx, days: i64) -> Option<Value> {
     } else {
         0.0
     };
-    let raw = sessions::trae_items(&ctx.library_dir, since);
+    let raw = sessions::trae_items(&ctx.runtime_dir, since);
     if raw.is_empty() {
         return None;
     }
@@ -316,7 +316,7 @@ pub fn clients_view(ctx: &Ctx, days: i64) -> Vec<Value> {
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    let icon_dir = ctx.library_dir.join("_本机工作").join("图标");
+    let icon_dir = ctx.runtime_dir.join("_本机工作").join("图标");
     for c in out.iter_mut() {
         let cid = str_or(c.get("id"));
         let pv = client_proc(&icon_dir, &cid, &apps);

@@ -79,6 +79,11 @@ pub struct Config {
     pub port: Option<u16>,
     #[serde(default)]
     pub plain_port: Option<u16>,
+    /// 收件箱绝对路径。壳用它判断「这个端口上应答的到底是不是这台机器该用的那份数据」：
+    /// 只看 HTTP 200 会把残留的测试实例当成自己（实测 8325 被 `dbg-rl-*` 临时目录的实例占着，
+    /// 壳就一路复用它，自己那份服务压根没起，页面读的是临时目录）。
+    #[serde(default)]
+    pub inbox_dir: String,
 }
 
 impl Config {

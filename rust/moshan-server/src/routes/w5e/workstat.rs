@@ -75,7 +75,7 @@ fn wb_root() -> PathBuf {
 }
 
 fn own_dir(ctx: &Ctx) -> PathBuf {
-    ctx.library_dir.join("_本机工作")
+    ctx.runtime_dir.join("_本机工作")
 }
 
 fn cache_dir(ctx: &Ctx) -> PathBuf {
@@ -1665,7 +1665,7 @@ pub fn view(ctx: &Ctx, days_in: i64, day_in: &str, fresh: bool, rebuild: bool) -
     let since_date = NaiveDate::parse_from_str(&since_day, "%Y-%m-%d").unwrap_or(today);
     let screen_days = days.max((today - since_date).num_days() + 1);
 
-    let mut bundle = fold(&state, &since_day, &ctx.library_dir);
+    let mut bundle = fold(&state, &since_day, &ctx.runtime_dir);
     let sc = screen::screen(&ctx.library_dir, screen_days);
     with_screen(&mut bundle, &sc, &since_day);
     let days_map = absorb(ctx, &bundle, rebuild);

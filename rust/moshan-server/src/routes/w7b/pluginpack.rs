@@ -28,7 +28,7 @@ fn plugins_dir(ctx: &Ctx) -> PathBuf {
 }
 
 fn plugins_json(ctx: &Ctx) -> PathBuf {
-    data_root(ctx).join("_工作台").join("plugins.json")
+    crate::paths::workbench_dir(ctx).join("plugins.json")
 }
 
 fn cache_file(ctx: &Ctx) -> PathBuf {

@@ -325,11 +325,11 @@ fn home_dir() -> PathBuf {
 }
 
 fn hourly_path(ctx: &crate::paths::Ctx) -> PathBuf {
-    cards::root(ctx).join("_本机工作").join("缓存").join("小时.json")
+    crate::paths::rt_join(ctx, "_本机工作").join("缓存").join("小时.json")
 }
 
 fn agents_usage_path(ctx: &crate::paths::Ctx) -> PathBuf {
-    cards::root(ctx).join("_工作台").join("agents").join("usage.jsonl")
+    crate::paths::rt_join(ctx, "_工作台").join("agents").join("usage.jsonl")
 }
 
 /// `_hour_render`：补 24 个空桶，按文件迭代顺序聚合（键序照扫到的先后）。

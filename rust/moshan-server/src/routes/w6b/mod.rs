@@ -62,15 +62,9 @@ pub(crate) fn write_json_indent(p: &Path, v: &Value, indent: usize) -> std::io::
 ///
 /// 与 `Ctx::allowed_roots` 的兜底一致（那里配置空时已退回 library_dir）。
 pub(crate) fn data_root(ctx: &Ctx) -> PathBuf {
-    let roots = ctx.allowed_roots();
-    match roots.first() {
-        Some(p) if !p.as_os_str().is_empty() => p.clone(),
-        _ => ctx
-            .inbox_dir()
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| ctx.library_dir.clone()),
-    }
+    // 整个 w6b（Agent 总线、工作台插件、pair/transfer 的记录）都是运行数据，
+    // 一条媒体路径都没有 —— 所以这里直接给运行根，别再回落 media。
+    ctx.runtime_dir.clone()
 }
 
 // ---------------------------------------------------------------- FastAPI 形状

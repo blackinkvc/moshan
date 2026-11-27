@@ -81,6 +81,7 @@ fn describe(ctx: &Ctx) -> Value {
     d.insert("app_dir".into(), json!(ctx.app_dir.to_string_lossy()));
     d.insert("state_dir".into(), json!(ctx.state_dir.to_string_lossy()));
     d.insert("library_dir".into(), json!(ctx.library_dir.to_string_lossy()));
+    d.insert("runtime_dir".into(), json!(ctx.runtime_dir.to_string_lossy()));
     d.insert(
         "config".into(),
         json!(ctx.state_dir.join("config.json").to_string_lossy()),
@@ -404,6 +405,40 @@ pub async fn apply(State(ctx): CtxState, body: Option<Json<Value>>) -> Response 
         moved = true;
     }
 
+    // ---- 运行数据目录（账目/日志/缓存/工作台）：与媒体根分开存
+    let want_rt = s(&body, "runtime_dir").trim().to_string();
+    let old_rt = obj
+        .get("runtime_dir")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let mut rt_report = Value::Null;
+    if !want_rt.is_empty() && want_rt != old_rt {
+        if let Err(e) = std::fs::create_dir_all(&want_rt) {
+            return Json(json!({
+                "ok": false,
+                "error": format!("运行数据目录建不出来：{e}"),
+            }))
+            .into_response();
+        }
+        // 从哪儿搬：原来显式配过就按原来那个，否则就是媒体根里的老目录。
+        let from = if !old_rt.is_empty() {
+            PathBuf::from(&old_rt)
+        } else {
+            obj.get("library_dir")
+                .and_then(|v| v.as_str())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| ctx.library_dir.clone())
+        };
+        let to = PathBuf::from(&want_rt);
+        obj.insert("runtime_dir".into(), json!(to.to_string_lossy()));
+        // 搬迁是同步文件 IO（可能几十 MB），别堵住请求线程。
+        rt_report = tokio::task::spawn_blocking(move || crate::migrate::adopt(&from, &to))
+            .await
+            .unwrap_or(Value::Null);
+    }
+
     if let Some(parent) = p.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -422,7 +457,19 @@ pub async fn apply(State(ctx): CtxState, body: Option<Json<Value>>) -> Response 
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .unwrap_or_else(|| ctx.library_dir.to_string_lossy().to_string());
-    Json(json!({"ok": true, "moved_hint": moved, "library_dir": lib})).into_response()
+    let rt = cur
+        .get("runtime_dir")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| ctx.runtime_dir.to_string_lossy().to_string());
+    Json(json!({
+        "ok": true,
+        "moved_hint": moved,
+        "library_dir": lib,
+        "runtime_dir": rt,
+        "migrate": rt_report,
+    }))
+    .into_response()
 }
 
 pub async fn finish(State(ctx): CtxState) -> Response {

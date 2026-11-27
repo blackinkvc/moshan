@@ -17,6 +17,7 @@ mod imaging;
 mod jsonio;
 mod ledger;
 mod live;
+mod migrate;
 mod paths;
 mod proxy;
 mod routes;
@@ -34,7 +35,11 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 
-#[tokio::main]
+// 线程数不是性能参数，是**可用性**参数：macOS 的隐私授权会把 `open()` 卡在内核里不返回，
+// 而不少处理器是直接在 worker 上做文件 IO 的。10 核默认 10 个 worker，首屏那十来个请求
+// 正好能把它们全占满 —— 之后 `/api/ping` 都排不上队，整页看起来就是死了。
+// 给足余量，让「读不动的那些」卡住时其它请求还能照常应答。
+#[tokio::main(flavor = "multi_thread", worker_threads = 32)]
 async fn main() {
     // rustls 0.23 要求进程里只有一个默认 provider；但这个构建的依赖树同时打开了
     // ring 与 aws-lc-rs（reqwest 那条），`ServerConfig::builder()` 会直接 panic。
@@ -55,6 +60,13 @@ async fn main() {
     };
 
     let mut loaded = paths::Ctx::load();
+
+    // 绑定端口前先确认媒体根能不能读：macOS 没授权时 `open()` 是同步卡死的，
+    // 让第一个请求去撞它等于挂死整页。等最多 3 秒换一个确定结论。详见 paths.rs 看门狗。
+    paths::set_library_root(&loaded.library_dir);
+    if explicit.is_none() {
+        paths::probe_early(&loaded.library_dir);
+    }
 
     // ---- 对拍/测试路径：只绑 127.0.0.1 明文，不 TLS、不额外监听。
     //      整条 GET 对拍链都靠这条路径，改了全线红。
@@ -81,6 +93,7 @@ async fn main() {
             ctx.upstream.as_deref().unwrap_or("（无，未迁路由将 404）"),
             ctx.state_dir.display()
         );
+        start_background(ctx.clone());
         axum::serve(listener, app)
             .with_graceful_shutdown(async {
                 let _ = tokio::signal::ctrl_c().await;
@@ -278,6 +291,9 @@ async fn main() {
         eprintln!("[moshan-rs] 监听 {proto}://{}", b.addr);
     }
     boot::announce(scheme, port, local_port, &token);
+
+    // 端口都绑好了 —— 现在才起后台循环，且在线程里跑（见 start_background 的注释）。
+    start_background(ctx.clone());
 
     // ---- 各自跑，ctrl_c 一起收 ------------------------------------------
     let (stop_tx, stop_rx) = watch::channel(false);
@@ -484,12 +500,51 @@ fn build_app(ctx: Arc<paths::Ctx>) -> Router {
     // ---- 其余未迁路由：镜像给 Python，行为完全不变
     let app = app.fallback(proxy::forward).with_state(ctx.clone());
 
-    // 后台调度器：心跳/采样/巡检/OCR 各自按 Python 的节奏跑。
-    // 放在监听之后起，是为了让 `/api/ping` 立刻可用（探针不看调度器）。
-    #[cfg(feature = "lane_w5d")]
-    routes::w5d::spawn(ctx);
-
     app
+}
+
+/// 起后台调度器：心跳/采样/巡检/OCR/简报推送。
+///
+/// **必须在端口绑成功之后调用**，而且要在独立线程里 —— 这两个约束都是踩出来的：
+/// `heartbeat::start` 第一件事就是往 `app_dir/pocket.jsonl` 追加一行，那是同步文件 IO。
+/// 从 GUI（launchd）启动时，`app_dir` 往往落在 ~/Documents 或外挂卷上，macOS 的 TCC
+/// 会弹「想访问…」的授权框，而 `open()` 会一直等用户点。以前这段写在 `build_app` 里，
+/// 结果就是：弹窗没人点 → 主线程卡在 open → 端口一个都没绑 → 窗口白屏，
+/// 用户还以为应用坏了。放到绑定之后的独立线程里，端口先能服务，授权框慢慢点。
+fn start_background(ctx: Arc<paths::Ctx>) {
+    // 媒体根看门狗：没被系统隐私授权时 `open()` 会同步卡死，必须先在后台探出来，
+    // 否则请求会一条条堆在 `open()` 里永远不返回。详见 `paths::spawn_library_probe`。
+    paths::spawn_library_probe(ctx.library_dir.clone());
+
+    // 先把「运行数据」从媒体根搬到 runtime_dir 一次（老用户升级路径）。
+    // 与调度器同在后台线程：源目录可能在 ~/Documents，读它会等 TCC 授权。
+    let mig = ctx.clone();
+    std::thread::Builder::new()
+        .name("moshan-migrate".into())
+        .spawn(move || {
+            let r = migrate::runtime_once(&mig);
+            if r.get("skipped").and_then(|v| v.as_bool()).unwrap_or(false) {
+                return;
+            }
+            let moved = r.get("moved").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+            let failed = r.get("failed").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            if moved > 0 || !failed.is_empty() {
+                eprintln!(
+                    "[moshan-rs] 运行数据搬迁：{} 个目录就位{}",
+                    moved,
+                    if failed.is_empty() { String::new() } else { format!("，{} 个跳过（详见 {}/.runtime-migrated.json）", failed.len(), mig.runtime_dir.display()) }
+                );
+            }
+        })
+        .ok();
+
+    #[cfg(feature = "lane_w5d")]
+    std::thread::Builder::new()
+        .name("moshan-sched".into())
+        .spawn(move || routes::w5d::spawn(ctx))
+        .ok();
+    #[cfg(not(feature = "lane_w5d"))]
+    let _ = ctx;
 }
 
 /// `MOSHAN_*` 这类开关只认「非空且不是 0/false」——与 Python 侧读环境变量的口径一致。

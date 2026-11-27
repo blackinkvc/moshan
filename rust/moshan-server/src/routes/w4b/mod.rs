@@ -404,12 +404,15 @@ async fn notes_read(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Respo
         return r;
     }
     let ctx2 = ctx.clone();
-    let out = tokio::task::spawn_blocking(move || notes::read_notes(&ctx2))
-        .await
-        .unwrap_or_else(|_| {
-            json!({"todos": [], "events": [], "memo": [], "diary": {}, "updated_at": "",
-                   "error": "RuntimeError: handler panicked"})
-        });
+    let job = tokio::task::spawn_blocking(move || notes::read_notes(&ctx2));
+    // 兜底时限：媒体根被系统授权卡住时读盘线程会永久停在 `open()`，别让页面跟着转圈。
+    let out = match tokio::time::timeout(std::time::Duration::from_secs(6), job).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(_)) => json!({"todos": [], "events": [], "memo": [], "diary": {}, "updated_at": "",
+                             "error": "RuntimeError: handler panicked"}),
+        Err(_) => json!({"todos": [], "events": [], "memo": [], "diary": {}, "updated_at": "",
+                         "error": "数据目录暂时读不到（系统隐私授权未通过）"}),
+    };
     Json(out).into_response()
 }
 

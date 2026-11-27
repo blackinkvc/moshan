@@ -91,6 +91,10 @@ fn escape_into(s: &str, out: &mut String) {
 /// `_atomic_write`：先写临时文件再 replace，别让半截 JSON 留在盘上。
 /// 账本是**唯一真源**，写坏了等于所有记录全丢。
 pub fn atomic_write(path: &Path, text: &str) -> std::io::Result<()> {
+    // 读不到就别写：空内容落盘会把真数据覆盖掉。
+    if crate::paths::deny_library_read(path) {
+        return Ok(());
+    }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -107,5 +111,10 @@ pub fn atomic_write(path: &Path, text: &str) -> std::io::Result<()> {
 
 /// 读 JSON；缺失/损坏一律回默认值（Python 的 `_load_json` 就是这么做的）。
 pub fn read_json(path: &Path) -> Option<Value> {
+    // 媒体根被系统授权卡住时 `open()` 不返回；这道闸让「读」直接变「没有」。
+    // 闸设在这里而不是每个调用点：走 jsonio 的模块太多，逐个数一定会漏。
+    if crate::paths::deny_library_read(path) {
+        return None;
+    }
     std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok())
 }

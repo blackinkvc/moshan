@@ -48,7 +48,10 @@
     ],
     "resources": {
       "../LICENSE-MIT": "licenses/LICENSE-MIT",
-      "../LICENSE-APACHE": "licenses/LICENSE-APACHE"
+      "../LICENSE-APACHE": "licenses/LICENSE-APACHE",
+      "../moshan/dash.html": "assets/dash.html",
+      "../moshan/ui.html": "assets/ui.html",
+      "../moshan/hostwork_ui.html": "assets/hostwork_ui.html"
     },
     "macOS": {
       "minimumSystemVersion": "12.0"

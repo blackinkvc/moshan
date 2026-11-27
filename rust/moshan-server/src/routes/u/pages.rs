@@ -112,7 +112,7 @@ fn ensure_page(p: &SysPath, src: &SysPath) {
 }
 
 pub async fn dash(State(ctx): CtxState) -> Response {
-    let p = data_root(&ctx.cfg).join("_工作台").join("dash.html");
+    let p = crate::paths::workbench_dir(ctx.as_ref()).join("dash.html");
     ensure_page(&p, &ctx.app_dir.join("dash.html"));
     if !p.exists() {
         let body = format!(
@@ -162,7 +162,7 @@ pub async fn agent(State(ctx): CtxState) -> Response {
     let root = data_root(&ctx.cfg);
     let root_s = root.to_string_lossy().to_string();
     let body = AGENT_README.replace("@@ROOT@@", &root_s);
-    let readme = root.join("_工作台").join("agents").join("README.md");
+    let readme = crate::paths::rt_join(ctx.as_ref(), "_工作台").join("agents").join("README.md");
     if let Some(parent) = readme.parent() {
         if parent.exists() {
             let _ = std::fs::write(&readme, body.as_bytes());
@@ -208,7 +208,7 @@ pub async fn hostwork(State(ctx): CtxState) -> Response {
 // ---------------------------------------------------------------- 手机接入
 
 pub async fn pair(State(ctx): CtxState) -> Response {
-    let p = data_root(&ctx.cfg).join("_工作台").join("pair.html");
+    let p = crate::paths::workbench_dir(&ctx).join("pair.html");
     if !p.exists() {
         let body = format!(
             "<meta charset='utf-8'><body style='font:15px -apple-system;padding:40px'>\
@@ -245,7 +245,7 @@ pub async fn docs(State(ctx): CtxState, Path(name): Path<String>) -> Response {
         "gloss" => "gloss.html",
         _ => return http_err(404, "没有这份文档"),
     };
-    let p = data_root(&ctx.cfg).join("_工作台").join("docs").join(fn_name);
+    let p = crate::paths::workbench_dir(&ctx).join("docs").join(fn_name);
     if !p.exists() {
         let body = format!(
             "<meta charset='utf-8'><body style='font:15px -apple-system;padding:40px'>\

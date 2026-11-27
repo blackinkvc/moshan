@@ -31,6 +31,7 @@
        text-align:center;justify-content:center;flex:0 0 auto}
   .hint{color:var(--tx2);font-size:13.5px;margin:2px 0 14px}
   .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .picklbl{font-size:13px;color:var(--tx2);min-width:66px}
   .tag{font:12px/1 var(--mono);padding:4px 9px;border-radius:6px;
        border:1px solid var(--line);color:var(--tx2)}
   .tag.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,var(--line))}
@@ -164,13 +165,25 @@
 
   <div class="step">
     <h2><span class="num">3</span>数据存哪里</h2>
-    <p class="hint">你的文件、账目、笔记都放这个目录下。换盘就点「换一个位置」，会建在新位置上、不会搬旧数据。</p>
+    <p class="hint">两类数据分开存：<b>媒体与文件</b>（存图、影音、阅读原文、研究资料）体积大、写得少，
+      放外挂盘或资料盘；<b>运行数据</b>（账目、流水、日志、缓存、工作台、巡检）文件小、写得频繁，
+      放系统盘最稳。换位置后会在新目录建好骨架，并把旧目录里的运行数据搬过去。</p>
+
     <div class="row">
-      <input type="text" id="libDir" readonly style="flex:1;min-width:240px">
+      <span class="picklbl">媒体与文件</span>
+      <input type="text" id="libDir" readonly style="flex:1;min-width:200px">
       <button class="ghost mini" id="pickBtn">换一个位置</button>
       <button class="ghost mini" id="resetBtn">用默认</button>
     </div>
     <div class="kv" id="libHint"></div>
+
+    <div class="row" style="margin-top:12px">
+      <span class="picklbl">运行数据</span>
+      <input type="text" id="rtDir" readonly style="flex:1;min-width:200px">
+      <button class="ghost mini" id="pickRtBtn">换一个位置</button>
+      <button class="ghost mini" id="resetRtBtn">用默认</button>
+    </div>
+    <div class="kv" id="rtHint"></div>
   </div>
 
   <div class="step">
@@ -212,6 +225,7 @@ const TOKEN = "__TOKEN__";
 const $ = (s) => document.querySelector(s);
 let ollamaOk = false;
 let libDefault = "";
+let rtDefault = "";
 
 const FEATS = [
   {id:"pocket", name:"存图收藏",  desc:"公众号 / 小红书链接存成图集"},
@@ -274,11 +288,14 @@ async function loadEnv(){
       '<b>'+k+'</b><span class="path">'+(v||"-")+'</span>'); };
     add("程序", d.app_dir);
     add("配置", d.config);
-    add("数据", d.library_dir);
+    add("媒体", d.library_dir);
+    add("运行", d.runtime_dir);
 
     libDefault = d.library_dir || "";
+    rtDefault = d.runtime_dir || "";
     $("#libDir").value = libDefault;
-    paintLibHint();
+    $("#rtDir").value = rtDefault;
+    paintLibHint(); paintRtHint();
   }catch(e){
     row.appendChild(tag("检测失败：" + e.message, "bad"));
   }
@@ -286,10 +303,20 @@ async function loadEnv(){
 
 function paintLibHint(){
   const h = $("#libHint");
-  const changed = $("#libDir").value && libDefault && $("#libDir").value !== libDefault;
+  const v = $("#libDir").value;
+  const changed = v && libDefault && v !== libDefault;
   h.innerHTML = '<b>默认</b><span class="path">' + (libDefault || "-") + '</span>'
-    + '<b>占用</b><span>只增不减地放你自己的文件；会话摘要那份按 300 字节/会话算，一万个会话约 3 MB</span>'
-    + (changed ? '<b>改动</b><span style="color:var(--warn)">保存后重启一次中台才完全生效（旧目录不删）</span>' : '');
+    + '<b>放什么</b><span>存图、影音、阅读原文、研究资料、收件箱 —— 只增不减，占空间的大头</span>'
+    + (changed ? '<b>改动</b><span style="color:var(--warn)">保存后重启一次中台才完全生效（旧文件不搬、不删）</span>' : '');
+}
+
+function paintRtHint(){
+  const h = $("#rtHint");
+  const v = $("#rtDir").value;
+  const changed = v && rtDefault && v !== rtDefault;
+  h.innerHTML = '<b>默认</b><span class="path">' + (rtDefault || "-") + '</span>'
+    + '<b>放什么</b><span>账目、流水、系统记录、工作台、缓存、巡检、虫巢、传输中转</span>'
+    + (changed ? '<b>改动</b><span style="color:var(--warn)">保存时把旧目录里的这些文件夹搬过去（先复制、校验通过再删源）</span>' : '');
 }
 
 /* —— 模型来源三选 ——
@@ -477,7 +504,8 @@ async function saveThenEnter(){
     features: picked(),
     use_llm: $("#useLlm").checked,
     model: $("#model").value.trim(),
-    library_dir: $("#libDir").value.trim()
+    library_dir: $("#libDir").value.trim(),
+    runtime_dir: $("#rtDir").value.trim()
   };
   try{
     const r = await api("/welcome/apply", body);
@@ -505,6 +533,16 @@ $("#pickBtn").addEventListener("click", async () => {
 });
 $("#resetBtn").addEventListener("click", () => {
   $("#libDir").value = libDefault; paintLibHint();
+});
+$("#pickRtBtn").addEventListener("click", async () => {
+  try{
+    const r = await api("/welcome/pickdir", {});
+    if(r && r.ok){ $("#rtDir").value = r.path; paintRtHint(); }
+    else if(r && r.error && !r.cancelled) alert(r.error);
+  }catch(e){ alert("选择器打不开：" + e.message); }
+});
+$("#resetRtBtn").addEventListener("click", () => {
+  $("#rtDir").value = rtDefault; paintRtHint();
 });
 $("#useLlm").addEventListener("change", (e) => {
   $("#llmBody").hidden = !e.target.checked;

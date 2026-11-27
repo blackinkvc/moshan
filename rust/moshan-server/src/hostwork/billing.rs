@@ -94,7 +94,7 @@ fn provider_of(id: &str) -> Option<&'static Provider> {
 }
 
 pub fn store_path(ctx: &Ctx) -> PathBuf {
-    ctx.library_dir.join("_本机工作").join("计费账号.json")
+    ctx.runtime_dir.join("_本机工作").join("计费账号.json")
 }
 
 /// `_read()`：缺失/损坏给 {"accounts": []}。

@@ -105,21 +105,11 @@ pub fn suffix_of(p: &Path) -> String {
     }
 }
 
-/// `_root(cfg)`（extplugins / pluginpack 同一套）：allowed_roots[0]，
-/// 否则 inbox_dir 的父目录。
+/// 运行数据根（程序包 / 插件包 / 扩展清单 / 图标缓存都在它下面）。
 pub fn data_root(cfg: &Value) -> PathBuf {
-    if let Some(arr) = cfg.get("allowed_roots").and_then(|v| v.as_array()) {
-        if let Some(first) = arr.first().and_then(|v| v.as_str()) {
-            if !first.trim().is_empty() {
-                return expanduser(first);
-            }
-        }
-    }
-    let inbox = cfg.get("inbox_dir").and_then(|v| v.as_str()).unwrap_or(".");
-    expanduser(inbox)
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."))
+    // w7a 只碰运行数据（程序包、插件包、扩展清单、图标缓存），走运行根。
+    // 「allowed_roots[0] → 收件箱上级」那套推导仍存在于 w4b::util，按媒体根算。
+    crate::paths::runtime_dir(cfg)
 }
 
 // ---------------------------------------------------------------- JSON

@@ -5,6 +5,7 @@
 pub mod apps;
 pub mod fleet;
 pub mod perms;
+pub mod px;
 pub mod util;
 
 use crate::paths::Ctx;
@@ -54,6 +55,9 @@ pub fn router() -> Router<Arc<Ctx>> {
         .route("/api/apps/update", post(apps::update))
         .route("/api/apps/remove", post(apps::remove))
         .route("/api/apps/icon", get(apps::icon))
+        // ---- 插件反代（`/px/<id>/…`）：插件的 iframe 与「在中台里打开」都靠它。
+        //      Python 在 `server.py:2550` 单独注册过一条，Rust 迁漏了。
+        .merge(px::router())
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
 }
 

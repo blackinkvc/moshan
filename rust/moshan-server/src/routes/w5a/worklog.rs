@@ -1054,7 +1054,7 @@ fn media_items(ctx: &Ctx, urls: &[(String, String)]) -> Vec<Value> {
 
 /// `_app_items`：本机 App 的开关 / 闪退 / 卡住。
 fn app_items(ctx: &Ctx, _urls: &[(String, String)]) -> Vec<Value> {
-    let rows = tail_jsonl(&cards::root(ctx).join("10-系统记录").join("App事件.jsonl"), 400);
+    let rows = tail_jsonl(&crate::paths::rt_join(ctx, "10-系统记录").join("App事件.jsonl"), 400);
     if rows.is_empty() {
         return Vec::new();
     }
@@ -1398,6 +1398,14 @@ fn manual_host_items(ctx: &Ctx) -> Vec<Value> {
 
 /// `_worklog`：两张卡、两份账，不互相掺。
 pub fn worklog(ctx: &Ctx) -> Value {
+    // 流水会读媒体根上的 17-游戏 等目录；没授权时 `open()` 会卡死，先退空页。
+    if !crate::paths::library_ready() {
+        return json!({
+            "items": [], "host": [], "clients": [], "plugins": [],
+            "total": 0, "runs": 0, "ok": 0, "fail": 0, "skip": 0, "ai": 0,
+            "at": sval(&now_ymd_hms()),
+        });
+    }
     let auto = auto_worklog(ctx);
     let mut merged = auto.clone();
     merged.extend(plugin_items(ctx));
@@ -1583,9 +1591,18 @@ pub async fn worklog_read(State(ctx): CtxState, headers: HeaderMap, uri: Uri) ->
         return r;
     }
     let c = ctx.clone();
-    match tokio::task::spawn_blocking(move || worklog(&c)).await {
-        Ok(v) => Json(v).into_response(),
-        Err(e) => http_err(500, &format!("internal error: {e}")),
+    let job = tokio::task::spawn_blocking(move || worklog(&c));
+    // 兜底时限，理由同 `w4b::notes`：媒体根读不动时别让页面一直转圈。
+    match tokio::time::timeout(std::time::Duration::from_secs(6), job).await {
+        Ok(Ok(v)) => Json(v).into_response(),
+        Ok(Err(e)) => http_err(500, &format!("internal error: {e}")),
+        Err(_) => Json(serde_json::json!({
+            "items": [], "host": [], "clients": [], "plugins": [],
+            "total": 0, "runs": 0, "ok": 0, "fail": 0, "skip": 0, "ai": 0,
+            "at": now_ymd_hms(),
+            "error": "数据目录暂时读不到（系统隐私授权未通过）",
+        }))
+        .into_response(),
     }
 }
 

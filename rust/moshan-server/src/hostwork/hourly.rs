@@ -321,11 +321,11 @@ fn home_dir() -> PathBuf {
 }
 
 fn hourly_path(ctx: &crate::paths::Ctx) -> PathBuf {
-    ctx.library_dir.join("_本机工作").join("缓存").join("小时.json")
+    ctx.runtime_dir.join("_本机工作").join("缓存").join("小时.json")
 }
 
 pub fn agents_usage_path(ctx: &crate::paths::Ctx) -> PathBuf {
-    ctx.library_dir.join("_工作台").join("agents").join("usage.jsonl")
+    ctx.runtime_dir.join("_工作台").join("agents").join("usage.jsonl")
 }
 
 /// `hourly_days()`：有哪些天有账（倒序）。

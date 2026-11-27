@@ -39,6 +39,11 @@ fn num(v: &Value) -> f64 {
 // ---------------------------------------------------------------- 存取
 
 fn load(ctx: &Ctx) -> Vec<Value> {
+    // 待定队列在媒体根（04-存图）上。没授权时 `open()` 会卡死；
+    // 这里当作「空队列」，配合 `save` 的同一道闸，绝不会把真数据覆盖成空。
+    if !crate::paths::library_ready() {
+        return Vec::new();
+    }
     let raw = match util::load_json(&pend_path(ctx)) {
         Some(v) => v,
         None => return Vec::new(),
@@ -54,6 +59,9 @@ fn load(ctx: &Ctx) -> Vec<Value> {
 }
 
 fn save(ctx: &Ctx, items: &[Value]) {
+    if !crate::paths::library_ready() {
+        return;
+    }
     let p = pend_path(ctx);
     util::ensure_dir(p.parent().unwrap_or(Path::new(".")));
     let body = json!({"v": 1, "items": items});

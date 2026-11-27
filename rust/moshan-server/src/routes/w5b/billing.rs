@@ -29,7 +29,7 @@ const UA: &str = "cuntu-billing/1.0";
 const TIMEOUT_SECS: u64 = 12;
 
 fn store_path(ctx: &Ctx) -> PathBuf {
-    ctx.library_dir.join("_本机工作").join("计费账号.json")
+    ctx.runtime_dir.join("_本机工作").join("计费账号.json")
 }
 
 /// 供应商登记表。**顺序即表单顺序**，`fields` 的键序也是契约。

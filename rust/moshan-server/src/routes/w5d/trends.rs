@@ -162,6 +162,9 @@ fn legacy_runs_dir(c: &TrendCfg) -> PathBuf {
 
 /// `_read_run(cfg, day)`：读 `runs/<day>.json`，补 `_path` / `_dir` 两个派生字段。
 fn read_run(c: &TrendCfg, day: &str) -> Value {
+    if !crate::paths::library_ready() {
+        return json!({});
+    }
     let p = runs_dir(c).join(format!("{day}.json"));
     if !p.exists() {
         return json!({});

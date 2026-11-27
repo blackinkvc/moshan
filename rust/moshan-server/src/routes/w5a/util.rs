@@ -261,6 +261,11 @@ pub fn ts_to_str(secs: i64) -> String {
 
 /// 读 JSON；缺失/损坏一律 None（Python `_load(path, None)`）。
 pub fn load_json(p: &Path) -> Option<Value> {
+    // 媒体根被系统授权卡住时，`open()` 会永久阻塞；这道闸把「读」直接变成「没有」。
+    // 只挡媒体根下的路径，运行数据根不受影响。见 paths::deny_library_read。
+    if crate::paths::deny_library_read(p) {
+        return None;
+    }
     std::fs::read_to_string(p).ok().and_then(|s| serde_json::from_str(&s).ok())
 }
 

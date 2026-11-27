@@ -409,6 +409,10 @@ static DATA_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::
 static LAST_DUMP: Mutex<Option<(String, f64)>> = Mutex::new(None);
 
 pub fn start_at(dir: std::path::PathBuf) {
+    // 采样线程会持续写 `进程.jsonl`；数据根读不动时先不起，免得一开机就吊在 open() 上。
+    if !crate::paths::library_ready() {
+        return;
+    }
     let _ = DATA_DIR.set(dir);
     start();
 }

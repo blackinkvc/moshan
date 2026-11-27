@@ -23,6 +23,40 @@ fn is_skip_dir(name: &str) -> bool {
     SKIP_DIRS.iter().any(|x| *x == name)
 }
 
+// ---------------------------------------------------------------- 读不到媒体根时
+//
+// 媒体根没被系统授权时 `open()` 会卡在内核里（见 `paths::spawn_library_probe`），
+// 所以这几个块在动手读盘之前先问一句 `library_ready()`，不通就吐同形状的空块：
+// 前端照旧能画，卡片是 0，而不是整页没响应。
+
+fn empty_gallery() -> Value {
+    json!({
+        "articles": 0, "images": 0, "bytes_h": human(0.0),
+        "live": 0, "video": 0, "gif": 0, "today_new": 0,
+        "favs": 0, "authors": 0, "index_at": "", "recent": [],
+    })
+}
+
+fn empty_reader() -> Value {
+    json!({
+        "total": 0, "read": 0, "unread": 0, "pct": fnum(0.0),
+        "chars": 0, "chars_h": "0 字", "favs": 0,
+        "unread_list": [], "recent": [],
+        "today_new": 0, "week_new": 0, "ocr_done": 0, "need_ocr": 0,
+    })
+}
+
+fn empty_media() -> Value {
+    json!({
+        "up": false, "titles": 0, "episodes": 0, "bytes_h": human(0.0),
+        "pending": 0, "library_at": "", "last_at": "", "continue": [],
+    })
+}
+
+fn empty_files() -> Value {
+    json!({"inbox": 0, "today": 0, "today_h": human(0.0), "recent": []})
+}
+
 /// Python `round(x)`（无 ndigits）→ 整数，走二进制真值四舍六入五成双。
 fn round_int(x: f64) -> i64 {
     if !x.is_finite() {
@@ -34,6 +68,9 @@ fn round_int(x: f64) -> i64 {
 // ---------------------------------------------------------------- 04-存图
 
 pub fn gallery(root: &Path) -> Value {
+    if !crate::paths::library_ready() {
+        return empty_gallery();
+    }
     let base = root.join("04-存图");
     let d = load_obj(&base.join("_索引.json"));
     let total = match d.get("total") {
@@ -129,6 +166,9 @@ pub fn gallery(root: &Path) -> Value {
 // ---------------------------------------------------------------- 08-阅读
 
 pub fn reader(root: &Path) -> Value {
+    if !crate::paths::library_ready() {
+        return empty_reader();
+    }
     let base = root.join("08-阅读");
     let read_state = load_obj(&base.join("_已读.json"));
     let read_rels: Vec<String> = match read_state.get("rels") {
@@ -266,6 +306,9 @@ pub fn reader(root: &Path) -> Value {
 // ---------------------------------------------------------------- 02-媒体
 
 pub fn media(root: &Path) -> Value {
+    if !crate::paths::library_ready() {
+        return empty_media();
+    }
     let base = root.join("02-媒体");
     let lib = load_obj(&base.join("_墙").join("library.json"));
     let state = load_obj(&base.join("_墙").join("watch.json"));
@@ -685,6 +728,9 @@ fn llmcost_history(d: &Map<String, Value>) -> Value {
 // ---------------------------------------------------------------- 07-收件箱
 
 pub fn files(root: &Path) -> Value {
+    if !crate::paths::library_ready() {
+        return empty_files();
+    }
     let inbox = root.join("07-收件箱");
     let today = now_ymd();
     let today_dir = inbox.join(&today);

@@ -116,7 +116,8 @@ crate 级模块：`src/sysopen.rs`（打开路径/网址）与 `src/imaging.rs`�
 | 负载（`os.getloadavg`） | 有 | 有 | **没有这个口径**，返回 `null` | `platform::load_avg()`。返回 `None` 而不是 `[0,0,0]`：0 看起来像「机器很闲」，与「没这个指标」是两件事 |
 | 文件 inode（增量扫判「换文件了没」） | `st_ino` | `st_ino` | NTFS 文件索引号（`file_index()`） | `platform::file_inode`；`sim_windows` 在 mac 上取不到 Windows 的 `MetadataExt`，退化成 0（每次当新文件重扫，只影响缓存命中率） |
 | 开机时刻 / 物理内存 / CPU 计数 | `sysctl` + `mach` | `/proc` + `sysconf` | `GetTickCount64` + `GetSystemInfo` | 都在 `hostwork::platform` 里按 `target_os` 分派；`sim_linux` / `sim_windows` 两个 feature 用 `all(unix, not(feature = "sim_windows"))` 这种写法把分支翻到对面，好在 mac 上过类型 |
-| 数据根 | `~/Documents/Moshan` | 同 macOS | 同 macOS | 可用 `MOSHAN_HOME` 或 `config.json` 的 `library_dir` 覆盖；**位置与格式都不许动**，否则用户已有数据会「消失」 |
+| 数据根（媒体） | `~/Documents/Moshan` | 同 macOS | 同 macOS | 可用 `MOSHAN_HOME` 或 `config.json` 的 `library_dir` 覆盖；**位置与格式都不许动**，否则用户已有数据会「消失」 |
+| 数据根（运行） | `~/Library/Application Support/Moshan/data` | `$XDG_STATE_HOME/moshan/data`（缺省 `~/.local/state/moshan/data`） | `%APPDATA%\Moshan\data` | `paths::runtime_dir`；可用 `config.json` 的 `runtime_dir` 覆盖。**账目 / 日志 / 缓存 / 工作台 / 虫巢 / 传输**这些高频小文件归这里，媒体与文章留在上面那个根。首次启动会把老用户媒体根里的这些目录搬过来（先复制、校验文件数与字节数、一致才删源；`.runtime-migrated.json` 写过就不再搬） |
 | 自启动 / 服务安装 | 不做 | 不做 | 不做 | 服务端不写 launchd plist、systemd unit 或计划任务；自启由安装包 / 桌面壳负责（mac `.app`、Windows NSIS、Linux `.deb`/AppImage 的桌面项）。代码里对 `LaunchAgents` 的读取只用于「某个外部插件有没有注册」，不是安装逻辑 |
 
 ---
@@ -166,3 +167,32 @@ python3 scripts/rust-portability.py            # 加 --ci 则命中即退出 1
 | 安装包展示 | `tauri.conf.json` 的 `bundle.licenseFile`，并把两份全文打进 `bundle.resources` |
 | 新增 Rust 源码 | 每个文件头两行：`SPDX-License-Identifier: MIT OR Apache-2.0` + 职责/不做 |
 | README / 关于页 | 徽章与结尾改为 `MIT OR Apache-2.0`，链接分别指向两份全文 |
+
+---
+
+## 八、macOS 隐私授权与「静默卡死」
+
+媒体根默认在 `~/Documents/Moshan`，用户常把 `02-媒体` / `04-存图` 软链到外挂卷。
+这两处都在 macOS 的 TCC 管辖下（「文稿」文件夹、可移除宗卷）。**没授权的进程拿到的
+不是 `EPERM`，而是 `open()` 直接停在核心里等授权结果** —— 表现为接口一直不返回、
+超时也拿不到错误，而不是报错。
+
+2026-11-27 实测：一个没授权的 `.app` 进程里 10 条线程同时停在内核 `open()` 上，
+`/api/dash`、`/api/notes`、`/api/worklog` 全部无响应，只读运行数据根的 `/api/ledger`、
+`/api/brief` 却毫秒级返回。用同一份 sidecar 二进制从终端起（终端早有授权）跑同样的
+路径，全部 200 —— 所以「是不是文件太大 / 卷坏了 / 代码死锁」都排除掉了，就是对进程
+身份的授权问题。
+
+两条应对，缺一不可：
+
+1. **用户侧**：系统设置 → 隐私与安全性 → 完全磁盘访问权限，勾上 `Moshan.app`，重启 app。
+   走「完全磁盘访问权限」而不是等弹窗，是因为 ad-hoc 签名每次重签都会换 cdhash，
+   弹窗那条授权在重签后会失效，而 FDA 可以一次给到底。
+2. **代码侧**：`paths::spawn_library_probe` 在后台探媒体根（4 秒超时），探不通就置
+   `blocked`；所有要读媒体根的入口（`images::{gallery,reader,media,files}`、`notes`、
+   `pending` 的读写、`worklog`、日报 `report::run`、趋势 `read_run`）先问
+   `library_ready()`，不通就返回同形状的空块 / 跳过写盘。**写盘入口跳过是关键**：
+   读空后再落盘会把用户真数据覆盖成空清单。
+
+改这里的红线：不要为了「让它先跑起来」把 `library_ready()` 的默认值改成 `false`，
+也不要删掉写盘那道闸。看门线程重试 10 次后停止，授权后需重启 app。

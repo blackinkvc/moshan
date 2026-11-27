@@ -366,11 +366,11 @@ pub const SOURCE_TAG: &str = "导入";
 pub const REG_NAME: &str = "Agent数据源.json";
 
 fn note_path(ctx: &Ctx) -> PathBuf {
-    ctx.library_dir.join("_本机工作").join(NOTE_NAME)
+    ctx.runtime_dir.join("_本机工作").join(NOTE_NAME)
 }
 
 fn reg_path(ctx: &Ctx) -> PathBuf {
-    ctx.library_dir.join("_工作台").join(REG_NAME)
+    ctx.runtime_dir.join("_工作台").join(REG_NAME)
 }
 
 fn fmt_tokens(n: i64) -> String {

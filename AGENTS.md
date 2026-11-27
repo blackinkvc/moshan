@@ -6,6 +6,39 @@
 
 读到这里就不要跳过了。下面每一条都对应一次真实事故或一次险些发生的事故。
 
+## 零、架构定论：服务端是 Rust，Python 只是对照卷（2026-11-28）
+
+**中台本体 = `rust/moshan-server/`（axum 0.8）。220 条 HTTP 路由全部由 Rust 直接应答，
+一条都没有转发给 Python。** 这个结论不是估计，是 `scripts/rust-coverage.py` 把上游置空后
+逐条打出来的（判定依据是响应来源，不是有没有响应：出现 `x-moshan-proxy` 或 502 才算没迁）。
+
+```
+rust/moshan-server/     唯一的服务端本体 —— 修 bug、加接口、改行为，只改这里
+moshan/*.py             对照卷。只在 scripts/rust-parity.py 做逐字节对拍时启动，
+                        不参与运行时；不是"另一份实现"，是"标准答案的存档"
+src-tauri/              桌面壳（Tauri + Rust），仍在用
+```
+
+所以：
+
+- **不要再往 `moshan/*.py` 里加功能或修 bug。** 改了不会生效（线上一秒都不会跑到它），
+  还会让对拍基线漂移，把后面所有人的回归测试搞花。
+- 如果一个问题"必须改 Python 才能修"，那说明找错地方了 —— 去找对应的 `routes/wX*/`。
+- 顺手看到的过期注释（例如 `routes/w5a/mod.rs` 里仍写着 workstat 未迁，其实已在 `w5e` 迁完）
+  可以直接更正，别让下一个人被注释骗去改 Python。
+- 迁移进度与已判定差异记在 `rust/README.md`；动过路由表就同步更新它。
+
+自证命令（改完跑一遍，两条都得过）：
+
+```bash
+cd rust && CARGO_PROFILE_RELEASE_STRIP=none cargo build --release --bin moshan-server
+cd .. && python3 scripts/rust-coverage.py --rs-bin rust/target/release/moshan-server
+#   期望：共 220 条：Rust 自应答 220，未迁 0
+```
+
+`CARGO_PROFILE_RELEASE_STRIP=none` 不能省：默认 strip 会写坏 proc-macro dylib，
+报出来的却是 `can't find crate for xxx_macros`，看着像依赖缺失。
+
 ## 一、绝对禁止
 
 ```

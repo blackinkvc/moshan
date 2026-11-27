@@ -309,15 +309,15 @@ fn builtin_ids() -> Vec<String> {
 // ---------------------------------------------------------------- 配方读写
 
 fn recipes_path(cfg: &Value) -> PathBuf {
-    util::data_root(cfg).join("_工作台").join(RECIPE_FILE)
+    crate::paths::workbench_dir_for(cfg).join(RECIPE_FILE)
 }
 
 fn prompt_path(cfg: &Value) -> PathBuf {
-    util::data_root(cfg).join("_工作台").join(PROMPT_FILE)
+    crate::paths::workbench_dir_for(cfg).join(PROMPT_FILE)
 }
 
 fn model_path(cfg: &Value) -> PathBuf {
-    util::data_root(cfg).join("_工作台").join(MODEL_FILE)
+    crate::paths::workbench_dir_for(cfg).join(MODEL_FILE)
 }
 
 fn custom_recipes(cfg: &Value) -> Vec<Value> {
@@ -831,7 +831,7 @@ fn plugin_row(r: &Value) -> Value {
 }
 
 fn plugins_path(cfg: &Value) -> PathBuf {
-    util::data_root(cfg).join("_工作台").join("plugins.json")
+    crate::paths::workbench_dir_for(cfg).join("plugins.json")
 }
 
 const PLUGIN_TEMPLATE: &str = concat!(

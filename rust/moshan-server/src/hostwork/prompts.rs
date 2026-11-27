@@ -399,8 +399,8 @@ fn dash_trae_t0s(ctx: &Ctx, since_ms: f64) -> Vec<i64> {
     }
     // agent 自述账：最后 400 行、at 在窗口内、task 非空
     for p in [
-        ctx.library_dir.join("_本机工作").join("Agent自述.jsonl"),
-        ctx.library_dir.join("_本机工作").join("TRAE自述.jsonl"),
+        ctx.runtime_dir.join("_本机工作").join("Agent自述.jsonl"),
+        ctx.runtime_dir.join("_本机工作").join("TRAE自述.jsonl"),
     ] {
         if mtime_ms(&p) < since_ms {
             continue;

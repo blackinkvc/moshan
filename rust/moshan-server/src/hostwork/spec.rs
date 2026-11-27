@@ -24,7 +24,7 @@ fn home() -> PathBuf {
 
 /// `SYS_DIR if exists else HOME`
 fn disk_target(ctx: &Ctx) -> PathBuf {
-    let sys = ctx.library_dir.join("10-系统记录");
+    let sys = ctx.runtime_dir.join("10-系统记录");
     if sys.exists() {
         sys
     } else {

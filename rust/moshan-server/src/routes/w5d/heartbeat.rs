@@ -75,7 +75,7 @@ fn log_dir() -> PathBuf {
 }
 
 fn sys_dir(ctx: &Ctx) -> PathBuf {
-    ctx.library_dir.join("10-系统记录")
+    ctx.runtime_dir.join("10-系统记录")
 }
 
 fn hb_dir(ctx: &Ctx) -> PathBuf {
@@ -95,7 +95,7 @@ fn disk_log(ctx: &Ctx) -> PathBuf {
 }
 
 fn inspect_cmd(ctx: &Ctx) -> PathBuf {
-    ctx.library_dir.join("_巡检").join("_系统巡检.command")
+    ctx.runtime_dir.join("_巡检").join("_系统巡检.command")
 }
 
 fn appwatch_cmd(ctx: &Ctx) -> PathBuf {
@@ -630,7 +630,11 @@ fn push_summary_at(path: &Path, hours: i64) -> Value {
 
 fn check_transfer_push(ctx: &Ctx) -> Value {
     let name = "传输助手 → 手机";
-    let p = ctx.library_dir.join("14-传输").join("推送失败.jsonl");
+    if !crate::paths::library_ready() {
+        return json!({"id": "transfer_push", "level": "warn", "ok": true, "name": name,
+                      "detail": "数据目录暂时读不到（系统隐私授权未通过），跳过这项检查"});
+    }
+    let p = ctx.runtime_dir.join("14-传输").join("推送失败.jsonl");
     if !p.exists() {
         return json!({"id": "transfer_push", "level": "warn", "ok": true, "name": name,
                       "detail": "近 6 小时没往手机推过东西（没发就不用推）"});

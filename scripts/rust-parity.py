@@ -102,6 +102,11 @@ def seed(home: Path) -> None:
         "port": 8321,
         "inbox_dir": str(inbox),
         "allowed_roots": [str(lib)],
+        # 双根改造之后，两侧的数据根必须落在同一处，否则账本/工作台的 dir
+        # 字段一个报 library 一个报 data，5 步全成假差异。
+        # 注意：MOSHAN_HOME（下面 env 里设的）优先级高于这个键，所以真正生效的
+        # 归一在 norm() 里；这条留着是为了不设 MOSHAN_HOME 的场合。
+        "runtime_dir": str(lib),
         "trash_dir": str(lib / ".回收站"),
         "dav_root": str(lib),
         "trash_days": 30,
@@ -425,6 +430,10 @@ _NORM = [
     (re.compile(rb'"(at|since|until|first|last)":-?\d+(?:\.\d+)?'), rb'"\1":<EPOCH>'),
     (re.compile(rb"\b[0-9a-f]{10}\b"), b"<SID>"),
     (re.compile(rb'"(created|expires)":\d+'), rb'"\1":<EPOCH>'),
+    # 报告采样器的 `state.started` 是「这个进程什么时候起的」，Python 与 Rust
+    # 是两个不同进程，数值必然不同（差几十毫秒也会让浮点尾数对不上）。
+    # 契约是「有这么一个字段」，不是它的具体值。
+    (re.compile(rb'"started":-?\d+(?:\.\d+)?'), b'"started":<EPOCH>'),
     # 总线里的 `ts` 是 epoch 毫秒。两边跑的时刻差几秒，数值不可能相等；
     # 但格式（13 位整数，不是字符串）本身是契约，所以只抹数字、留引号形状。
     (re.compile(rb'"ts":\d{10,13}'), b'"ts":<EPOCH>'),
@@ -461,6 +470,12 @@ _DISK_DERIVED = re.compile(rb'"(free_h|used_pct)":(?:"[^"]*"|[0-9.]+)')
 def norm(b: bytes, home: Path, coarse: bool = False) -> bytes:
     b = b.replace(str(home).encode(), b"<HOME>")
     b = b.replace(str(home.resolve()).encode(), b"<HOME>")
+    # macOS 上 /tmp 是 /private/tmp 的软链，resolve 过的路径会留下这个前缀。
+    b = b.replace(b"/private<HOME>", b"<HOME>")
+    # 双根：媒体根是 <HOME>/library，运行根是 <HOME>/data（MOSHAN_HOME 决定，
+    # 它的优先级高于 config.runtime_dir）。两侧落在不同的根上是**配置差异**，
+    # 不是行为差异 —— 不抹掉的话账本/工作台的 dir 字段会把真差异淹掉。
+    b = b.replace(b"<HOME>/library/", b"<RT>/").replace(b"<HOME>/data/", b"<RT>/")
     if coarse:
         b = _DISK_COARSE.sub(lambda m: b'"' + m.group(1) + b'":<N>', b)
         b = _DISK_DERIVED.sub(lambda m: b'"' + m.group(1) + b'":<N>', b)

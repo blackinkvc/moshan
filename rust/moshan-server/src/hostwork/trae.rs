@@ -42,7 +42,7 @@ fn mcp_root() -> PathBuf {
 }
 
 fn own_dir(ctx: &Ctx) -> PathBuf {
-    ctx.library_dir.join("_本机工作")
+    ctx.runtime_dir.join("_本机工作")
 }
 
 fn seed_path(ctx: &Ctx) -> PathBuf {

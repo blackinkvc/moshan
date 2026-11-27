@@ -3,7 +3,7 @@
 <head>
 <!-- 页面版本戳：服务端拿它跟包里那份比，旧了会自动备份并换新。
      改这个文件时把日期往后挪一格，别原地不动，否则老机器收不到。 -->
-<meta name="moshan-page" content="2026-11-27a">
+<meta name="moshan-page" content="2026-11-27b">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
@@ -450,6 +450,30 @@ body.editing .app-tools button{pointer-events:auto}
 .apfoot{padding:4px 15px 13px}
 .apfoot button{font-size:11.5px;color:var(--pri);background:none;border:0;padding:0}
 .apfoot button:hover{text-decoration:underline}
+
+/* —— 插件内嵌舞台（2026-11-27 加）——
+   以前点插件一律 window.open 开新标签，等于把人赶出去看一个光秃秃的插件页，
+   回到中台还得再点一次。这里换成中台自己的一层：顶上一条返回条，下面 iframe 铺满。
+   iframe 走 /px/<插件>/ 同源反代 —— 插件页里的相对路径 /api/x 会自动落到
+   /px/<插件>/api/x，cookie 也是中台这颗，跨源与混合内容都不会再挡。 */
+.emb{position:fixed;inset:0;z-index:60;background:var(--bg);display:flex;flex-direction:column;
+     transform:translateY(10px);opacity:0;transition:opacity .18s var(--ease),transform .18s var(--ease)}
+.emb.on{transform:none;opacity:1}
+.emb[hidden]{display:none}
+.emb-h{flex:0 0 auto;display:flex;align-items:center;gap:10px;height:46px;padding:0 12px;
+       background:var(--card);border-bottom:1px solid var(--line)}
+.emb-h .bk{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 11px 0 8px;border-radius:8px;
+       border:1px solid var(--line);background:var(--card);color:var(--tx2);
+       font:inherit;font-size:12.5px;font-weight:620;cursor:pointer}
+.emb-h .bk:hover{background:var(--card2);color:var(--tx)}
+.emb-h b{font-size:13.5px;font-weight:680;color:var(--tx);white-space:nowrap}
+.emb-h .r{margin-left:auto;display:flex;gap:6px;align-items:center}
+.emb-h .r a{display:inline-flex;align-items:center;height:30px;padding:0 11px;border-radius:8px;
+       border:1px solid var(--line);background:var(--card);color:var(--tx2);
+       font-size:12px;text-decoration:none}
+.emb-h .r a:hover{background:var(--card2);color:var(--tx)}
+.emb-b{flex:1 1 auto;min-height:0;background:var(--card)}
+.emb-b iframe{display:block;width:100%;height:100%;border:0}
 
 /* —— 加插件弹窗 —— */
 .modal{
@@ -19153,6 +19177,68 @@ function renderSetApps() {
     + '<button class="del" data-del>删除</button></div>').join('');
 }
 
+/* ---- 插件内嵌舞台（2026-11-27 加）----
+   为什么不再 window.open：点「虫巢思维」这类插件会跳出去变成一个独立网页，
+   回来就没有上下文了。改成在中台里铺一层，返回条一直在，插件页看起来就是中台的一页。
+   地址走 /px/<插件>/ 同源反代（服务端 w6a::px），所以插件页里的 /api/x 自动对。 */
+function embedUrl(pid, raw) {
+  let path = '/', search = '';
+  try {
+    const u = new URL(raw || '/', location.origin);
+    // 只取 path：协议、主机换成中台自己的，端口由反代那头决定。
+    path = u.pathname || '/';
+    search = u.search || '';
+  } catch (e) { }
+  const params = new URLSearchParams(search.replace(/^\?/, ''));
+  params.delete('k');
+  params.set('k', TOKEN);
+  params.set('theme', document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
+  return '/px/' + encodeURIComponent(pid) + path + '?' + params.toString();
+}
+
+function embedStage() {
+  let st = document.getElementById('embStage');
+  if (st) return st;
+  st = document.createElement('div');
+  st.id = 'embStage';
+  st.className = 'emb';
+  st.hidden = true;
+  st.innerHTML = '<div class="emb-h"><button type="button" class="bk" id="embBack">'
+    + '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" '
+    + 'stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>回工作台</button>'
+    + '<b id="embTitle"></b><span class="r"><a id="embOut" target="_blank" rel="noopener">在浏览器里打开</a></span></div>'
+    + '<div class="emb-b"><iframe id="embFrame" title="插件"></iframe></div>';
+  document.body.appendChild(st);
+  st.querySelector('#embBack').addEventListener('click', closeEmbed);
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !st.hidden) closeEmbed();
+  });
+  return st;
+}
+
+function openEmbed(pid, name, raw) {
+  const st = embedStage();
+  st.querySelector('#embTitle').textContent = name || pid;
+  st.querySelector('#embOut').href = raw || ('/px/' + encodeURIComponent(pid) + '/');
+  st.querySelector('#embFrame').src = embedUrl(pid, raw);
+  st.hidden = false;
+  requestAnimationFrame(() => st.classList.add('on'));
+  // 打个记号，刷新还能回来（replaceState 不新增历史条目，免得返回键要按两次）
+  try { history.replaceState(null, '', '#/px/' + pid); } catch (e) { }
+}
+
+function closeEmbed() {
+  const st = document.getElementById('embStage');
+  if (!st || st.hidden) return;
+  st.classList.remove('on');
+  setTimeout(() => {
+    st.hidden = true;
+    const f = st.querySelector('#embFrame');
+    if (f) f.src = 'about:blank';           // 停掉插件页里的轮询，别在后台空转
+  }, 180);
+  try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { }
+}
+
 /* 点一个插件：有端口的没开就先拉起，外部应用直接交给系统 open */
 async function launchEntry(id, isBuiltin) {
   const a = (isBuiltin ? APPS.builtin : APPS.custom).find(x => x.id === id);
@@ -19187,34 +19273,34 @@ async function launchEntry(id, isBuiltin) {
     loadAll();
     return;
   }
-  if (isBuiltin && a.up) { window.open(a.url || '/', '_blank', 'noopener'); return; }
-
-  // 内置服务没在线：先占一个空标签写「正在启动」，否则异步回来再 window.open 会被拦
-  let w = null;
-  if (isBuiltin) {
-    w = window.open('', '_blank');
-    if (w) { try { w.document.write('<title>正在启动…</title><body style="font:15px -apple-system,sans-serif;padding:40px;color:#555">正在启动 ' + esc(a.name) + '…</body>'); } catch (e) { } }
-    toast('正在启动 ' + a.name + '…');
+  // 有端口的插件：在中台里铺一层打开（同源反代）。
+  // 只有跨机器（配了 host）的才交给浏览器 —— 那台机器上的服务本机反代不到。
+  if (isBuiltin && a.up) {
+    if (a.port && !a.host) { openEmbed(a.id, a.name, a.url); return; }
+    window.open(a.url || '/', '_blank', 'noopener'); return;
   }
+
+  // 内置服务没在线：就地拉起，起来后直接在舞台上打开。
+  // 不再「先占一个空标签」—— openEmbed 是本地 DOM 操作，不会被浏览器拦，
+  // 也就不需要那个写「正在启动…」的临时标签了。
+  toast('正在启动 ' + a.name + '…');
   try {
     const r = await api('/api/apps/launch', { method: 'POST', body: JSON.stringify({ id, builtin: !!isBuiltin }) });
     if (r.ok && r.pending) {
-      /* 影音室这类要扫盘的：端口还没通，别把占位标签跳到打不开的地址 */
-      if (w) w.close();
+      /* 影音室这类要扫盘的：端口还没通，别把舞台上挂一个打不开的地址 */
       toast(a.name + ' 正在扫盘，稍等再点');
     } else if (r.ok) {
       if (isBuiltin && r.url) {
-        if (w) w.location.href = r.url; else window.open(r.url, '_blank', 'noopener');
-        toast(a.name + (r.started ? ' 已启动' : ''));
+        if (a.host) window.open(r.url, '_blank', 'noopener');
+        else openEmbed(a.id, a.name, r.url);
       } else if (!isBuiltin) {
         toast('已打开 ' + a.name);
       }
+      toast(a.name + (r.started ? ' 已启动' : ''));
     } else {
-      if (w) w.close();
       toast(r.error || '没打开');
     }
   } catch (e) {
-    if (w) w.close();
     toast('打开失败：' + e.message);
   }
   loadAll();

@@ -190,11 +190,18 @@ pub fn parse_date(s: &str) -> Option<NaiveDate> {
 
 /// `_load(path, default)`：缺失/损坏回 default。
 pub fn load_json(p: &Path) -> Option<Value> {
+    if crate::paths::deny_library_read(p) {
+        return None;
+    }
     std::fs::read_to_string(p).ok().and_then(|s| serde_json::from_str(&s).ok())
 }
 
 /// `json.dumps(..., ensure_ascii=False, indent=N)` 落盘。
 pub fn write_json(p: &Path, v: &Value, indent: usize) -> std::io::Result<()> {
+    // 读不到就别写：空内容落盘会把媒体根里的真数据覆盖掉。
+    if crate::paths::deny_library_read(p) {
+        return Ok(());
+    }
     crate::jsonio::atomic_write(p, &crate::jsonio::dumps(v, indent))
 }
 

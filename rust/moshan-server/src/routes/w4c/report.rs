@@ -62,7 +62,7 @@ pub fn metrics_root(ctx: &Ctx) -> PathBuf {
 }
 
 fn sys_dir(ctx: &Ctx) -> PathBuf {
-    metrics_root(ctx).join("10-系统记录")
+    crate::paths::rt_join(ctx, "10-系统记录")
 }
 
 fn snap_path(ctx: &Ctx) -> PathBuf {

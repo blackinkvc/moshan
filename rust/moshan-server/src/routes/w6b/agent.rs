@@ -262,7 +262,7 @@ async fn read(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Response {
 // ---------------------------------------------------------------- 自述（AI 工作卡）
 
 fn self_note_path(ctx: &Ctx) -> PathBuf {
-    ctx.library_dir.join("_本机工作").join("Agent自述.jsonl")
+    ctx.runtime_dir.join("_本机工作").join("Agent自述.jsonl")
 }
 
 /// `_self_note(request, forced_agent)` —— 落 `_本机工作/Agent自述.jsonl`。

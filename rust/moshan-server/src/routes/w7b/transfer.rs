@@ -51,7 +51,8 @@ pub fn data_root(ctx: &Ctx) -> PathBuf {
 }
 
 pub fn base_dir(ctx: &Ctx) -> PathBuf {
-    data_root(ctx).join(DIR_NAME)
+    // 传输中转是运行数据（临时件、失败记录），跟运行根走。
+    crate::paths::rt_join(ctx, DIR_NAME)
 }
 
 fn store_path(ctx: &Ctx) -> PathBuf {

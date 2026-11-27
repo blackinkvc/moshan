@@ -38,7 +38,7 @@ pub fn root(ctx: &Ctx) -> PathBuf {
 }
 
 pub fn workbench(ctx: &Ctx) -> PathBuf {
-    root(ctx).join("_工作台")
+    crate::paths::workbench_dir(ctx)
 }
 
 // ------------------------------------------------------------------ 内置清单
@@ -268,7 +268,7 @@ pub fn read_plugins(ctx: &Ctx) -> Vec<Value> {
 // ------------------------------------------------------------------ 卡片自报
 
 fn auto_view_apps(ctx: &Ctx) -> Vec<Value> {
-    let html = match std::fs::read_to_string(root(ctx).join("_工作台").join("dash.html")) {
+    let html = match std::fs::read_to_string(crate::paths::workbench_dir(ctx).join("dash.html")) {
         Ok(h) => h,
         Err(_) => return Vec::new(),
     };
@@ -487,9 +487,14 @@ fn svc_installed(ctx: &Ctx, spec: &Value) -> (bool, String) {
         }
     } else if let Some(Value::Array(a)) = spec.get("cmd") {
         if a.len() == 2 {
-            let p = Path::new(&root_s)
-                .join(str_or(Some(&a[0])))
-                .join(str_or(Some(&a[1])));
+            // 与 /api/apps/start 同一套分派：运行类脚本在运行根，媒体类在媒体根。
+            let sub = str_or(Some(&a[0]));
+            let base = if crate::paths::is_runtime_sub(&sub) {
+                ctx.runtime_dir.to_string_lossy().to_string()
+            } else {
+                root_s.clone()
+            };
+            let p = Path::new(&base).join(&sub).join(str_or(Some(&a[1])));
             ok = (!root_s.is_empty() && p.exists()) || launchd_has(&aid);
             if !ok {
                 why = format!("这台机器上没有它的启动脚本（{}）", p.display());

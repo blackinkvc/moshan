@@ -30,7 +30,7 @@ fn err(stage: &str, message: impl Into<String>) -> BootError {
 
 /// 直接讲 HTTP/1.1 探活，不引 reqwest：目标是 127.0.0.1 明文端口，
 /// 拉一整套 TLS 栈只为了读一行状态码不划算，也会让包大十几兆。
-fn ping(port: u16, token: &str) -> bool {
+fn ping(port: u16, token: &str, want_inbox: &str) -> bool {
     let Ok(addr) = format!("127.0.0.1:{port}").parse::<SocketAddr>() else {
         return false;
     };
@@ -44,13 +44,39 @@ fn ping(port: u16, token: &str) -> bool {
     if sock.write_all(req.as_bytes()).is_err() {
         return false;
     }
-    let mut buf = [0u8; 64];
-    match sock.read(&mut buf) {
-        Ok(n) if n > 12 => {
-            let head = String::from_utf8_lossy(&buf[..n]);
-            head.starts_with("HTTP/1.1 200") || head.starts_with("HTTP/1.0 200")
+    let mut buf = [0u8; 4096];
+    let mut got = Vec::new();
+    loop {
+        match sock.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                got.extend_from_slice(&buf[..n]);
+                if got.len() >= 4096 {
+                    break;
+                }
+            }
+            Err(_) => break,
         }
-        _ => false,
+    }
+    if got.len() <= 12 {
+        return false;
+    }
+    let text = String::from_utf8_lossy(&got);
+    if !(text.starts_with("HTTP/1.1 200") || text.starts_with("HTTP/1.0 200")) {
+        return false;
+    }
+    // 200 只说明「有个服务在」，还得是「这台机器该用的那份」。`inbox` 不同就说明
+    // 端口被别的实例占着（常见于对拍/测试留下的临时数据根），此时必须自己另起一个，
+    // 否则页面会连到别人的数据上。
+    if want_inbox.is_empty() {
+        return true;
+    }
+    match text.split_once("\r\n\r\n") {
+        Some((_, body)) => match serde_json::from_str::<serde_json::Value>(body.trim()) {
+            Ok(v) => v.get("inbox").and_then(|x| x.as_str()) == Some(want_inbox),
+            Err(_) => false,
+        },
+        None => false,
     }
 }
 
@@ -68,7 +94,7 @@ fn wait_ready(timeout: Duration) -> Option<String> {
     while Instant::now() < deadline {
         if let Some(cfg) = paths::read_config() {
             if let Some(port) = cfg.plain() {
-                if ping(port, &cfg.token) {
+                if ping(port, &cfg.token, &cfg.inbox_dir) {
                     return Some(url_for(port, &cfg.token));
                 }
             }
@@ -150,7 +176,8 @@ fn log_tail() -> String {
 pub fn boot() -> Result<String, BootError> {
     if let Some(cfg) = paths::read_config() {
         if let Some(port) = cfg.plain() {
-            if ping(port, &cfg.token) {
+            // 端口上有应答、且应答的那份实例用的就是本机这份收件箱，才算「已经在跑」。
+            if ping(port, &cfg.token, &cfg.inbox_dir) {
                 return Ok(url_for(port, &cfg.token));
             }
         }

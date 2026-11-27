@@ -257,7 +257,7 @@ pub async fn api_icon(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Res
     if !ok {
         return http_err(400, "文件名不对");
     }
-    let fp = ctx.library_dir.join("_本机工作").join("图标").join(&f);
+    let fp = ctx.runtime_dir.join("_本机工作").join("图标").join(&f);
     if !fp.exists() {
         return http_err(404, "没有这个图标");
     }

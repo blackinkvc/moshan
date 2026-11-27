@@ -493,7 +493,7 @@ fn trends_cfg_root(ctx: &Ctx) -> PathBuf {
 }
 
 fn runs_dir(ctx: &Ctx) -> PathBuf {
-    trends_cfg_root(ctx).join("10-系统记录").join("新闻").join("runs")
+    crate::paths::rt_join(ctx, "10-系统记录").join("新闻").join("runs")
 }
 
 fn read_run(ctx: &Ctx, day: &str) -> Value {
@@ -979,7 +979,7 @@ fn machine_block(ctx: &Ctx) -> Value {
 }
 
 fn storm_block(ctx: &Ctx) -> Value {
-    let own = cards::root(ctx).join("_本机工作");
+    let own = crate::paths::rt_join(ctx, "_本机工作");
     let doc = load_obj(&own.join("异常.json"));
     let mut items: Vec<Value> = match doc.get("items") {
         Some(Value::Array(a)) => a.iter().filter(|x| x.is_object()).cloned().collect(),
@@ -1081,6 +1081,8 @@ fn term_of(row: &Value) -> (f64, Vec<Value>) {
 
 pub fn payload(ctx: &Ctx) -> Value {
     let root = root_of(ctx);
+    // 运行数据与媒体分属两个根：下面凡是账/日志/巡检一律用 rt。
+    let rt = ctx.runtime_dir.clone();
     let _now = Local::now();
     let gallery = images::gallery(&root);
     let reader = images::reader(&root);
@@ -1097,17 +1099,17 @@ pub fn payload(ctx: &Ctx) -> Value {
     m.insert("gallery".into(), gallery);
     m.insert("reader".into(), reader);
     m.insert("media".into(), images::media(&root));
-    m.insert("llmcost".into(), images::llmcost(&root));
+    m.insert("llmcost".into(), images::llmcost(&rt));
     m.insert("files".into(), images::files(&root));
-    m.insert("health".into(), health(&root));
-    m.insert("heartbeat".into(), heartbeat_block(&root));
+    m.insert("health".into(), health(&rt));
+    m.insert("heartbeat".into(), heartbeat_block(&rt));
     m.insert("trends".into(), trends);
     m.insert("dedupe".into(), dedupe_block());
     m.insert("ocr".into(), ocr_block());
     m.insert("worklog".into(), wlmod::worklog(ctx));
     m.insert("flow".into(), flow_summary(ctx));
-    m.insert("report".into(), report(&root));
-    m.insert("inspect".into(), inspect(&root));
+    m.insert("report".into(), report(&rt));
+    m.insert("inspect".into(), inspect(&rt));
     m.insert("apps".into(), cards::apps_payload(ctx));
     m.insert("notes".into(), cards::read_notes(ctx));
     Value::Object(m)
@@ -1119,7 +1121,10 @@ pub async fn dash(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Respons
         return r;
     }
     let c = ctx.clone();
-    match tokio::task::spawn_blocking(move || {
+    // 兜底时限：媒体根被系统授权卡住时，读盘线程会永久停在 `open()` 里。
+    // 看门狗（`paths::spawn_library_probe`）正常情况下会先把它判成不可用、返回空块；
+    // 这里再压一道时限，保证「就算判错了，页面也不会一直转圈」。
+    let job = tokio::task::spawn_blocking(move || {
         let mut v = payload(&c);
         if let Value::Object(m) = &mut v {
             m.insert("ledger".into(), ledger::payload(&c));
@@ -1127,11 +1132,15 @@ pub async fn dash(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Respons
             m.insert("storm".into(), storm_block(&c));
         }
         v
-    })
-    .await
-    {
-        Ok(v) => Json(v).into_response(),
-        Err(e) => crate::routes::common::http_err(500, &format!("internal error: {e}")),
+    });
+    match tokio::time::timeout(std::time::Duration::from_secs(8), job).await {
+        Ok(Ok(v)) => Json(v).into_response(),
+        Ok(Err(e)) => crate::routes::common::http_err(500, &format!("internal error: {e}")),
+        Err(_) => crate::routes::common::http_err(
+            503,
+            "数据目录暂时读不到（系统隐私授权未通过）。到「系统设置 → 隐私与安全性 → \
+             完全磁盘访问权限」勾上 Moshan.app 后重启。",
+        ),
     }
 }
 

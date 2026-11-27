@@ -65,7 +65,7 @@ pub fn notes_path(ctx: &Ctx) -> PathBuf {
 }
 
 fn legacy_notes_path(ctx: &Ctx) -> PathBuf {
-    dash_root(ctx).join("_工作台").join("notes.json")
+    crate::paths::workbench_dir(ctx).join("notes.json")
 }
 
 /// 旧位置 `_工作台/notes.json` 搬一次；搬完把旧文件改名留底，不删。
@@ -103,6 +103,10 @@ fn load_json(p: &Path, default: Value) -> Value {
 }
 
 pub fn read_notes(ctx: &Ctx) -> Value {
+    // 工作台在媒体根上；没授权时 `open()` 会卡死，这里先退回空清单（见 paths 看门狗）。
+    if !crate::paths::library_ready() {
+        return json!({"todos": [], "events": [], "memo": [], "diary": {}, "updated_at": ""});
+    }
     ensure_notes(ctx);
     let d = load_json(&notes_path(ctx), json!(null));
     let d = if d.is_object() { d } else { json!({}) };
@@ -126,6 +130,10 @@ pub fn read_notes(ctx: &Ctx) -> Value {
 }
 
 pub fn write_notes(ctx: &Ctx, body: &Value) -> Value {
+    // 读不到就别写：空清单落盘会把用户真数据覆盖掉。
+    if !crate::paths::library_ready() {
+        return json!({"ok": false, "error": "数据目录暂时读不到（系统隐私授权未通过），这次没有保存"});
+    }
     let body = if body.is_object() { body.clone() } else { json!({}) };
     let list = |k: &str| -> Value {
         match body.get(k) {

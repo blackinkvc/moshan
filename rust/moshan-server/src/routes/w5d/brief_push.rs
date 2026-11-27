@@ -38,18 +38,6 @@ fn env_flag(key: &str) -> bool {
     }
 }
 
-/// `brief._root(cfg)`：allowed_roots[0]，否则 ~/Documents/AI项目。
-fn brief_root(ctx: &Ctx) -> PathBuf {
-    if let Some(a) = ctx.cfg.get("allowed_roots").and_then(|x| x.as_array()) {
-        if let Some(first) = a.first().and_then(|x| x.as_str()) {
-            if !first.trim().is_empty() {
-                return util::expanduser(first);
-            }
-        }
-    }
-    util::home().join("Documents").join("AI项目")
-}
-
 fn brief_dir(root: &Path) -> PathBuf {
     let d = root.join("10-系统记录").join("简报");
     let _ = std::fs::create_dir_all(&d);
@@ -217,7 +205,8 @@ pub fn tick(ctx: &Ctx) -> &'static str {
         return "wait";
     }
     let today = now.format("%Y-%m-%d").to_string();
-    let root = brief_root(ctx);
+    // 简报属于运行数据：分盘后它跟账目一起走，不留在装满图集的媒体盘上。
+    let root = ctx.runtime_dir.clone();
     if push_done(&root, &today) {
         return "done";
     }

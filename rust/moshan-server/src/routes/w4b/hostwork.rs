@@ -20,7 +20,7 @@ const PARSE_VERSION: i64 = 17;
 const SPACE_FALLBACK: &str = "未归属空间";
 
 fn own_dir(ctx: &Ctx) -> PathBuf {
-    ctx.library_dir.join("_本机工作")
+    ctx.runtime_dir.join("_本机工作")
 }
 
 pub fn cache_path(ctx: &Ctx) -> PathBuf {

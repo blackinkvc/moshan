@@ -39,14 +39,6 @@ fn env_flag(key: &str) -> bool {
 }
 
 /// `paths.data_root()` 的 Rust 版：allowed_roots[0]，退化到资料库。
-fn data_root(ctx: &Ctx) -> std::path::PathBuf {
-    let p = util::data_root(&ctx.cfg);
-    if p == std::path::Path::new(".") || p.as_os_str().is_empty() {
-        ctx.library_dir.clone()
-    } else {
-        p
-    }
-}
 
 /// 启动后台循环。监听端口已经在跑之后才调用，慢启动不能拖住 `/api/ping`。
 pub fn spawn(ctx: Arc<Ctx>) {
@@ -72,7 +64,7 @@ pub fn spawn(ctx: Arc<Ctx>) {
         crate::routes::w4b::pending::start(ctx.clone());
     }
 
-    let own = data_root(&ctx).join("_本机工作");
+    let own = crate::paths::rt_join(ctx.as_ref(), "_本机工作");
     // start_at 会同步采第一笔（几百毫秒），放到线程里，别让 serve 等它。
     std::thread::Builder::new()
         .name("moshan-sampler".into())

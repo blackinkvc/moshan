@@ -35,7 +35,7 @@ pub fn metrics_root(ctx: &Ctx) -> PathBuf {
 }
 
 fn sys_dir(ctx: &Ctx) -> PathBuf {
-    metrics_root(ctx).join("10-系统记录")
+    crate::paths::rt_join(ctx, "10-系统记录")
 }
 
 fn snap_path(ctx: &Ctx) -> PathBuf {
@@ -158,6 +158,10 @@ fn line_day(ln: &str) -> String {
 }
 
 fn append_sample(ctx: &Ctx, full: bool) -> Value {
+    // 采样要遍历目录并追加写；媒体根读不动时整块跳过，别把线程吊在 open() 上。
+    if !crate::paths::library_ready() {
+        return json!({"skipped": "library_blocked"});
+    }
     let rec = sample(ctx, full);
     let p = snap_path(ctx);
     if let Some(parent) = p.parent() {
@@ -195,7 +199,9 @@ fn tick(ctx: &Ctx) {
     }
 
     let st = crate::live::report_get();
-    if now - st.last_run >= REPORT_EVERY {
+    // 日报要读媒体根上的目录：读不到就跳过这一轮，别把线程卡在 open() 里。
+    // 采样（append_sample）写的是运行数据根，不受这道闸影响。
+    if now - st.last_run >= REPORT_EVERY && crate::paths::library_ready() {
         #[cfg(feature = "lane_w4c")]
         {
             let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

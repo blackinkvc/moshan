@@ -80,7 +80,7 @@ fn root(ctx: &Ctx) -> PathBuf {
 }
 
 fn workbench(ctx: &Ctx) -> PathBuf {
-    root(ctx).join("_工作台")
+    crate::paths::workbench_dir(ctx)
 }
 
 fn launchers_path(ctx: &Ctx) -> PathBuf {
@@ -374,6 +374,29 @@ fn builtin_spec(ctx: &Ctx, aid: &str) -> Option<Value> {
     all_specs(ctx)
         .into_iter()
         .find(|a| a.get("id").and_then(|v| v.as_str()) == Some(aid))
+}
+
+/// 插件端口：给 `/px/<pid>/` 反代查「往哪转」。
+///
+/// 只读配置里的 `port`，**不去探测端口通不通** —— 反代本身就会把「连不上」
+/// 变成 502 回给 iframe，那里能给出更准的话。在这儿探测等于每次 iframe 里的
+/// 每个子请求都多等 350ms 超时，一个页面几十个请求，主页会卡成幻灯片。
+pub(crate) fn plugin_port(ctx: &Ctx, pid: &str) -> u16 {
+    builtin_spec(ctx, pid)
+        .and_then(|a| a.get("port").and_then(|v| util::int_of(v).ok()))
+        .unwrap_or(0) as u16
+}
+
+/// 插件主机：默认本机，`taskboard` 这类配了 `host` 的在别的机器上。
+pub(crate) fn plugin_host(ctx: &Ctx, pid: &str) -> String {
+    let h = builtin_spec(ctx, pid)
+        .map(|a| str_or_empty(&a, "host"))
+        .unwrap_or_default();
+    if h.is_empty() {
+        "127.0.0.1".to_string()
+    } else {
+        h
+    }
 }
 
 // ------------------------------------------------------------------ 第三方配方
@@ -1318,7 +1341,14 @@ pub fn launch_app(ctx: &Ctx, aid: &str, builtin: bool) -> Value {
             return json!({"ok": false,
                           "error": format!("{name} 没配启动脚本，先手动把它起来（端口 {port}）")});
         };
-        let cmd_p = root(ctx).join(d).join(f);
+        // 启动脚本可能挂在两个根上：_巡检 / 13-算价 在运行根，
+        // 02-媒体 / 08-阅读 在媒体根。按目录名分派，别一律用其中一个。
+        let base = if crate::paths::is_runtime_sub(&d) {
+            ctx.runtime_dir.clone()
+        } else {
+            root(ctx)
+        };
+        let cmd_p = base.join(&d).join(&f);
         if !cmd_p.exists() {
             return json!({"ok": false,
                           "error": format!("启动脚本不在：{}", cmd_p.to_string_lossy())});

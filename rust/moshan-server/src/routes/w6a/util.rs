@@ -269,7 +269,7 @@ pub fn data_root(ctx: &Ctx) -> PathBuf {
 }
 
 pub fn data_dir(ctx: &Ctx) -> PathBuf {
-    let d = data_root(ctx).join("16-虫巢思维");
+    let d = crate::paths::rt_join(ctx, "16-虫巢思维");
     let _ = std::fs::create_dir_all(&d);
     d
 }

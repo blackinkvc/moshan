@@ -29,15 +29,9 @@ use std::time::{Duration, Instant};
 
 const INSPECT_BASE: &str = "http://127.0.0.1:8774";
 
-fn root(ctx: &Ctx) -> PathBuf {
-    ctx.allowed_roots()
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| ctx.library_dir.clone())
-}
 
 fn report_dir(ctx: &Ctx) -> PathBuf {
-    root(ctx).join("10-系统记录").join("巡检").join("报告")
+    crate::paths::rt_join(ctx, "10-系统记录").join("巡检").join("报告")
 }
 
 
@@ -170,7 +164,8 @@ pub fn run_local(ctx: &Ctx, port: Option<u16>, heal: bool) -> Value {
             error: String::new(),
         };
     });
-    let cfg_root = root(ctx);
+    // 巡检只写 10-系统记录/_本机工作，走运行根。
+    let cfg_root = ctx.runtime_dir.clone();
     let rt = std::thread::Builder::new().name("inspect-round".into());
     let _ = rt.spawn(move || {
         work(&cfg_root, port, heal);
