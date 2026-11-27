@@ -3,7 +3,7 @@
 <head>
 <!-- 页面版本戳：服务端拿它跟包里那份比，旧了会自动备份并换新。
      改这个文件时把日期往后挪一格，别原地不动，否则老机器收不到。 -->
-<meta name="moshan-page" content="2026-11-26c">
+<meta name="moshan-page" content="2026-11-27a">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
@@ -308,6 +308,99 @@ body.booting [data-card].fold::after{display:none}
 .app-more-pop.on{display:flex}
 .app-more-pop .app-b{width:100%;justify-content:flex-start;box-shadow:none;background:transparent;border-color:transparent}
 .app-more-pop .app-b:hover{background:var(--pri-soft);border-color:var(--pri-line)}
+
+/* —— 左侧功能列表（2026-11-27）——
+   用户原话：「主页一排只留下 3 个，其他全部放到页面左边，可以收起的功能列表，
+   跟上面的胶囊可以重复」。
+   于是：顶上那排（.appbar）只留前三颗，其余全部搬进这条竖列 —— 前三颗也照列，
+   重复没关系（用户就是这么要的）。竖列自己能收起来（记在 dash_side）；
+   收起之后顶上那排自动恢复成「全排 + 更多」，功能不会因为收起来就没地方点。
+   窄屏（≤900px）不占位，改成从左边滑出的抽屉。
+
+   为什么占 body 的 padding-left、而不把 main 塞进一个 flex 容器：
+   卡片那套网格算的是 main 自己的宽（--gpad / gstepx / 吸附），换父容器会把
+   格线、拖拽吸附、尺寸气泡一起弄歪。padding 只挪位置，不动 main 的度量。 */
+body{--side-w:0px;padding-left:0;transition:padding-left .2s var(--ease)}
+.side{
+  position:fixed;left:0;top:0;bottom:0;width:244px;z-index:19;
+  display:flex;flex-direction:column;
+  background:color-mix(in srgb,var(--card) 60%,var(--bg));
+  border-right:1px solid var(--line);
+  padding:10px 9px calc(8px + env(safe-area-inset-bottom));
+  transform:translateX(0);transition:transform .2s var(--ease);
+}
+.side-h{display:flex;align-items:center;gap:7px;padding:2px 7px 7px;flex:0 0 auto}
+.side-h b{font-size:12.5px;font-weight:660;letter-spacing:.03em}
+.side-h .n{font-size:11px;color:var(--tx3);font-variant-numeric:tabular-nums}
+.side-h .side-fold{
+  margin-left:auto;width:24px;height:24px;display:grid;place-items:center;padding:0;
+  border:1px solid transparent;background:transparent;border-radius:7px;color:var(--tx3);
+}
+.side-h .side-fold:hover{border-color:var(--line);background:var(--card);color:var(--pri)}
+.side-h .side-fold svg{width:14px;height:14px}
+.side-scroll{flex:1 1 auto;overflow-y:auto;overflow-x:hidden;padding:0 2px;margin:0 -2px}
+.side-scroll::-webkit-scrollbar{width:9px}
+.side-cap{
+  display:flex;align-items:center;gap:6px;width:100%;height:26px;padding:0 8px;margin:7px 0 1px;
+  border:0;background:transparent;border-radius:7px;
+  color:var(--tx3);font-size:11px;font-weight:640;letter-spacing:.05em;text-align:left;
+}
+.side-cap:hover{color:var(--tx2);background:color-mix(in srgb,var(--tx3) 9%,transparent)}
+.side-cap svg{width:11px;height:11px;flex:0 0 auto;transition:transform .16s var(--ease)}
+.side-cap .n{margin-left:auto;font-weight:520;letter-spacing:0;font-variant-numeric:tabular-nums}
+.side-sec[data-closed="1"] .side-cap svg{transform:rotate(-90deg)}
+.side-sec[data-closed="1"] .side-rows{display:none}
+.side-row{
+  display:flex;align-items:center;gap:9px;width:100%;height:31px;padding:0 8px;
+  border:0;background:transparent;border-radius:8px;
+  color:var(--tx2);font-size:12.5px;font-weight:520;text-align:left;
+  transition:background .14s var(--ease),color .14s var(--ease);
+}
+.side-row:hover{background:var(--pri-soft);color:var(--pri)}
+.side-row.on{background:var(--pri-soft);color:var(--pri);font-weight:640}
+.side-row .ai{width:17px;height:17px;display:grid;place-items:center;flex:0 0 auto}
+.side-row .ai svg{width:13px;height:13px}
+.side-row .ai img{width:17px;height:17px;border-radius:5px;display:block;object-fit:cover}
+.side-row .sn{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.side-row .st{width:5px;height:5px;border-radius:50%;background:var(--ok);flex:0 0 auto;opacity:.85;margin-left:6px}
+.side-row .soff{
+  flex:0 0 auto;margin-left:auto;font-style:normal;font-size:10px;color:var(--tx3);
+  border:1px solid var(--line);border-radius:5px;padding:0 4px;line-height:15px;
+}
+.side-row[data-up="0"]{color:var(--tx3)}
+.side-row[data-up="0"] .ai{filter:grayscale(1);opacity:.55}
+.side-row[data-up="0"] .st{background:var(--tx3);opacity:.45}
+.side-row[data-soon="1"]{color:var(--tx3)}
+.side-row[data-soon="1"] .st{display:none}
+.side-f{flex:0 0 auto;padding:8px 4px 2px;margin-top:6px;border-top:1px solid var(--line)}
+.side-f button{
+  width:100%;height:30px;display:flex;align-items:center;justify-content:center;gap:5px;
+  border:1px dashed var(--line);background:transparent;border-radius:8px;
+  color:var(--tx3);font-size:12px;font-weight:520;
+}
+.side-f button:hover{border-style:solid;border-color:var(--pri-line);background:var(--pri-soft);color:var(--pri)}
+.side-f button svg{width:12px;height:12px}
+.side-mask{display:none}
+@media (min-width:901px){
+  body:not(.side-off){--side-w:244px;padding-left:244px}
+  /* 收起＝整条消失、顶上那排复得全量（renderSide/renderAppBar 会跟着重排） */
+  body.side-off .side{display:none}
+}
+@media (max-width:900px){
+  body{--side-w:0px;padding-left:0}
+  body.side-off .side{display:flex}          /* 窄屏不认「收起」，只看 .side-open */
+  .side{
+    z-index:48;width:min(282px,84vw);box-shadow:var(--sh2);
+    transform:translateX(-103%);
+  }
+  body.side-open .side{transform:none}
+  .side-mask{
+    display:block;position:fixed;inset:0;z-index:47;background:rgba(8,8,18,.4);
+    opacity:0;pointer-events:none;transition:opacity .18s var(--ease);
+  }
+  body.side-open .side-mask{opacity:1;pointer-events:auto}
+  .side-h .side-fold svg{transform:rotate(180deg)}   /* 这一档的箭头意思是「滑回去」 */
+}
 
 /* —— 布局编辑态：插件也能编辑（2026-11-18）——
    跟卡片一套操作：拖动排序、← → 逐格挪、× 收起（收起的进底部「收起」盒）。
@@ -5029,6 +5122,29 @@ body.v-more .more-wrap > .card[data-card="transfer"].tf-none .tf-body{height:180
 </head>
 <body class="booting">
 
+<!-- 左侧功能列表（2026-11-27）—— 顶栏那排只留前 3 颗（APP_BAR_KEEP），其余全搬到这儿；
+     这 3 颗也照列，用户说的「跟上面的胶囊可以重复」。内容由 renderSide() 现填：
+     跟顶栏同一份数据、同一个点击行为（launchEntry），不会出现「点左边和点上面不一样」。
+     收起状态记在 localStorage 的 dash_side；窄屏（≤900px）不占位，改成抽屉。
+     注意：这块必须在 .top 之前、且不是 .top 的子节点 —— 它是 fixed 定位的独立一列，
+     塞进 sticky 的顶栏里会跟着顶栏一起被裁。 -->
+<aside class="side" id="sideNav" aria-label="功能列表">
+  <div class="side-h">
+    <b>功能</b><span class="n" id="sideN"></span>
+    <button type="button" class="side-fold" id="sideFold" title="收起功能列表" aria-label="收起功能列表">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 6l-6 6 6 6"/><path d="M19 6l-6 6 6 6"/></svg>
+    </button>
+  </div>
+  <div class="side-scroll" id="sideScroll"></div>
+  <div class="side-f">
+    <button type="button" id="sideAdd" title="加一个插件：填名字和端口，或粘一个应用/网址">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>插件
+    </button>
+  </div>
+</aside>
+<!-- 抽屉遮罩只在窄屏显形（见 CSS 的 ≤900px 那段） -->
+<div class="side-mask" id="sideMask"></div>
+
 <div class="top">
   <div class="top-in">
     <div class="brand">
@@ -5060,6 +5176,11 @@ body.v-more .more-wrap > .card[data-card="transfer"].tf-none .tf-body{height:180
       <span class="pill" id="clock">—</span>
       <span class="pill sync"><i class="dot" id="syncDot"></i><span id="syncTxt">读取中</span></span>
       <div class="tools">
+        <!-- 功能列表开关（2026-11-27）：宽屏收/展左侧那列，窄屏开/关抽屉。
+             收起不是「没了」：顶上那排会恢复成全部 + 更多，功能照样点得到。 -->
+        <button class="icon" id="btnSide" title="功能列表（收起 / 展开）" aria-label="功能列表" aria-pressed="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.6"/><path d="M9.5 4v16"/><path d="M5.6 9h1.6"/><path d="M5.6 12.5h1.6"/><path d="M5.6 16h1.6"/></svg>
+        </button>
         <button class="icon" id="btnTheme" title="切换深浅色" aria-label="切换深浅色"></button>
         <!-- 这就是「调卡片大小」那颗（2026-11-20）：用户口中的「夜间和设置之间那颗按钮」
              指的就是它 —— 之前误听成要加一颗「按年」，占位的假按钮已撤掉，别再加重复的。
@@ -17273,7 +17394,7 @@ function enterEdit() {
       ? '↑↓ 挪位置 · 拖四角改大小 · 顺序和尺寸都只记在这一页'
       : '拖卡片换位置 · 拖四边 / 四角改大小 · 按格吸附 · 只记在这一页，首页那份不动')
     : (touch
-      ? '‹ › 挪插件 · ↑↓ 调序 · 拖四角改大小 · 工具栏可折成横条/胶囊'
+      ? '‹ › 挪插件（前三颗留在顶栏）· ↑↓ 调序 · 拖四角改大小 · 工具栏可折成横条/胶囊'
       : '主页是 6 列方格纸 · 拖边/角按格吸附 · 卡片工具里可折成横条 / 胶囊 · 「＋ 空位」留空格');
   paintGrid();
   $('btnLayout').setAttribute('aria-pressed', 'true');
@@ -17297,6 +17418,8 @@ function enterEdit() {
     paintHiddenN();
   }
   saveLayout();
+  // 编辑态要把整排插件露出来（不然只有前三颗，‹ › 没法把后面的挪进前三）
+  renderAppBar();
 }
 function exitEdit() {
   if (!editing) return;
@@ -17314,6 +17437,7 @@ function exitEdit() {
   [].forEach.call(document.querySelectorAll('.card-tools'), n => n.remove());
   [].forEach.call(document.querySelectorAll('.rsz'), n => n.remove());
   saveLayout();
+  renderAppBar();     // 退出编辑＝回到「顶上只留 3 颗」，把编辑态展开的整排收回去
 }
 
 function moveCard(c, dir) {
@@ -18320,16 +18444,166 @@ function renderAppBar() {
       + '<button type="button" data-amv="h" title="从这条里收起来" aria-label="收起来">×</button>'
       + '</span></span>';
   };
-  bar.innerHTML = appSeq().filter(id => APP_LAYOUT.hidden.indexOf(id) < 0).map(wrap).join('')
+  // 顶上那排留几颗（2026-11-27）：左侧列表开着就只留前 APP_BAR_KEEP 颗，其余全在左边。
+  // 收起列表、或在编辑态时恢复整排 —— 编辑态必须看见全部，‹ › 才能把某个挪进前三；
+  // 挪进前三再退出编辑，它就留在条上了。
+  const vis = appSeq().filter(id => APP_LAYOUT.hidden.indexOf(id) < 0);
+  bar.innerHTML = vis.slice(0, sideDocked() ? APP_BAR_KEEP : vis.length).map(wrap).join('')
     + '<button type="button" class="app-b add" id="btnAddApp" title="加一个插件：填名字和端口，或粘一个应用/网址">'
     + GLYPH.plus + '插件</button>';
   paintHiddenN();
-  appFit();                                       // 先看放不放得下，放不下收进「更多」
+  renderSide();                                   // 竖列跟这条同源，一起重绘
+  // 只剩三颗时不会有溢出，就别再挂那个「更多」——挂上去也永远是 0，白占一颗位置
+  if (!sideDocked()) appFit();
+  sideDockLast = sideDocked();                    // 记下当前形态，resize 里只在跨过断点时才重排
   if ($('appModal') && !$('appModal').hidden) {   // 弹窗开着就跟着一起重排
     renderAppPick();
     renderPluginList();
   }
 }
+
+/* ============ 左侧功能列表（2026-11-27）============
+   用户原话：「主页一排只留下 3 个，其他全部放到页面左边，可以收起的功能列表，
+   跟上面的胶囊可以重复」。
+   这一块只做三件事：① 顶上那排留几颗（APP_BAR_KEEP）；② 把全部入口按「常用 /
+   全部功能」列出来，点一行＝点顶上的药丸（同一个 launchEntry）；③ 记着收没收起。
+   数据一律从 appSeq()/appEntry() 取 —— 那是顶栏已经在用的同一份，别自建一份
+   清单，否则新加的插件只会出现在一边。 */
+const APP_BAR_KEEP = 3;               // 顶上那排留几颗（用户 2026-11-27 定：3）
+const LS_SIDE = 'dash_side';          // '0' = 收起；其它/没有 = 展开
+const LS_SIDE_SEC = 'dash_side_sec';  // {top:0, all:0} = 那一组折起来了
+let sideDockLast = null;              // 上一次算出的「是不是占位的宽屏形态」
+let SIDE_SEC = (() => {
+  try { return JSON.parse(localStorage.getItem(LS_SIDE_SEC) || '{}') || {}; } catch (e) { return {}; }
+})();
+
+/* 现在是不是「占左侧一列」的形态。窄屏（≤900px）永远不算 —— 那一档是抽屉，
+   占位会把手机上本来就窄的内容再挤掉 244px。编辑态也不算（见 renderAppBar 的注释）。 */
+function sideDocked() {
+  return !editing && !document.body.classList.contains('side-off')
+    && window.matchMedia('(min-width:901px)').matches;
+}
+
+/* want 省略＝切换；true＝展开、false＝收起。窄屏那档操作的是抽屉。 */
+function sideToggle(want) {
+  if (window.matchMedia('(max-width:900px)').matches) {
+    const cur = document.body.classList.contains('side-open');
+    document.body.classList.toggle('side-open', want === undefined ? !cur : !!want);
+    return;
+  }
+  const now = !document.body.classList.contains('side-off');
+  const next = want === undefined ? !now : !!want;
+  document.body.classList.toggle('side-off', !next);
+  try { localStorage.setItem(LS_SIDE, next ? '1' : '0'); } catch (e) { }
+  const b = $('btnSide');
+  if (b) b.setAttribute('aria-pressed', next ? 'true' : 'false');
+  renderAppBar();                 // 收起 → 顶上那排当场恢复成「全部 + 更多」
+  // 收起后整列消失，得告诉人「东西没丢、在顶上那排 + 这颗按钮能叫回来」
+  if (!next) toast('功能列表收起了：顶上那排恢复成全部，点这颗按钮再展开');
+}
+
+/* 一行。图标与状态点的判定跟顶上的药丸一模一样（同一个 appTile、同一套 data-up） */
+function sideRow(id) {
+  const e = appEntry(id);
+  if (!e) return '';
+  const a = e.a;
+  const pg = a.kind === 'page' ? (a.page || '') : (PAGE_OF[id] || '');
+  const on = pg && VIEW_PAGE === pg ? ' on' : '';
+  const up = (e.bi ? a.up : a.alive) ? 1 : 0;
+  const tip = a.soon ? (a.name + ' · 占位，还没做')
+    : (a.hint || (e.bi ? (a.name + ' · ' + (a.up ? '在线' : '没在线，点一下先启动')) : a.name));
+  return '<button type="button" class="side-row' + on + '" data-side="' + esc(id) + '"'
+    + ' data-bi="' + (e.bi ? 1 : 0) + '" data-up="' + up + '"' + (a.soon ? ' data-soon="1"' : '')
+    + ' title="' + esc(tip) + '">'
+    + appTile(a) + '<span class="sn">' + esc(a.name) + '</span>'
+    + (APP_LAYOUT.hidden.indexOf(id) >= 0 ? '<em class="soff">收起</em>' : '')
+    + '<i class="st"></i></button>';
+}
+
+function renderSide() {
+  const box = $('sideScroll');
+  if (!box) return;
+  const seq = appSeq();
+  const vis = seq.filter(id => APP_LAYOUT.hidden.indexOf(id) < 0);
+  const top = vis.slice(0, APP_BAR_KEEP);           // 顶上那排的那几颗
+  const rest = seq.filter(id => top.indexOf(id) < 0); // 其余（含手动收起的，标个「收起」）
+  const n = $('sideN');
+  if (n) n.textContent = seq.length ? seq.length + ' 个' : '';
+
+  const sec = (key, name, ids) => {
+    if (!ids.length) return '';
+    const closed = SIDE_SEC[key] === 0;
+    return '<div class="side-sec" data-closed="' + (closed ? 1 : 0) + '">'
+      + '<button type="button" class="side-cap" data-side-sec="' + key + '"'
+      + ' aria-expanded="' + (closed ? 'false' : 'true') + '">'
+      + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>'
+      + esc(name) + '<span class="n">' + ids.length + '</span></button>'
+      + '<div class="side-rows">' + ids.map(sideRow).join('') + '</div></div>';
+  };
+  const html = sec('top', '常用', top) + sec('all', '全部功能', rest);
+  // 60 秒一轮的 loadAll 会重跑 renderAppBar → 这里。内容没变就别动 DOM：
+  // 一动 innerHTML，鼠标悬停高亮和滚动位置全丢，用户正要点的那行会跳走。
+  if (box.dataset.sig !== html) {
+    box.innerHTML = html;
+    box.dataset.sig = html;
+  }
+}
+
+/* 竖列自己的点击：行＝launchEntry；组标题＝折/展；空白遮罩＝关抽屉 */
+(function bindSide() {
+  const nav = $('sideNav');
+  if (nav) {
+    nav.addEventListener('click', e => {
+      const cap = e.target.closest('[data-side-sec]');
+      if (cap) {
+        const k = cap.dataset.sideSec;
+        SIDE_SEC[k] = SIDE_SEC[k] === 0 ? 1 : 0;
+        try { localStorage.setItem(LS_SIDE_SEC, JSON.stringify(SIDE_SEC)); } catch (err) { }
+        cap.closest('.side-sec').dataset.closed = SIDE_SEC[k] === 0 ? '1' : '0';
+        cap.setAttribute('aria-expanded', SIDE_SEC[k] === 0 ? 'false' : 'true');
+        return;
+      }
+      const b = e.target.closest('[data-side]');
+      if (!b) return;
+      // 窄屏点完就收抽屉，否则抽屉挡着刚打开的页面
+      if (window.matchMedia('(max-width:900px)').matches) {
+        document.body.classList.remove('side-open');
+      }
+      launchEntry(b.dataset.side, b.dataset.bi === '1');
+    });
+  }
+  const mask = $('sideMask');
+  if (mask) mask.addEventListener('click', () => document.body.classList.remove('side-open'));
+  const fold = $('sideFold');
+  if (fold) fold.addEventListener('click', () => sideToggle(false));
+  const btn = $('btnSide');
+  if (btn) btn.addEventListener('click', () => sideToggle());
+  const add = $('sideAdd');
+  if (add) add.addEventListener('click', () => openAppModal());
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    if (document.body.classList.contains('side-open')) document.body.classList.remove('side-open');
+  });
+})();
+
+/* 首屏把「收没收起」定下来：晚一点再定会先闪出一整列再消失。
+   注意 localStorage 在 file:// 或某些隐私模式下会抛，全部包 try。 */
+function sideBoot() {
+  let on = true;
+  try { on = localStorage.getItem(LS_SIDE) !== '0'; } catch (e) { }
+  document.body.classList.toggle('side-off', !on);
+  const b = $('btnSide');
+  if (b) b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  sideDockLast = sideDocked();
+}
+/* 跨过 900px 断点时顶上那排要换形态（三颗 ↔ 整排），只在这个时刻重排，别每次 resize 都动 */
+window.addEventListener('resize', () => {
+  clearTimeout(sideBoot._t);
+  sideBoot._t = setTimeout(() => {
+    if (sideDocked() === sideDockLast) return;
+    renderAppBar();
+  }, 160);
+});
 
 /* ---- 编辑态：插件的挪位 / 收起 / 拖拽 ----
    跟卡片同一套手感，只是没有「大小」——插件是定尺寸的药丸，不提供 ⤢。 */
@@ -20492,6 +20766,7 @@ window.addEventListener('hashchange', () => {
 /* 首次加载 + 60 秒轮询；窗口回到前台时立刻补一次 */
 /* 首屏顺序：先把主题/布局定下来，再拉数据，避免卡片闪一下再跳位置 */
 applyPrefs();
+sideBoot();                       // 左侧列表收没收起，第一帧就要定下来，别闪一下再收起
 paintCardGo();                    // 每张卡的标题先变成入口，别等数据
 paintCrossLinks();                // 跨页深链（这台机器 → 进程榜）
 applyHWTab();                     // 花费 / 用量 的选中态与显隐（本地记着上次那一档）
