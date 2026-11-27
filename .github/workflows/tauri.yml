@@ -260,7 +260,12 @@ jobs:
         with:
           node-version: "20"
 
+      # 默认会去装 `tools`，而新版 cmdline-tools 里这个包已经撤了：
+      # `Warning: Failed to find package 'tools'` → sdkmanager 退 1 → 整步失败。
+      # 这里只让它装 platform-tools，NDK / platforms / build-tools 由下一步显式装。
       - uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools"
 
       - name: 安装 NDK
         run: |
@@ -317,7 +322,13 @@ jobs:
   attach:
     name: 附加到 Release
     needs: [desktop, android]
-    if: startsWith(github.ref, 'refs/tags/v')
+    # 桌面三平台成功就挂资产。**不能写成单纯的 needs 全绿**：android 那台 runner 的
+    # setup-android 经常在环境准备阶段就挂，而它挂掉不该连累 dmg/deb/AppImage ——
+    # 之前就是这样，三个桌面 job 全绿、attach 却被 skipped，Rust 版一次都没发出去过。
+    if: |
+      startsWith(github.ref, 'refs/tags/v') &&
+      needs.desktop.result == 'success' &&
+      !cancelled()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
