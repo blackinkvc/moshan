@@ -28,6 +28,10 @@
 覆盖安装只替换「程序」，所以升级、重装都不会动你的设置和文件 ——
 不是靠代码小心，是目录结构决定的。
 
+**服务端是一个 Rust 单二进制**（axum 0.8），220 条 HTTP 路由全部由它直接应答。
+仓库里的 `moshan/*.py` 是同一套行为的 **Python 对照卷** —— 只在做逐字节对拍时启动
+（`scripts/rust-parity.py`），不参与运行。所以安装包不需要 Python，也不需要 Node。
+
 > 中文名「墨山中台」，英文名 Moshan（拼音，无同名软件）。
 
 ---
@@ -322,74 +326,92 @@ bash scripts/check.sh
 ## 目录结构
 
 ```
-moshan/                 业务代码，平铺模块，import 直接用名字
-  launcher.py           桌面入口：建目录、选端口、起服务、开浏览器
-  server.py             服务本体（FastAPI），路由与网络守卫
-  paths.py              三层目录约定 —— 改路径先看这里，别处不许拼路径
-  welcome.py            新手引导页 /welcome
-  about.py              关于 / 更新页 /about（服务端注入入口，不改 ui.html）
-  bootstrap.py          环境探测、Ollama 拉模型、端点连通性检查
-  updater.py            检查更新、下载、sha256 校验、唤起安装包（含命令行入口）
-  storage.py            文件读写、移动、回收站
-  transfer.py           上传下载、打包、断点
-  webdav.py             WebDAV 挂载（默认关闭）
-  dash.py               工作台聚合数据（/api/dash）
-  agentbus.py           Agent 总线：会话记账，给别的 agent 读
-  agent_link.py         把 Trae / Cursor / Claude 等 Agent 接进来
-  plan.py / plan_mcp.py 工作计划（含 MCP 服务端）
-  sysinfo.py            内存 / CPU / 负载，跨平台
-  netca.py              把 HTTPS 的 CA 证书锚到随包分发的 certifi
-  textfmt.py            正文整理（HTML 段落还原、OCR 断行接合），从 cuntu 镜像过来
+rust/
+  Cargo.toml            工作区，锁定依赖版本
+  moshan-server/        服务端本体（axum），220 条路由全在这里应答
+    src/
+      main.rs           装配路由 + 自举 + 角色开关
+      boot.rs           首启：建目录、发令牌、选端口、写 config.json
+      paths.rs          三层目录口径 —— 路径只许从这里取，别处不许拼
+      auth.rs           三令牌通道（header → ?k= → cookie）
+      storage.rs        文件层：路径守卫、回收站、分享、缩略图
+      imaging.rs        缩略图 / HEIC 转 JPEG（mac 用 sips，其它平台探测外挂工具）
+      sysopen.rs        打开文件 / 网址 / 在文件管理器里定位（三平台各一套命令）
+      jsonio.rs         Python 风格 JSON 读写（indent=N，逐字节对齐）
+      live/             进程内运行态：调度器写、HTTP 处理器读
+      hostwork/         会话与工作量采集层（多张卡共用同一份数）
+      routes/           按泳道分文件：w1…w7b / u，见 docs/RUST-LANES.md
+moshan/                 原 Python 实现，现在是「对照卷」，只在逐字节对拍时启动
   ui.html               主界面（单文件，无构建步骤）
+  dash.html             工作台页面的源（数据根里那份由它同步）
+  version.py            版本号，与 VERSION 同值
+src-tauri/              桌面壳（mac / win / linux），只负责开窗与托管 sidecar
 packages/
-  moshan.spec           两平台共用的 PyInstaller 配置
-  macos/build.sh        源码 → Moshan.app → dmg
-  windows/build.ps1     源码 → dist\Moshan → 安装程序
-  windows/moshan.iss    Inno Setup 脚本
+  macos/build.sh        旧的 PyInstaller 打包（Python 兜底线）
+  windows/build.ps1     同上，Windows
 scripts/
+  stage-sidecar.sh      把 Rust 二进制按 target triple 放进 src-tauri/binaries/
+  tauri-build.sh        本机打包（自动把 target/ 挪到 APFS，避开 ._ 元数据）
+  rust-parity.py        与 Python 卷逐字节对拍（--all-get --seed）
+  rust-coverage.py      路由覆盖：Rust 自应答 / 仍依赖 Python 各多少条
   check.sh              本地自检，与 CI 检查项对齐
-  bump-version.sh       一次改全版本号（VERSION / version.py / CHANGELOG）
-  sync-from-dev.sh      把上游开发目录同步进来（含三方合并，见 docs/SYNC.md）
+  bump-version.sh       改版本号（VERSION / version.py / CHANGELOG）
 docs/
-  ARCHITECTURE.md       架构与关键取舍
-  SYNC.md               同步机制：哪些文件是逐字镜像、哪些带补丁
+  ARCHITECTURE.md       分层、端口策略、更新流程
+  RUST-LANES.md         Rust 迁移的泳道划分与施工顺序
+  WINDOWS-PARITY.md     三平台能力差异与补法
 .github/workflows/
-  build.yml             推 v* 标签 → 双平台构建 → 发 Release
-  ci.yml                推代码 → 语法检查、导入冒烟、密钥与路径扫描
+  ci.yml                推代码 → 语法、冒烟、版本一致、密钥与路径扫描
+  build.yml             打 v* 标签 → PyInstaller 安装包（旧线，仍可用）
+  tauri.yml             打 v* 标签 → 桌面壳与移动壳，作为额外资产
 ```
 
-界面是**单文件 HTML**，没有前端构建步骤：改 `moshan/ui.html`，刷新页面即可见效果，不用重启服务。
-改 `.py` 则要重启。
+界面是**单文件 HTML**，没有前端构建步骤：改 `moshan/ui.html` 或 `moshan/dash.html`，
+刷新页面即可见效果。改 Rust 则要重新 `cargo build --release`；桌面壳装过的机器还得换一次
+sidecar（`bash scripts/stage-sidecar.sh --reuse` 之后重启壳）。
 
 ---
 
 ## 自己构建安装包
 
-```bash
-# macOS：产出 dist/Moshan.app 与 dist/Moshan-<版本>-macos-arm64.dmg
-bash packages/macos/build.sh
-bash packages/macos/build.sh --no-dmg      # 只要 .app，省一步
+服务端是 Rust、壳是 Tauri，两条命令：
 
-# Windows：产出 dist\Moshan 与安装程序
-powershell -ExecutionPolicy Bypass -File packages\windows\build.ps1
+```bash
+bash scripts/stage-sidecar.sh     # cargo build --release，产物按 target triple 放进 src-tauri/binaries/
+bash scripts/tauri-build.sh       # 出 .app / .dmg（mac）、nsis（win）、deb / AppImage（linux）
 ```
 
-Windows 的 `.exe` 只能在 Windows 上构建（PyInstaller 不支持交叉编译），所以
-`build.ps1` 走 CI 跑，或者你在 Windows 机器上本地跑。
+只想验证服务端、不要安装包：
+
+```bash
+cargo build --release --manifest-path rust/Cargo.toml
+bash scripts/tauri-build.sh --no-bundle      # 编二进制，不打包
+```
+
+`tauri-build.sh` 会先看仓库所在盘：不是 APFS / HFS 时把 `target/` 指到本机盘。
+在移动硬盘上直接 `cargo tauri build` 会被 exFAT 撒的 `._xxx` 噎住，报
+「stream did not contain valid UTF-8」—— 看起来像配置写错了，其实是文件系统。
+
+旧的 PyInstaller 线仍保留，只在需要对照 Python 实现时用：
+`bash scripts/stage-sidecar.sh --python`、`bash packages/macos/build.sh`、
+`powershell -File packages\windows\build.ps1`。**Windows 的 exe 只能在 Windows 上构建**，
+那条线一直交给 CI。
 
 发版流程：
 
 ```bash
-bash scripts/bump-version.sh 0.2.0     # 改 VERSION / version.py / CHANGELOG
-bash scripts/check.sh                  # 自检
-git add -A && git commit -m "chore: 0.2.0"
-git tag -a v0.2.0 -m "Moshan 0.2.0"
-git push origin main && git push origin v0.2.0
+bash scripts/bump-version.sh 0.4.0    # 改 VERSION / version.py / CHANGELOG
+                                      # 另两处要手改：src-tauri/tauri.conf.json、rust/Cargo.toml
+bash scripts/check.sh                 # 自检（会校验四处版本号一致）
+
+git switch -c release/0.4.0           # main 有 ruleset，必须走 PR
+git commit -am "chore: 0.4.0" && git push -u origin release/0.4.0
+# 开 PR → 合并 → 再打标签
+git tag -a v0.4.0 -m "Moshan 0.4.0" && git push origin v0.4.0
 ```
 
-推 `v*` 标签后 Actions 自动在两个平台构建、跑校验，把 dmg / exe 发到 Release，
-同时生成一份 `release.json`（体积与 sha256 清单，供人工核对）。
-两个 job 全绿才算发完（Release job 会等构建 job）。
+推 `v*` 标签后 Actions 自动构建、跑冒烟与校验，把安装包发到 Release，
+同时生成一份 `release.json`（体积与 sha256 清单，供人工核对）。两个 job 全绿才算发完。
 
 ---
 
@@ -510,11 +532,14 @@ macOS 用系统自带 `sips` 缩图；Linux / Windows 没有这个命令，会�
 - [`docs/SYNC.md`](docs/SYNC.md) —— 本仓库与上游开发目录的同步规则（哪些文件带补丁）
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) —— 提交前要跑什么
 
-改代码请守住两条底线：
+改代码请守住三条底线：
 
-1. **路径只能从 `paths.py` 取**，任何模块里都不许拼 `~/Documents/...` 这种字符串 ——
-   这是「别人装了也能跑」的前提，CI 会扫描硬编码家目录。
+1. **路径只能从 `rust/moshan-server/src/paths.rs` 取**，任何模块里都不许拼
+   `~/Documents/...` 这种字符串 —— 这是「别人装了也能跑」的前提，CI 会扫描硬编码家目录。
 2. **不要在程序目录写运行时数据**，配置、日志、缓存一律进状态目录，用户文件进资料库。
+3. **改了路由行为，跑一遍对拍**：`python3 scripts/rust-parity.py --all-get --seed`。
+   Rust 与 Python 卷对同一份状态要回同样的字节；差异是有意的话，写进
+   `docs/ARCHITECTURE.md` 的已知边界，别让它悄悄漂移。
 
 ---
 
