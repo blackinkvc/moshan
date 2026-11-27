@@ -1,0 +1,99 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "moshan-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "墨山中台服务端（Rust 重写）。按波次替换 Python 实现，未迁路由转发给上游。"
+
+[[bin]]
+name = "moshan-server"
+path = "src/main.rs"
+
+# 迁移期把剩余波次做成「泳道」特性：每条泳道可单独编译、单独运行、单独对拍。
+# 并行施工时，A 泳道的半成品不会挡住 B 泳道的 cargo check —— 否则任何一个文件
+# 写坏都会让所有人停在同一条报错上。全部迁完后把这里删掉（或 default 置全开）。
+[features]
+# 全量默认：`cargo build --release` 出来的就是完整服务。
+# 单条泳道仍可 `--no-default-features --features lane_xx` 单独编，
+# 用于定位某条泳道的问题（不然任何一处编译错都会挡住所有人）。
+default = [
+    "lane_u",
+    "lane_w4b",
+    "lane_w4c",
+    "lane_w5a",
+    "lane_w5b",
+    "lane_w5d",
+    "lane_w5e",
+    "lane_w6a",
+    "lane_w6b",
+    "lane_w7a",
+    "lane_w7b",
+]
+lane_w4b = []
+lane_w4c = []
+lane_w5a = []
+lane_w5b = []
+lane_w5d = []
+lane_w5e = []
+lane_w6a = []
+lane_w6b = []
+lane_w7a = []
+lane_w7b = []
+lane_u = []
+# 交叉验证用：在本机（macOS）把 Linux / Windows 的实现分支也编进来，
+# 做类型检查。平台差异散在 60 多处 cfg 里，只有编译过一遍才知道有没有写漏。
+# 注意：它们只用于 `cargo check`，不能 `cargo build`（Windows 的 extern 符号
+# 在 mac 上链接不到）。
+sim_linux = []
+sim_windows = []
+
+[dependencies]
+axum = { version = "0.8", features = ["multipart"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+# 查询参数解析（`?path=` 含中文/空格时必须走 urlencoded 解码，与 FastAPI 同口径）。
+serde = { version = "1", features = ["derive"] }
+# 磁盘用量：statvfs 的 f_blocks/f_bfree/f_bavail 才是 `shutil.disk_usage` 的原始量，
+# 自己读 df 会因为列宽/本地化解析出错。
+libc = "0.2"
+# 分享过期时间要按本地时区渲染成 "%m-%d %H:%M"，和 Python 的 time.localtime 一致。
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# 内联缩略图：缓存键是 sha1，内联体是 base64。键必须与 Python 逐字节一致，
+# 否则两边各生成一份缓存，对拍时还会因为写盘让磁盘用量抖动。
+sha1 = "0.10"
+base64 = "0.22"
+# 只需要 http/1.1，但**必须带 TLS**：账单拉取、文章抓取、更新检查全是 https，
+# 少了 rustls 这些接口只能回「握手失败」，等于没迁。
+reqwest = { version = "0.12", default-features = false, features = ["stream", "json", "rustls-tls"] }
+futures-util = "0.3"
+# Python 侧大量用 re 做「从一段话里抠字段」，逐条译成正则字面量最稳，
+# 手写字符扫描反而容易在边界（全角空格、中文标点、括号）上分叉。
+regex = "1"
+# 查询串里的 `%XX` 要按 UTF-8 还原；`?path=` 不能只解半截。
+percent-encoding = "2"
+# `/api/updates` 与 pack 校验要算 sha256（与 Python 的 hashlib 同结果）。
+sha2 = "0.10"
+# 微信网关是 WebSocket RPC（ws://127.0.0.1:18789）：简报推送、抓图通知都走它。
+# 只要明文 ws（网关在本机回环），不引 wss 的证书栈。
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake"] }
+# 局域网 HTTPS：手机连 0.0.0.0:8321 时要真证书，否则令牌明文过网。
+# 后端固定 ring —— 与 reqwest 那条 rustls 用的是同一个 provider，
+# 两套 provider 同时编进去会让 `ServerConfig::builder()` 在运行时找不到默认值。
+tokio-rustls = "0.26"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2"
+# axum 的 `serve` 只吃 TcpListener；TLS 流要给 hyper 自己喂。
+hyper = { version = "1", features = ["http1", "http2", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tower = { version = "0.5", features = ["util"] }
+# 自签证书：SAN 要跟着局域网 IP 变，而 Windows 上没有 openssl 命令。
+# 自己签才有一条三平台通用的路径。
+# 后端固定 ring：整棵依赖树（rustls + rcgen）只有一套密码学实现，
+# 交叉编译与 CI 都不用额外装 NASM/CMake。RSA 证书由 openssl 通道负责
+# （mac/Linux 都有，且与 Python 同一条命令）；没有 openssl 的平台（Windows）
+# 落到 rcgen 的 ECDSA —— 这一点在启动日志里明说，不假装一样。
+rcgen = { version = "0.13", default-features = false, features = ["pem", "crypto", "ring"] }
+# 更新包解压 / 源码包削壳：原来靠 `/usr/bin/unzip` 与 `ditto`，
+# 那是 macOS 专有路径，Windows 上直接「解压失败」。
+zip = { version = "4", default-features = false, features = ["deflate"] }

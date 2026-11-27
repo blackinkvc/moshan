@@ -146,12 +146,17 @@ else
 fi
 
 say "== 6. 版本号一致性 =="
+# Tauri 的 version 是静态字符串，不会跟着 VERSION 走。四处不一致的后果很隐蔽：
+# 安装包文件名、Gatekeeper 显示、应用内更新比对全按不同数字走，
+# 用户会收到「已经是最新」但其实装的是旧壳。
 V1=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' moshan/version.py | head -1)
 V2=$(head -1 VERSION 2>/dev/null | tr -d '[:space:]')
-if [ -n "$V1" ] && [ "$V1" = "$V2" ]; then
-  ok "version.py 与 VERSION 一致：$V1"
+V3=$(sed -n 's/.*"version": "\([^"]*\)".*/\1/p' src-tauri/tauri.conf.json 2>/dev/null | head -1)
+V4=$(sed -n 's/^version = "\([^"]*\)"/\1/p' src-tauri/Cargo.toml 2>/dev/null | head -1)
+if [ -n "$V1" ] && [ "$V1" = "$V2" ] && [ "$V1" = "$V3" ] && [ "$V1" = "$V4" ]; then
+  ok "version.py / VERSION / tauri.conf.json / Cargo.toml 一致：$V1"
 else
-  bad "版本号不一致：version.py=$V1 / VERSION=$V2"
+  bad "版本号不一致：version.py=$V1 / VERSION=$V2 / tauri.conf.json=$V3 / Cargo.toml=$V4"
 fi
 
 say "== 7. 自述通道（任何 agent 都能报）=="

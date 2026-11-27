@@ -1,0 +1,39 @@
+[package]
+name = "moshan-desktop"
+version = "0.3.13"
+description = "墨山中台桌面壳（Tauri）"
+authors = ["Moshan contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/blackinkvc/moshan"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+# 名字带 _lib 是 Tauri 移动端的硬要求：Android 侧生成的 Kotlin 代码按这个符号找入口，
+# 改成别的名字会在 tauri android build 时报 unresolved reference。
+name = "moshan_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+# custom-protocol 由 tauri build 自动开启；开发态走 loading.html 本地资源。
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+opt-level = "s"
+panic = "abort"
+# 这里刻意不加 `lto` 与 `strip`：
+#   strip = true   → 编译期要 dlopen 的 proc-macro dylib（serde_derive / phf_macros /
+#                    thiserror-impl…）被一起 strip，Mach-O 的 LINKEDIT 字符串池错位，
+#                    rustc 报 `can't find crate for serde_derive`。
+#   lto = true     → fat LTO 同样作用于这些 dylib，实测产出仍不可加载
+#                    （`mis-aligned LINKEDIT string pool`）。
+# 两处报错都落在依赖库里，看不出跟本项目配置有关。本机 macOS 27 + CLT ld 组合必现。
+# 只想减体积就在打包后单独 strip 主二进制。

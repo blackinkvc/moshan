@@ -1,0 +1,328 @@
+name: tauri
+
+# Tauri 桌面壳（macOS / Windows / Linux）与 Android 壳。
+#
+# 与 build.yml 的分工：
+#   build.yml  → 既有 PyInstaller 安装包（dmg / Setup.exe），带完整冒烟与签名校验，
+#                是当前用户实际下载的那条线，不动它。
+#   tauri.yml  → 新增的桌面壳与移动壳，产物独立上传；打 tag 时作为额外资产附加到同一个 Release。
+# 两条线互不阻塞：桌面壳出问题不该让已有安装包发不出去，反之亦然。
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src-tauri/**"
+      - "moshan/**"
+      - "packages/moshan-sidecar.spec"
+      - "scripts/stage-sidecar.sh"
+      - ".github/workflows/tauri.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  # ------------------------------------------------ 桌面：macOS / Windows / Linux
+  desktop:
+    name: desktop (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            label: macos-arm64
+            triple: aarch64-apple-darwin
+          - os: windows-latest
+            label: windows-x64
+            triple: x86_64-pc-windows-msvc
+          - os: ubuntu-22.04
+            label: linux-x64
+            triple: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.triple }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.triple }}
+
+      - name: 安装 Tauri CLI
+        # 用 npm 发的预编译二进制，比 cargo install tauri-cli 快一个数量级
+        # （后者要在 runner 上从零编译上百个 crate）。
+        run: npm install -g @tauri-apps/cli@^2
+
+      - name: Linux 系统依赖（WebKitGTK / AppImage 工具链）
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf build-essential libssl-dev file
+
+      # 可移植性审计：跑一次就够（纯源码静态检查，与 runner 平台无关）。
+      # 它查的是「每处 std::os::unix / libc:: 是否真被『对面平台会编掉』的 cfg 挡住」——
+      # 本机与 CI 的 mac/linux runner 都是 unix，裸 #[cfg(unix)] 编得过但 Windows 会炸，
+      # 只有这条能在编译之前就把它拦住。
+      - name: 可移植性审计（平台专有调用是否被 cfg 隔离）
+        if: matrix.os == 'ubuntu-22.04'
+        run: python3 scripts/rust-portability.py --ci
+
+      # 服务端已全量 Rust，不再需要 PyInstaller 与 requirements.txt。
+      # 下面冒烟步骤里的 python3 只用来读 config.json（runner 自带）。
+      - name: 打 sidecar（编译 Rust 服务端并按 target triple 命名）
+        shell: bash
+        run: bash scripts/stage-sidecar.sh
+
+      # 服务端自己的冒烟：Linux/Windows 上「能编译」不等于「能跑」——
+      # 打开路径、缩略图、解压这些分支过去只在 macOS 走过，这里至少把
+      # 进程拉起来并拿到 /api/ping 的 200，才会进到壳的构建。
+      # 只用 bash（runner 自带），不碰产物名与矩阵结构。
+      - name: 服务端冒烟（Linux/Windows）
+        if: matrix.os != 'macos-latest'
+        shell: bash
+        run: |
+          set -eu
+          BIN="src-tauri/binaries/moshan-${{ matrix.triple }}"
+          if [ ! -f "$BIN" ] && [ -f "$BIN.exe" ]; then BIN="$BIN.exe"; fi
+          test -f "$BIN" || { echo "::error::没有 sidecar 产物：$BIN"; exit 1; }
+          # 用 runner 的原生临时目录：Windows 上 mktemp 给的是 MSYS 路径（/tmp/…），
+          # 原生的 moshan-server.exe 认不出来，会把状态目录建到奇怪的地方。
+          TMPM="${RUNNER_TEMP:-/tmp}/moshan-rs-smoke-$$"
+          mkdir -p "$TMPM"
+          MOSHAN_HOME="$TMPM" MOSHAN_NO_SCHED=1 MOSHAN_NO_PUSH=1 MOSHAN_RS_PORT=18400 \
+            "$BIN" >"$TMPM/server.log" 2>&1 &
+          PID=$!
+          trap 'kill $PID 2>/dev/null || taskkill //F //PID $PID 2>/dev/null || true; rm -rf "$TMPM"' EXIT
+          CODE=000
+          for i in $(seq 1 60); do
+            CODE=$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' -m 3 \
+                     http://127.0.0.1:18400/api/ping || true)
+            [ "$CODE" = "200" ] && break
+            sleep 1
+          done
+          echo "GET /api/ping -> $CODE"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::服务端起来了但不应答（Linux/Windows 分支有编译期之外的问题）"
+            tail -60 "$TMPM/server.log" || true
+            exit 1
+          fi
+
+      - name: 构建桌面壳
+        working-directory: src-tauri
+        run: npx tauri build --target ${{ matrix.triple }}
+
+      # 冒烟与 build.yml 同一条判据：进程起来不算数，要拿到 /api/ping 的 200。
+      # 差别在于这里验的是「壳拉起 sidecar」这条链路，而不是 launcher 自己开浏览器。
+      - name: 冒烟（macOS）
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          set -eu
+          APP="src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Moshan.app"
+          test -d "$APP" || { echo "::error::没有产出 .app"; exit 1; }
+          TMPH=$(mktemp -d); TMPM=$(mktemp -d)
+          HOME="$TMPH" MOSHAN_HOME="$TMPM" "$APP/Contents/MacOS/moshan-desktop" >/dev/null 2>&1 &
+          PID=$!
+          trap 'kill $PID 2>/dev/null || true' EXIT
+          CFG="$TMPM/state/config.json"
+          for i in $(seq 1 90); do [ -f "$CFG" ] && break; sleep 1; done
+          test -f "$CFG" || { echo "::error::壳没拉起 sidecar（config.json 一直没出现）"; \
+            tail -40 "$TMPM/state/logs/moshan.log" 2>/dev/null || true; exit 1; }
+          P=$(python3 -c "import json;print(json.load(open('$CFG'))['local_port'])")
+          K=$(python3 -c "import json;print(json.load(open('$CFG'))['token'])")
+          for i in $(seq 1 30); do
+            CODE=$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' -m 3 \
+                     -H "X-Token: $K" "http://127.0.0.1:$P/api/ping" || true)
+            [ "$CODE" = "200" ] && break; sleep 1
+          done
+          echo "GET /api/ping -> $CODE"
+          [ "$CODE" = "200" ] || { echo "::error::壳起来了但服务不应答"; exit 1; }
+          codesign --verify --deep --strict "$APP" || { echo "::error::壳的签名不完整（sidecar 没签？）"; exit 1; }
+
+      - name: 冒烟（Windows）
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $exe = "src-tauri/target/${{ matrix.triple }}/release/moshan-desktop.exe"
+          if (-not (Test-Path $exe)) { Write-Error "没有产出 exe"; exit 1 }
+          $home2 = Join-Path $env:RUNNER_TEMP "mhome"
+          $state = Join-Path $env:RUNNER_TEMP "mstate"
+          New-Item -ItemType Directory -Force -Path $home2, $state | Out-Null
+          $env:HOME = $home2; $env:MOSHAN_HOME = $state
+          $p = Start-Process -FilePath $exe -PassThru
+          $cfg = Join-Path $state "state\config.json"
+          for ($i = 0; $i -lt 90; $i++) { if (Test-Path $cfg) { break }; Start-Sleep 1 }
+          if (-not (Test-Path $cfg)) {
+            Get-Content (Join-Path $state "state\logs\moshan.log") -ErrorAction SilentlyContinue
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            Write-Error "壳没拉起 sidecar"; exit 1
+          }
+          $j = Get-Content $cfg -Raw | ConvertFrom-Json
+          $code = "000"
+          for ($i = 0; $i -lt 30; $i++) {
+            try {
+              $r = Invoke-WebRequest -Uri "http://127.0.0.1:$($j.local_port)/api/ping" `
+                   -Headers @{ "X-Token" = $j.token } -TimeoutSec 3 -UseBasicParsing
+              $code = "$($r.StatusCode)"; if ($code -eq "200") { break }
+            } catch { $code = "err" }
+            Start-Sleep 1
+          }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          Write-Host "GET /api/ping -> $code"
+          if ($code -ne "200") { Write-Error "壳起来了但服务不应答"; exit 1 }
+
+      - name: 冒烟（Linux）
+        # runner 没有显示服务，GUI 起不来；这里验证两件事：
+        # ① 壳的二进制依赖都能解析（ldd 无 not found）② 内嵌的 Python 服务能应答。
+        # GUI 本身由 macOS/Windows 两个 job 覆盖，Linux 侧不再重复跑 Xvfb。
+        if: matrix.os == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          set -eu
+          BIN="src-tauri/target/${{ matrix.triple }}/release/moshan-desktop"
+          test -f "$BIN" || { echo "::error::没有产出二进制"; exit 1; }
+          if ldd "$BIN" | grep -q "not found"; then
+            echo "::error::壳的动态库缺失"; ldd "$BIN" | grep "not found"; exit 1
+          fi
+          TMPM=$(mktemp -d)
+          MOSHAN_HOME="$TMPM" MOSHAN_NO_BROWSER=1 \
+            "src-tauri/binaries/moshan-${{ matrix.triple }}" >/dev/null 2>&1 &
+          PID=$!; trap 'kill $PID 2>/dev/null || true' EXIT
+          CFG="$TMPM/state/config.json"
+          for i in $(seq 1 90); do [ -f "$CFG" ] && break; sleep 1; done
+          test -f "$CFG" || { echo "::error::sidecar 没起来"; exit 1; }
+          P=$(python3 -c "import json;print(json.load(open('$CFG'))['local_port'])")
+          K=$(python3 -c "import json;print(json.load(open('$CFG'))['token'])")
+          for i in $(seq 1 30); do
+            CODE=$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' -m 3 \
+                     -H "X-Token: $K" "http://127.0.0.1:$P/api/ping" || true)
+            [ "$CODE" = "200" ] && break; sleep 1
+          done
+          echo "GET /api/ping -> $CODE"
+          [ "$CODE" = "200" ] || { echo "::error::sidecar 不应答"; exit 1; }
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: moshan-desktop-${{ matrix.label }}
+          path: |
+            src-tauri/target/${{ matrix.triple }}/release/bundle/dmg/*.dmg
+            src-tauri/target/${{ matrix.triple }}/release/bundle/macos/*.app
+            src-tauri/target/${{ matrix.triple }}/release/bundle/nsis/*.exe
+            src-tauri/target/${{ matrix.triple }}/release/bundle/deb/*.deb
+            src-tauri/target/${{ matrix.triple }}/release/bundle/appimage/*.AppImage
+          if-no-files-found: warn
+
+  # ------------------------------------------------ Android（远端客户端壳）
+  #
+  # Android 跑不了桌面 sidecar（Linux 二进制在 Android 上不可执行，bionic 与 glibc 不兼容）。
+  # 所以这一版是「控制器」：装完先填桌面机地址与令牌，之后加载对方的中台页面。
+  # 要改成「自带服务」只有两条路，都不轻：Chaquopy 内嵌 CPython（插件生态基本废），
+  # 或把核心重写成 Rust（见 docs/MIGRATION-ASSESSMENT.md 的结论）。
+  android:
+    name: android (apk)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: 安装 NDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "ndk;27.0.12077973" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: 环境变量
+        run: |
+          NDK_DIR="$ANDROID_SDK_ROOT/ndk/27.0.12077973"
+          echo "NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
+
+      - name: 安装 Tauri CLI
+        run: npm install -g @tauri-apps/cli@^2
+
+      - name: 生成 Android 工程
+        working-directory: src-tauri
+        run: npx tauri android init --ci
+
+      # 两处必须改，否则 APK 装上就是个连不上任何东西的空壳：
+      # ① 没有 INTERNET 权限，网络请求直接被系统拒；
+      # ② Android 9+ 默认禁明文 HTTP，而墨山给手机用的就是 8322 明文口（自签证书安卓不认）。
+      - name: 补 INTERNET 权限与明文流量（仅本地网络用途）
+        working-directory: src-tauri
+        run: |
+          set -eu
+          M=gen/android/app/src/main/AndroidManifest.xml
+          test -f "$M" || { echo "::error::没找到 $M"; find gen/android -name AndroidManifest.xml; exit 1; }
+          python3 - "$M" <<'PY'
+          import sys, pathlib
+          p = pathlib.Path(sys.argv[1])
+          s = p.read_text(encoding="utf-8")
+          if "android.permission.INTERNET" not in s:
+              s = s.replace("<application", '<uses-permission android:name="android.permission.INTERNET" />\n    <application', 1)
+          if "usesCleartextTraffic" not in s:
+              s = s.replace("<application", '<application android:usesCleartextTraffic="true"', 1)
+          p.write_text(s, encoding="utf-8")
+          print(s[:1200])
+          PY
+
+      - name: 构建 APK（debug 签名）
+        working-directory: src-tauri
+        run: npx tauri android build --apk --debug
+
+      - name: 上传 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: moshan-android-apk
+          path: |
+            src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+
+  # ------------------------------------------------ 打 tag 时附加到已有 Release
+  attach:
+    name: 附加到 Release
+    needs: [desktop, android]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: 附加资产
+        uses: softprops/action-gh-release@v2
+        with:
+          # 复用 build.yml 已经建好的那个 Release，只追加资产。
+          tag_name: ${{ github.ref_name }}
+          files: |
+            artifacts/*.dmg
+            artifacts/*.exe
+            artifacts/*.deb
+            artifacts/*.AppImage
+            artifacts/*.apk

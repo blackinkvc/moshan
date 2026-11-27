@@ -70,7 +70,17 @@ def configure(roots: list[str], trash: str, shares: str) -> None:
 
 
 def safe_path(raw: str, *, must_exist: bool = False) -> Path:
-    """只允许 allowed_roots 以内的路径，挡住 ../ 与软链越界。"""
+    """只允许 allowed_roots 以内的路径，挡住 ../ 与软链越界。
+
+    2026-11-26 修：数据根下几乎每个目录都是符号链接（`07-收件箱 -> /Volumes/AI仓库/资料库/07-收件箱`），
+    而 `resolve()` 会把链接解成真实路径，真实路径自然不在 roots 里 —— 于是手机端点进任何文件夹都
+    报 403「这个路径不在允许范围内」，点上一级也一样（不带 path 时走默认目录、不经这道校验，
+    所以首页反倒能出列表，看着像「有的目录能进有的不能」）。
+
+    口径改成：**字面路径**落在某个 root 之内就放行 —— root 是用户自己选的目录，里面的符号链接
+    也是他自己建的，信任 root 的内容等于信任它的链接。返回的仍是 resolve 后的真实路径，调用方
+    拿去做读写不受影响。越界（`../`、根外路径）照旧拦。
+    """
     if not str(raw).strip():
         raise PathError("路径为空")
     p = Path(raw).expanduser()
@@ -78,15 +88,22 @@ def safe_path(raw: str, *, must_exist: bool = False) -> Path:
         p = p.resolve()
     except (OSError, RuntimeError):
         raise PathError("路径无法解析")
+    # 不解析符号链接的绝对路径，只用来判「字面上是不是在根里」
+    lex = Path(os.path.abspath(str(Path(raw).expanduser())))
     for root in ROOTS:
         try:
             r = root.resolve()
-        except OSError:
+            r0 = Path(os.path.abspath(str(root.expanduser())))
+        except (OSError, RuntimeError):
             continue
-        if p == r or r in p.parents:
-            if must_exist and not p.exists():
+        if p == r or r in p.parents or lex == r0 or r0 in lex.parents:
+            if must_exist and not lex.exists():
                 raise PathError("文件不存在", 404)
-            return p
+            # 返回**用户视角**的字面路径（含符号链接），不返回 resolve 结果：
+            # 上层拿它拼面包屑、给前端回传，一旦换成分真实的 /Volumes/... 就会
+            # ① 面包屑退化成只剩根 ② 下一次带 path 的请求过不了这道校验。
+            # 读写交给 OS 解引用，行为不变。
+            return lex
     raise PathError("这个路径不在允许范围内", 403)
 
 

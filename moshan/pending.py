@@ -10,7 +10,7 @@
   ② 问：后台线程把「问句」发到微信（wechat_push，不经过 4B）——一条一并发，
      多条合成一条消息，免得手机上一串叮咚。发失败会退避重试，服务重启后
      仍会自动补发（`pushed_at` 存在 _待定.json 里，重启不丢）；
-  ③ 认：用户回「存图」「存文章」「算了」这类话（回 1 / 2 也认），answer()
+  ③ 认：用户回「存图」「存文章」「算了」这类话（回 1 / 2 / 3 也认），answer()
      找到那一条，交给 linkbox / articlebox 注册进来的处理函数落库，办完
      再把结果发回聊天窗。
 
@@ -110,7 +110,7 @@ def _prune(items: list[dict]) -> list[dict]:
 
 def add(kind: str, job: str = "", url: str = "", title: str = "",
         platform: str = "", dir_name: str = "", text_len: int = 0,
-        n_img: int = 0, suggest: str = "", why: str = "",
+        n_img: int = 0, n_video: int = 0, suggest: str = "", why: str = "",
         agent: str = "", channel: str = "", conv: str = "") -> dict:
     """挂一条，返回这条本身（含 id 与要发出去的问题）。
 
@@ -122,6 +122,7 @@ def add(kind: str, job: str = "", url: str = "", title: str = "",
         "kind": kind,                       # link（已经是图集目录） / article（还没落目录）
         "job": job, "url": url, "title": title, "platform": platform,
         "dir_name": dir_name, "text_len": int(text_len or 0), "n_img": int(n_img or 0),
+        "n_video": int(n_video or 0),
         "suggest": suggest, "why": why,
         "agent": agent or "main", "channel": channel or _default_channel(), "conv": conv,
         "state": "open", "asked_at": time.time(), "answered_at": 0.0,
@@ -136,15 +137,29 @@ def add(kind: str, job: str = "", url: str = "", title: str = "",
 
 
 def question(e: dict) -> str:
-    """单条的问句（工作台的问句行也拿它做文案）。"""
-    return _one_line(e) + "，两边都像 —— 回「存图」还是「存文章」？"
+    """单条的问句（工作台的问句行也拿它做文案）。
+
+    2026-11-26 用户改的口径：三个选项都塞进一句话，用「回1/回2/回3」标号，
+    不再另起一行括号说明 —— 手机上多一行就多一次滑动。数字解码见 parse_answer，
+    `_G/_A/_D` 本来就认 1/2/3，改文案不用动解析。
+    """
+    return (_one_line(e) + "，两边都像 —— 回1「存图」；回2「存文章」；"
+            "回3「算了」就当没存；")
 
 
 def _one_line(e: dict) -> str:
     title = str(e.get("title") or "").strip()
     name = ("《%s》" % title) if title else "这条链接"
     n, c = int(e.get("n_img") or 0), int(e.get("text_len") or 0)
-    return f"{name}：{n} 张图、{c} 字"
+    v = int(e.get("n_video") or 0)
+    # 视频说「段」：抖音一条作品就是一个视频，说成「1 张图」很别扭。
+    if v and n <= v:
+        what = f"{v} 段视频"
+    elif v:
+        what = f"{n - v} 张图 + {v} 段视频"
+    else:
+        what = f"{n} 张图"
+    return f"{name}：{what}、{c} 字"
 
 
 def compose(items: list[dict]) -> str:
@@ -152,8 +167,7 @@ def compose(items: list[dict]) -> str:
     if not items:
         return ""
     if len(items) == 1:
-        return (question(items[0]) + "\n"
-                "（回「算了」就当没存；只想快回可以打 1 / 2）")
+        return question(items[0])          # 选项已经并进问句，别再补一行括号
     lines = [f"有 {len(items)} 条拿不准，回一句就行："]
     for k, e in enumerate(items, 1):
         lines.append(f"{k}. {_one_line(e)}")
@@ -282,6 +296,9 @@ def parse_answer(text: str) -> tuple[str, str]:
     s = re.sub(r"\s+", "", str(text or "")).strip("。.!！,，~ ")
     if not s:
         return "", ""
+    # 模板写的是「回1/回2/回3」，用户很可能连「回」字一起打回来。
+    # 先把开头那个「回(复)」剥掉，剩下的仍走下面同一套判定。
+    s = re.sub(r"^回(?:复)?(?=[123])", "", s)
     if _D.match(s):
         return "drop", "one"
     for prefix in _ALL:

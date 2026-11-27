@@ -331,6 +331,9 @@ class LinkBox:
         saved = r.get("saved") or []
         dir_name = r.get("dir") or ""
         total = int(r.get("bytes") or 0)
+        # 视频（抖音/微博）单独数一份：它不参与「图多还是字多」的判断，
+        # 页面上的「N 张」也要说成「N 段视频」。
+        n_video = sum(1 for s in saved if str(s.get("kind") or "") == "video")
 
         # ---- 内容判定：图多字少才是图集，字够长就是文章 ----
         # 抓到之前谁也不知道这条是长文还是照片集，所以判在这一步。
@@ -339,29 +342,33 @@ class LinkBox:
         if dir_name and saved:
             n_txt, layout, title = _meta_probe(ARCHIVE_ROOT / dir_name)
             verdict = judge.decide(n_txt, len(saved), platform, hint or text,
-                                   layout or str(r.get("layout") or ""), title)
+                                   layout or str(r.get("layout") or ""), title,
+                                   n_video=n_video)
             if verdict.get("ask"):
                 e = pending.add("link", job=jid, url=r.get("url") or "",
                                 title=title, platform=platform, dir_name=dir_name,
                                 text_len=n_txt, n_img=len(saved),
+                                n_video=n_video,
                                 suggest=verdict.get("mode") or "",
                                 why=verdict.get("why") or "")
                 self._set(jid, state="ask", platform=platform, dir_name=dir_name,
                           dir=str(ARCHIVE_ROOT / dir_name), images=len(saved),
                           bytes=total, size=human(total), routed="", pid=e["id"],
                           ambiguous=True, why=verdict.get("why") or "",
-                          title=title, text_len=n_txt,
+                          title=title, text_len=n_txt, n_video=n_video,
                           message=pending.question(e))
                 return
             if verdict["mode"] == "article":
                 self._promote(jid, r.get("url") or "", dir_name, platform, verdict["why"])
                 return
 
+        what = f"{n_video} 段视频" if n_video and not (len(saved) - n_video) else \
+            f"{len(saved)} 张"
         self._set(
             jid, state="done", platform=platform, dir_name=dir_name, routed="gallery",
             dir=str(ARCHIVE_ROOT / dir_name) if dir_name else "",
-            images=len(saved), bytes=total, size=human(total),
-            message=f"{len(saved)} 张已存入 {dir_name}" if saved else "没有新文件",
+            images=len(saved), n_video=n_video, bytes=total, size=human(total),
+            message=f"{what}已存入 {dir_name}" if saved else "没有新文件",
         )
 
     def _promote(self, jid: str, url: str, dir_name: str, platform: str, why: str) -> None:

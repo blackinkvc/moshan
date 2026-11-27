@@ -197,7 +197,7 @@ _PAGE = """<!DOCTYPE html>
   <span class="ver" id="ver">Moshan</span>
   <span class="tag" id="chan"></span>
 </header>
-<p class="lead">本地优先的个人中台 · MIT 许可 · 数据全部留在本机</p>
+<p class="lead">本地优先的个人中台 · MIT or Apache-2.0 双许可 · 数据全部留在本机</p>
 
 <div class="card">
   <h2>更新</h2>
@@ -241,7 +241,7 @@ _PAGE = """<!DOCTYPE html>
   </div>
 </div>
 
-<p class="foot">Moshan · 墨山中台 · MIT</p>
+<p class="foot">Moshan · 墨山中台 · MIT OR Apache-2.0</p>
 </div>
 
 <script>
@@ -966,6 +966,10 @@ def inject(html: str, drawer: bool = False) -> str:
     中台一张卡都画不出来（2026-11-25 踩过）。
     """
     if "mosh-upd-row" in html or "mosh-about" in html:
+        return html
+    # 2026-11-26：口袋首页的右下角胶囊撤了 —— 版本入口统一收进顶栏「更多」抽屉，
+    # 那颗浮标正好压在阅读列表和对话输入框上（小屏尤其明显）。中台那边不受影响。
+    if not drawer:
         return html
     badge = _DRAWER_ROW if drawer else _BADGE
     badge = badge.replace("__VER__", version.VERSION)

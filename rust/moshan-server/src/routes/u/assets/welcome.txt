@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>欢迎使用 Moshan 墨山中台</title>
+<style>
+  :root{
+    --bg:#f4f1ea; --card:#fffdf8; --line:#e2ddd1; --tx:#23231f; --tx2:#6b6a62;
+    --tx3:#96938a; --ok:#2f7d54; --warn:#a8641c; --bad:#a33a32; --accent:#2b4b6f;
+    --radius:14px; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{--bg:#15161a; --card:#1d1f24; --line:#2e3138; --tx:#e9e7e1; --tx2:#9a988f;
+          --tx3:#75736b; --ok:#5dbf8a; --warn:#d99a4e; --bad:#e07b70; --accent:#8fb4d9;}
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+       font:15px/1.65 -apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+       padding:40px 20px 72px}
+  .wrap{max-width:740px;margin:0 auto}
+  header{display:flex;align-items:baseline;gap:12px;margin-bottom:6px}
+  h1{font-size:26px;margin:0;letter-spacing:.5px}
+  .ver{font:12px/1 var(--mono);color:var(--tx2);border:1px solid var(--line);
+       padding:4px 8px;border-radius:99px}
+  .lead{color:var(--tx2);margin:0 0 26px;font-size:14px}
+  .step{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+        padding:20px 22px;margin-bottom:14px}
+  .step h2{font-size:16px;margin:0 0 4px;display:flex;align-items:center;gap:9px}
+  .num{display:inline-flex;width:22px;height:22px;border-radius:50%;
+       background:var(--accent);color:#fff;font:600 12px/22px var(--mono);
+       text-align:center;justify-content:center;flex:0 0 auto}
+  .hint{color:var(--tx2);font-size:13.5px;margin:2px 0 14px}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .picklbl{font-size:13px;color:var(--tx2);min-width:66px}
+  .tag{font:12px/1 var(--mono);padding:4px 9px;border-radius:6px;
+       border:1px solid var(--line);color:var(--tx2)}
+  .tag.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,var(--line))}
+  .tag.bad{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,var(--line))}
+  .tag.warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,var(--line))}
+  button{font:inherit;padding:9px 16px;border-radius:9px;border:1px solid var(--accent);
+         background:var(--accent);color:#fff;cursor:pointer}
+  button.ghost{background:transparent;color:var(--accent)}
+  button.mini{padding:5px 11px;font-size:13px}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  input[type=text]{font:inherit;padding:8px 11px;border-radius:9px;
+       border:1px solid var(--line);background:var(--bg);color:var(--tx);width:100%}
+  pre{font:12px/1.55 var(--mono);background:var(--bg);border:1px solid var(--line);
+      border-radius:9px;padding:11px 13px;max-height:190px;overflow:auto;
+      white-space:pre-wrap;word-break:break-all;margin:12px 0 0;color:var(--tx2)}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:13px;
+      color:var(--tx2);margin-top:10px}
+  .kv b{color:var(--tx);font-weight:500}
+  .foot{text-align:center;color:var(--tx2);font-size:12.5px;margin-top:26px}
+  .path{font:11.5px/1.5 var(--mono);word-break:break-all;overflow-wrap:anywhere}
+
+  /* 功能选择：两列小格子，点一下切换 */
+  .feats{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:4px 0 14px}
+  @media (max-width:560px){ .feats{grid-template-columns:1fr} }
+  .feat{display:flex;gap:9px;align-items:flex-start;border:1px solid var(--line);
+        border-radius:10px;padding:9px 11px;cursor:pointer;background:var(--bg);
+        transition:border-color .12s,background .12s}
+  .feat:hover{border-color:var(--accent)}
+  .feat input{width:15px;height:15px;margin:3px 0 0;flex:0 0 auto;accent-color:var(--accent)}
+  .feat .fn{font-size:13.5px;font-weight:600;line-height:1.35}
+  .feat .fd{font-size:11.5px;color:var(--tx3);line-height:1.45;margin-top:1px}
+  .feat.off{opacity:.55}
+
+  .llm{margin-top:4px;border-top:1px dashed var(--line);padding-top:14px}
+  .llm .row{margin-top:10px}
+  .llmBody[hidden]{display:none}
+
+  /* 模型来源三选（2026-11-25）：本机已有 / 下载新的 / 接 API。
+     这台机上跑的不一定是默认那个 4B —— 35B 的专家模型、LM Studio 里加载着的、
+     或者干脆接个云 API，都从这里走。 */
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .seg button{border:0;border-radius:0;background:transparent;color:var(--tx2);
+              padding:6px 12px;font-size:13px}
+  .seg button+button{border-left:1px solid var(--line)}
+  .seg button.on{background:var(--accent);color:#fff}
+  .pane{margin-top:10px}
+  .pane[hidden]{display:none}
+  .llmBody select{font:inherit;font-size:13px;padding:7px 10px;border-radius:9px;
+                  border:1px solid var(--line);background:var(--bg);color:var(--tx);
+                  max-width:100%}
+  .llmBody .note{font-size:12px;color:var(--tx3);line-height:1.5;margin:10px 0 0;
+                 white-space:pre-wrap;word-break:break-all}
+
+  /* 存什么：三栏清单 */
+  .lbl{display:inline-block;font:600 11.5px/1 var(--mono);padding:3px 7px;border-radius:5px;
+       margin:14px 0 7px}
+  .lbl.yes{background:color-mix(in srgb,var(--ok) 14%,transparent);color:var(--ok)}
+  .lbl.no{background:color-mix(in srgb,var(--bad) 14%,transparent);color:var(--bad)}
+  .lbl.ro{background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent)}
+  ul.dt{margin:0;padding-left:19px;font-size:13.5px;color:var(--tx2);line-height:1.72}
+  ul.dt li b{color:var(--tx);font-weight:600}
+  ul.dt code{font:11.5px var(--mono);background:var(--bg);padding:1px 5px;border-radius:4px}
+</style></head>
+<body><div class="wrap">
+  <header><h1>墨山中台</h1><span class="ver" id="ver">__VERSION__</span></header>
+  <p class="lead">四步配完就能用。程序在这台电脑上跑，数据留在你自己的盘里。</p>
+
+  <div class="step">
+    <h2><span class="num">1</span>环境检查</h2>
+    <p class="hint">看看本机有没有 Ollama，以及程序、配置、数据分别在哪儿。</p>
+    <div class="row" id="envRow"><span class="tag">检测中…</span></div>
+    <div class="kv" id="dirs"></div>
+  </div>
+
+  <div class="step">
+    <h2><span class="num">2</span>要哪些功能</h2>
+    <p class="hint">勾上的会出现在中台里，没勾的以后也能在「设置 → 功能」找回。</p>
+    <div class="feats" id="feats"></div>
+    <div class="llm">
+      <label class="feat" id="llmSw" style="background:transparent;border:0;padding:0">
+        <input type="checkbox" id="useLlm">
+        <div><div class="fn">本机大模型（可选）</div>
+          <div class="fd">给「对话」用。这台机上已经有就直接选；也能拉一个新的，或接一个外部 API。不配也能用，只是对话会提示去配一个。</div></div>
+      </label>
+      <div class="llmBody" id="llmBody" hidden>
+        <div class="seg" id="segSrc">
+          <button data-v="have" class="on">本机已有</button>
+          <button data-v="pull">下载新的</button>
+          <button data-v="api">接 API / 网关</button>
+        </div>
+
+        <div class="pane" id="paneHave">
+          <div class="row">
+            <select id="haveSel" style="flex:1;min-width:220px"></select>
+            <button id="haveBtn">用这个</button>
+          </div>
+          <p class="note" id="haveHint">正在看这台机上有什么…</p>
+        </div>
+
+        <div class="pane" id="panePull" hidden>
+          <div class="row">
+            <input type="text" id="model" value="qwen3.5-4b-gguf:q4km" style="flex:1;min-width:220px">
+            <button id="pullBtn">开始下载</button>
+          </div>
+          <pre id="pullLog" style="display:none"></pre>
+        </div>
+
+        <div class="pane" id="paneApi" hidden>
+          <div class="row">
+            <select id="apiPreset"></select>
+            <input type="text" id="apiBase" placeholder="https://api.example.com/v1"
+                   style="flex:1;min-width:180px">
+          </div>
+          <div class="row">
+            <input type="text" id="apiKey" placeholder="API Key（本机服务通常留空）"
+                   style="flex:1;min-width:180px">
+          </div>
+          <div class="row">
+            <input type="text" id="apiModel" placeholder="模型名，如 deepseek-chat / qwen3-30b"
+                   style="flex:1;min-width:180px">
+            <button class="ghost" id="testBtn">测试连接</button>
+            <button id="apiSave">用它</button>
+          </div>
+          <pre id="apiLog" style="display:none"></pre>
+        </div>
+
+        <p class="note" id="llmNote"></p>
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <h2><span class="num">3</span>数据存哪里</h2>
+    <p class="hint">两类数据分开存：<b>媒体与文件</b>（存图、影音、阅读原文、研究资料）体积大、写得少，
+      放外挂盘或资料盘；<b>运行数据</b>（账目、流水、日志、缓存、工作台、巡检）文件小、写得频繁，
+      放系统盘最稳。换位置后会在新目录建好骨架，并把旧目录里的运行数据搬过去。</p>
+
+    <div class="row">
+      <span class="picklbl">媒体与文件</span>
+      <input type="text" id="libDir" readonly style="flex:1;min-width:200px">
+      <button class="ghost mini" id="pickBtn">换一个位置</button>
+      <button class="ghost mini" id="resetBtn">用默认</button>
+    </div>
+    <div class="kv" id="libHint"></div>
+
+    <div class="row" style="margin-top:12px">
+      <span class="picklbl">运行数据</span>
+      <input type="text" id="rtDir" readonly style="flex:1;min-width:200px">
+      <button class="ghost mini" id="pickRtBtn">换一个位置</button>
+      <button class="ghost mini" id="resetRtBtn">用默认</button>
+    </div>
+    <div class="kv" id="rtHint"></div>
+  </div>
+
+  <div class="step">
+    <h2><span class="num">4</span>会存你哪些数据</h2>
+    <p class="hint">写清楚，免得你事后才发现「怎么多了一份」。</p>
+
+    <span class="lbl yes">会存</span>
+    <ul class="dt">
+      <li><b>你自己放进去的文件</b>：存图、收件箱、阅读原文 —— 原样保存</li>
+      <li><b>账目</b>：记账流水、工作流水、Token 用量折算（含单价与实付）</li>
+      <li><b>会话摘要</b>：一个 AI 会话一行 —— 时间、时长、轮次、工具调用次数、token。
+          实测百来个会话也才 <code>60 KB</code></li>
+      <li><b>你自己的东西</b>：笔记、日程、待办、收藏</li>
+    </ul>
+
+    <span class="lbl no">不存</span>
+    <ul class="dt">
+      <li>AI 对话的正文 —— 不复制，需要时回原客户端看</li>
+      <li>工具调用的入参与返回（那才是几百 MB 的来源）</li>
+      <li>模型思考过程、文件改动快照、附件 base64</li>
+    </ul>
+
+    <span class="lbl ro">只读、不复制</span>
+    <ul class="dt">
+      <li>WorkBuddy / 千问办公 / Cherry Studio / TRAE / Codex 等客户端的会话目录</li>
+      <li>只读打开、只统计，绝不写入；关掉中台不影响它们</li>
+    </ul>
+
+    <div class="row" style="margin-top:18px">
+      <button id="doneBtn">进入中台</button>
+      <span class="tag" id="saveState" hidden></span>
+    </div>
+  </div>
+
+  <p class="foot">Moshan · 本地优先的个人中台 · 程序目录与数据目录分离，更新不动你的文件</p>
+</div>
+<script>
+const TOKEN = "__TOKEN__";
+const $ = (s) => document.querySelector(s);
+let ollamaOk = false;
+let libDefault = "";
+let rtDefault = "";
+
+const FEATS = [
+  {id:"pocket", name:"存图收藏",  desc:"公众号 / 小红书链接存成图集"},
+  {id:"reader", name:"阅读",      desc:"订阅与稍后读"},
+  {id:"ledger", name:"记账",      desc:"账户与流水"},
+  {id:"host",   name:"Agent 监控", desc:"本机各 AI 客户端的活账"},
+  {id:"flow",   name:"工作流水",  desc:"每天做了什么的账"},
+  {id:"ops",    name:"系统巡检",  desc:"服务、磁盘、内存"},
+  {id:"media",  name:"影音室",    desc:"番号解析、封面、演员名册"},
+  {id:"plan",   name:"AI 计划",   desc:"项目 → 任务 → 收件箱"}
+];
+
+async function api(path, body){
+  const opt = body ? {method:"POST", headers:{"Content-Type":"application/json"},
+                      body:JSON.stringify(body)} : {};
+  const r = await fetch(path, opt);
+  if(!r.ok) throw new Error(path + " -> " + r.status);
+  return r.json();
+}
+
+function tag(text, kind){
+  const s = document.createElement("span");
+  s.className = "tag" + (kind ? " " + kind : "");
+  s.textContent = text;
+  return s;
+}
+
+function paintFeats(){
+  const box = $("#feats");
+  box.innerHTML = "";
+  FEATS.forEach(f => {
+    const l = document.createElement("label");
+    l.className = "feat";
+    l.innerHTML = '<input type="checkbox" data-f="' + f.id + '" checked>'
+      + '<div><div class="fn">' + f.name + '</div><div class="fd">' + f.desc + '</div></div>';
+    const cb = l.querySelector("input");
+    cb.addEventListener("change", () => l.classList.toggle("off", !cb.checked));
+    box.appendChild(l);
+  });
+}
+
+function picked(){
+  return [].slice.call(document.querySelectorAll("#feats input:checked"))
+           .map(el => el.getAttribute("data-f"));
+}
+
+async function loadEnv(){
+  const row = $("#envRow"); row.innerHTML = "";
+  try{
+    const s = await api("/welcome/status");
+    const o = s.ollama || {};
+    row.appendChild(tag(o.installed ? "已装 Ollama" : "未装 Ollama", o.installed ? "ok" : "warn"));
+    row.appendChild(tag(o.running ? "服务运行中" : "服务未启动", o.running ? "ok" : "bad"));
+    if(o.version) row.appendChild(tag(o.version));
+    ollamaOk = !!o.installed && !!o.running;
+
+    const d = s.dirs || {};
+    const kv = $("#dirs"); kv.innerHTML = "";
+    const add = (k,v)=>{ kv.insertAdjacentHTML("beforeend",
+      '<b>'+k+'</b><span class="path">'+(v||"-")+'</span>'); };
+    add("程序", d.app_dir);
+    add("配置", d.config);
+    add("媒体", d.library_dir);
+    add("运行", d.runtime_dir);
+
+    libDefault = d.library_dir || "";
+    rtDefault = d.runtime_dir || "";
+    $("#libDir").value = libDefault;
+    $("#rtDir").value = rtDefault;
+    paintLibHint(); paintRtHint();
+  }catch(e){
+    row.appendChild(tag("检测失败：" + e.message, "bad"));
+  }
+}
+
+function paintLibHint(){
+  const h = $("#libHint");
+  const v = $("#libDir").value;
+  const changed = v && libDefault && v !== libDefault;
+  h.innerHTML = '<b>默认</b><span class="path">' + (libDefault || "-") + '</span>'
+    + '<b>放什么</b><span>存图、影音、阅读原文、研究资料、收件箱 —— 只增不减，占空间的大头</span>'
+    + (changed ? '<b>改动</b><span style="color:var(--warn)">保存后重启一次中台才完全生效（旧文件不搬、不删）</span>' : '');
+}
+
+function paintRtHint(){
+  const h = $("#rtHint");
+  const v = $("#rtDir").value;
+  const changed = v && rtDefault && v !== rtDefault;
+  h.innerHTML = '<b>默认</b><span class="path">' + (rtDefault || "-") + '</span>'
+    + '<b>放什么</b><span>账目、流水、系统记录、工作台、缓存、巡检、虫巢、传输中转</span>'
+    + (changed ? '<b>改动</b><span style="color:var(--warn)">保存时把旧目录里的这些文件夹搬过去（先复制、校验通过再删源）</span>' : '');
+}
+
+/* —— 模型来源三选 ——
+   三条路最后都落到 /api/model/save：它把选择写进 config.json，同时热贴到
+   正在跑的网关客户端上。只写文件是不够的 —— 进中台后客户端还拿着旧模型名，
+   得等重启才生效，而用户以为已经选好了。 */
+let MDL_SRC = [];
+
+/* /api/* 要令牌，引导页地址里没有，所以单独一个带头的封装 */
+async function apiT(path, body){
+  const opt = body
+    ? {method:"POST", headers:{"Content-Type":"application/json", "x-token":TOKEN},
+       body:JSON.stringify(body)}
+    : {headers:{"x-token":TOKEN}};
+  const r = await fetch(path, opt);
+  if(!r.ok) throw new Error(path + " -> " + r.status);
+  return r.json();
+}
+
+function llmNote(msg){ $("#llmNote").textContent = msg || ""; }
+
+function showPane(v){
+  ["have","pull","api"].forEach(k => {
+    $("#pane" + k.charAt(0).toUpperCase() + k.slice(1)).hidden = (k !== v);
+  });
+  [].slice.call($("#segSrc").children).forEach(b => {
+    b.classList.toggle("on", b.dataset.v === v);
+  });
+}
+
+async function saveModel(body){
+  const r = await apiT("/api/model/save", body);
+  if(r.ok === false) throw new Error(r.error || "保存被拒");
+  const c = r.current || {};
+  /* 回填到那个老输入框：最后统一 /welcome/apply 时会带 model 字段，
+     不回填就把刚选的覆盖回默认的 4B 了 */
+  if(c.model) $("#model").value = c.model;
+  return c;
+}
+
+async function loadModels(){
+  try{
+    const s = await apiT("/api/model");
+    MDL_SRC = s.sources || [];
+    const cur = s.current || {};
+    const nb = x => String(x || "").replace(/\/+$/, "");
+
+    const sel = $("#haveSel");
+    sel.innerHTML = "";
+    let n = 0;
+    MDL_SRC.forEach(src => {
+      (src.models || []).forEach(m => {
+        const o = document.createElement("option");
+        o.value = [src.kind, src.base, m].join("\u0001");
+        o.textContent = src.name + " · " + m + (src.kind === "gateway" ? "（可调工具）" : "");
+        if(cur.base && nb(src.base) === nb(cur.base) && m === cur.model) o.selected = true;
+        sel.appendChild(o); n++;
+      });
+    });
+    if(!n){
+      const o = document.createElement("option");
+      o.value = ""; o.textContent = "没探到本机模型";
+      sel.appendChild(o);
+    }
+    $("#haveHint").textContent = n
+      ? "这台机上有 " + n + " 个模型，选一个点「用这个」。"
+      : "没探到本机模型。切到「下载新的」拉一个，或者「接 API」。";
+
+    const ps = $("#apiPreset");
+    ps.innerHTML = "";
+    MDL_SRC.forEach(src => {
+      const o = document.createElement("option");
+      o.value = src.id;
+      o.textContent = src.name + (src.running ? "（运行中）"
+                     : (src.note ? "（" + src.note + "）" : ""));
+      o.dataset.base = src.base || "";
+      o.dataset.kind = src.kind || "openai";
+      ps.appendChild(o);
+    });
+    if(cur.base){
+      [].slice.call(ps.options).forEach(o => {
+        if(o.dataset.base && nb(o.dataset.base) === nb(cur.base)) o.selected = true;
+      });
+    }
+    $("#apiBase").value = ps.selectedOptions[0] ? ps.selectedOptions[0].dataset.base : "";
+    if(cur.model && !$("#apiModel").value) $("#apiModel").value = cur.model;
+
+    /* 本机有就默认看本机；没有但 Ollama 在跑就给下载；都没有就停在接 API */
+    showPane(n ? "have" : (ollamaOk ? "pull" : "api"));
+    if(cur.model) llmNote("现在用的是 " + cur.model + "（" + (cur.base || "—") + "）");
+  }catch(e){
+    $("#haveHint").textContent = "读不到模型清单：" + e.message;
+  }
+}
+
+async function useHave(){
+  const v = $("#haveSel").value;
+  if(!v){ llmNote("没有可选的模型"); return; }
+  const p = v.split("\u0001");
+  $("#haveBtn").disabled = true;
+  try{
+    const c = await saveModel({kind:p[0], base:p[1], model:p[2]});
+    llmNote("已切到 " + c.model + "，进中台就能用。");
+  }catch(e){ llmNote("失败：" + e.message); }
+  finally{ $("#haveBtn").disabled = false; }
+}
+
+async function testApi(){
+  const base = $("#apiBase").value.trim();
+  const log = $("#apiLog");
+  log.style.display = "block";
+  if(!base){ log.textContent = "先填地址。"; return; }
+  log.textContent = "探测中…";
+  try{
+    const r = await apiT("/api/model/test", {base, key:$("#apiKey").value.trim()});
+    if(!r.ok){ log.textContent = "不通：" + (r.reason || "未知原因"); return; }
+    const ms = r.models || [];
+    log.textContent = "通了（" + (r.reason || "") + "），列出 " + ms.length + " 个模型：\n"
+      + (ms.slice(0, 20).join("\n") || "（空）");
+    if(!$("#apiModel").value.trim() && ms.length) $("#apiModel").value = ms[0];
+  }catch(e){
+    log.textContent = "探测失败：" + e.message;
+  }
+}
+
+async function saveApi(){
+  const base = $("#apiBase").value.trim(), model = $("#apiModel").value.trim();
+  if(!base || !model){ llmNote("地址和模型名都要填。"); return; }
+  const opt = $("#apiPreset").selectedOptions[0];
+  const kind = opt ? (opt.dataset.kind || "openai") : "openai";
+  $("#apiSave").disabled = true;
+  try{
+    const c = await saveModel({kind, base, model, key:$("#apiKey").value.trim()});
+    llmNote("已保存并生效：" + c.model);
+  }catch(e){ llmNote("失败：" + e.message); }
+  finally{ $("#apiSave").disabled = false; }
+}
+
+async function startPull(){
+  const model = $("#model").value.trim();
+  if(!model) return;
+  $("#pullBtn").disabled = true;
+  $("#pullLog").style.display = "block";
+  $("#pullLog").textContent = "";
+  try{
+    const r = await api("/welcome/pull", {model});
+    if(!r.started){
+      $("#pullLog").textContent = r.reason || "未能启动";
+      $("#pullBtn").disabled = false; return;
+    }
+    pollPull();
+  }catch(e){
+    $("#pullLog").textContent = "启动失败：" + e.message;
+    $("#pullBtn").disabled = false;
+  }
+}
+
+async function pollPull(){
+  try{
+    const s = await api("/welcome/pull");
+    $("#pullLog").textContent = (s.tail || []).join("\n");
+    $("#pullLog").scrollTop = $("#pullLog").scrollHeight;
+    if(s.running){ setTimeout(pollPull, 1200); return; }
+    $("#pullBtn").disabled = false;
+    if(s.ok === true){
+      /* 拉完就顺手切成「用这个」，省得用户再回来选一遍 */
+      try{
+        await saveModel({kind:"ollama", base:"http://127.0.0.1:11434", model:s.model});
+        llmNote("模型已就绪：" + s.model);
+      }catch(e){
+        llmNote("模型已就绪，但没写进配置：" + e.message);
+      }
+    }else if(s.ok === false){
+      llmNote("下载未完成：" + (s.error || "未知原因"));
+    }
+  }catch(e){
+    $("#pullBtn").disabled = false;
+  }
+}
+
+async function saveThenEnter(){
+  const btn = $("#doneBtn");
+  btn.disabled = true; btn.textContent = "保存中…";
+  const body = {
+    features: picked(),
+    use_llm: $("#useLlm").checked,
+    model: $("#model").value.trim(),
+    library_dir: $("#libDir").value.trim(),
+    runtime_dir: $("#rtDir").value.trim()
+  };
+  try{
+    const r = await api("/welcome/apply", body);
+    const st = $("#saveState");
+    st.hidden = false;
+    st.className = "tag " + (r.ok ? "ok" : "bad");
+    st.textContent = r.ok ? ("已保存 · " + (r.moved_hint ? "重启后生效" : "可以进中台了"))
+                          : ("没保存上：" + (r.error || ""));
+  }catch(e){
+    const st = $("#saveState");
+    st.hidden = false; st.className = "tag bad";
+    st.textContent = "保存失败：" + e.message;
+  }
+  await api("/welcome/finish", {}).catch(()=>{});
+  /* 进中台，不进口袋首页 —— 口袋只是中台里的一项能力 */
+  location.href = "/dash?k=" + encodeURIComponent(TOKEN);
+}
+
+$("#pickBtn").addEventListener("click", async () => {
+  try{
+    const r = await api("/welcome/pickdir", {});
+    if(r && r.ok){ $("#libDir").value = r.path; paintLibHint(); }
+    else if(r && r.error && !r.cancelled) alert(r.error);
+  }catch(e){ alert("选择器打不开：" + e.message); }
+});
+$("#resetBtn").addEventListener("click", () => {
+  $("#libDir").value = libDefault; paintLibHint();
+});
+$("#pickRtBtn").addEventListener("click", async () => {
+  try{
+    const r = await api("/welcome/pickdir", {});
+    if(r && r.ok){ $("#rtDir").value = r.path; paintRtHint(); }
+    else if(r && r.error && !r.cancelled) alert(r.error);
+  }catch(e){ alert("选择器打不开：" + e.message); }
+});
+$("#resetRtBtn").addEventListener("click", () => {
+  $("#rtDir").value = rtDefault; paintRtHint();
+});
+$("#useLlm").addEventListener("change", (e) => {
+  $("#llmBody").hidden = !e.target.checked;
+  /* 清单等到真的要看时才探 —— 三个端点最坏 2.5 秒，别拖慢首屏 */
+  if(e.target.checked && !MDL_SRC.length) loadModels();
+});
+[].slice.call($("#segSrc").children).forEach(b => {
+  b.addEventListener("click", () => showPane(b.dataset.v));
+});
+$("#haveBtn").addEventListener("click", useHave);
+$("#testBtn").addEventListener("click", testApi);
+$("#apiSave").addEventListener("click", saveApi);
+$("#apiPreset").addEventListener("change", () => {
+  const o = $("#apiPreset").selectedOptions[0];
+  if(o && o.dataset.base) $("#apiBase").value = o.dataset.base;
+});
+$("#pullBtn").addEventListener("click", startPull);
+$("#doneBtn").addEventListener("click", saveThenEnter);
+
+paintFeats();
+loadEnv();
+</script></body></html>

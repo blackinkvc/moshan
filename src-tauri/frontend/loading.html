@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>墨山中台</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: #f6f6f3; color: #2c2c2a;
+    font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  .card { width: min(520px, 88vw); padding: 32px; background: #fff; border: 1px solid rgba(0,0,0,.08); border-radius: 14px; }
+  h1 { margin: 0 0 6px; font-size: 18px; font-weight: 500; }
+  p.sub { margin: 0 0 22px; color: #6b6a66; font-size: 13px; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #0F6E56; animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: .25; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
+  .muted { color: #888780; font-size: 12px; }
+  #err { display: none; margin-top: 18px; }
+  #err .stage { color: #993C1D; font-weight: 500; }
+  pre { max-height: 220px; overflow: auto; padding: 10px 12px; background: #f6f6f3; border-radius: 8px;
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-all; }
+  button { margin-top: 12px; padding: 7px 14px; font: inherit; color: #fff; background: #534AB7;
+           border: 0; border-radius: 8px; cursor: pointer; }
+  button:hover { background: #3C3489; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>墨山中台</h1>
+  <p class="sub">本机服务正在启动，窗口会在就绪后自动进入中台。</p>
+  <div class="row">
+    <span class="dot" id="dot"></span>
+    <span id="status">正在拉起本机服务…</span>
+  </div>
+  <p class="muted" style="margin-top:14px">首次启动需要解包，通常 5–20 秒；之后再打开会快很多。</p>
+
+  <div id="err">
+    <div class="row"><span class="stage" id="stage"></span></div>
+    <p id="msg" style="margin:8px 0 0"></p>
+    <p class="muted" style="margin:12px 0 4px">日志末尾（state/logs/moshan.log）</p>
+    <pre id="log"></pre>
+    <button onclick="location.reload()">重试</button>
+  </div>
+</div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  window.__moshanFail = function (e) {
+    $('dot').style.animation = 'none';
+    $('dot').style.background = '#E24B4A';
+    $('status').textContent = '启动失败';
+    $('err').style.display = 'block';
+    $('stage').textContent = '阶段：' + (e.stage || 'boot');
+    $('msg').textContent = e.message || '未知错误';
+    $('log').textContent = e.log_tail || '（无日志）';
+  };
+</script>
+</body>
+</html>
