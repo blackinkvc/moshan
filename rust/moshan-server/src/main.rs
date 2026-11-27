@@ -4,6 +4,7 @@
 //       W1 阶段保持"零副作用"，才能与 Python 逐字节对拍）。
 
 mod auth;
+mod boot;
 mod hostwork;
 mod jsonio;
 mod ledger;
@@ -19,13 +20,40 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() {
-    let ctx = Arc::new(paths::Ctx::load());
+    // 端口三种来源，优先级从高到低：
+    //   1. `MOSHAN_RS_PORT`：测试/多实例/对拍显式指定，此时**不动配置**；
+    //   2. `MOSHAN_NO_BOOT=1`：只读配置里的 local_port，缺省 8400；
+    //   3. 自举：建目录、发令牌、选空闲端口、写回 config.json（独立运行的默认路径）。
+    //
+    // 自举必须跑在 `Ctx::load()` 之前：它写的就是 `Ctx` 要读的那份配置。
+    let explicit: Option<u16> = std::env::var("MOSHAN_RS_PORT").ok().and_then(|v| v.parse().ok());
+    let booted = if explicit.is_none() && !env_flag("MOSHAN_NO_BOOT") {
+        Some(boot::prepare())
+    } else {
+        None
+    };
 
-    // 默认 8400，刻意避开 Python 的 8321/8322/8323：对拍时两个服务要能同时起。
-    let port: u16 = std::env::var("MOSHAN_RS_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
+    let mut loaded = paths::Ctx::load();
+    let port: u16 = explicit
+        .or(booted)
+        .or_else(|| {
+            loaded.cfg
+                .get("local_port")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u16)
+        })
         .unwrap_or(8400);
+
+    // 自举时配置里的 local_port 就是自己 —— 若还拿它当上游，
+    // 未迁路由会转发给自己，一路递归把线程吃光。这里把「上游=自己」直接作废。
+    if let Some(up) = loaded.upstream.clone() {
+        let me = format!("127.0.0.1:{port}");
+        if up.contains(&me) {
+            eprintln!("[moshan-rs] 上游指向自身（{up}），已禁用转发");
+            loaded.upstream = None;
+        }
+    }
+    let ctx = Arc::new(loaded);
 
     // 泳道全关时 `mut` 用不上，这是迁移期的正常状态，不必报警。
     #[allow(unused_mut)]

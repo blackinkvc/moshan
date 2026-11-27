@@ -269,7 +269,7 @@ pub fn auto_worklog(ctx: &Ctx) -> Vec<Value> {
     let is_alias = |k: &(String, String)| alias.iter().any(|(old, _)| *old == k.0);
 
     let mut tf_seen: Vec<(String, String)> = Vec::new();
-    let mut tf_push_item = |p: &mut Pusher, key: &(String, String), b: &Batch| {
+    let tf_push_item = |p: &mut Pusher, key: &(String, String), b: &Batch| {
         let at = iso_of(Some(&Value::String(key.0.clone())));
         let total = if b.total == 0 { 1 } else { b.total };
         let got = b.ok;
@@ -1667,7 +1667,7 @@ pub async fn worklog_add(
     };
 
     let p = cards::workbench(ctx.as_ref()).join("worklog.json");
-    let mut d = load_obj(&p);
+    let d = load_obj(&p);
     let mut items: Vec<Value> = match d.get("items") {
         Some(Value::Array(a)) => a.clone(),
         _ => Vec::new(),

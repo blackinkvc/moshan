@@ -91,6 +91,19 @@ pub fn workbench_dir(ctx: &Ctx) -> PathBuf {
     ctx.library_dir.join("_工作台")
 }
 
+/// 同上，但只拿配置对象（自举阶段还没有 `Ctx`）。
+pub fn workbench_dir_for(cfg: &Value) -> PathBuf {
+    library_dir(cfg).join("_工作台")
+}
+
+/// 自举阶段读配置：读不到就是 `Null`，与 `Ctx::load()` 同口径。
+pub fn read_config_value() -> Value {
+    std::fs::read_to_string(config_file())
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or(Value::Null)
+}
+
 impl Ctx {
     pub fn load() -> Self {
         let cfg: Value = std::fs::read_to_string(config_file())

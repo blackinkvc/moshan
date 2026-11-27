@@ -34,7 +34,7 @@
     "copyright": "Copyright (c) 2026 Moshan contributors",
     "category": "Productivity",
     "shortDescription": "墨山中台",
-    "longDescription": "墨山中台：本机工作台、文件、账本与多机管理。桌面壳只负责窗口与进程，业务仍由本机 Python 服务提供，浏览器可直接访问同一端口。",
+    "longDescription": "墨山中台：本机工作台、文件、账本与多机管理。桌面壳只负责窗口与进程，业务由随包的 Rust 服务端（moshan-server）提供，浏览器可直接访问同一端口。",
     "licenseFile": "../LICENSE-MIT",
     "icon": [
       "icons/32x32.png",

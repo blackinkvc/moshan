@@ -4,11 +4,10 @@
 
 use serde_json::{json, Map, Value};
 use std::collections::HashSet;
-use std::path::Path;
 
 use super::agg::sessions_snapshot;
 use super::sessions::session_index;
-use super::util::{py_int, round_n, str_or};
+use super::util::{py_int, str_or};
 use crate::paths::Ctx;
 
 const QUOTA_MERGE_MS: i64 = 10 * 60 * 1000;

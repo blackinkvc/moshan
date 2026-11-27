@@ -1081,7 +1081,7 @@ fn term_of(row: &Value) -> (f64, Vec<Value>) {
 
 pub fn payload(ctx: &Ctx) -> Value {
     let root = root_of(ctx);
-    let now = Local::now();
+    let _now = Local::now();
     let gallery = images::gallery(&root);
     let reader = images::reader(&root);
     let services = Value::Array(cards::services(ctx));

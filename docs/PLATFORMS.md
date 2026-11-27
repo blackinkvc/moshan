@@ -1,7 +1,8 @@
 # 多端形态：桌面壳、网页版、Android
 
-本文件说明「一套服务，多种外壳」的分工与构建方式。**业务只有一份**：`moshan/` 里的
-Python 服务。外壳只决定「谁把窗口开出来、连到哪里」。
+本文件说明「一套服务，多种外壳」的分工与构建方式。**业务只有一份**：
+`rust/moshan-server`（Rust 重写，220/220 条路由）。外壳只决定「谁把窗口开出来、连到哪里」。
+`moshan/` 里的 Python 实现保留为逐字节对拍的对照组，不再是运行路径。
 
 ---
 
@@ -56,9 +57,10 @@ src-tauri/binaries/moshan-x86_64-unknown-linux-gnu
 bash scripts/stage-sidecar.sh
 ```
 
-**为什么 sidecar 是单文件（onefile），而安装包仍是 onedir**：`externalBin` 只复制一个可执行
-文件，不会搬 `_internal/` 目录，所以 sidecar 必须 onefile（首启解包 2–5 秒，由 loading 页兜住）；
-面向普通用户的 `build.yml` 那条线仍用 onedir，启动更快。
+**为什么 sidecar 现在是 Rust 单二进制**：`externalBin` 只复制一个可执行文件。服务端全量
+Rust 之后，拷进去的就是 `moshan-server` 本身 —— 没有解释器、没有 `_internal/` 目录、
+没有首启解包，冷启动是毫秒级。需要对照旧实现时才用 `bash scripts/stage-sidecar.sh --python`
+打一次 PyInstaller onefile。
 
 ---
 

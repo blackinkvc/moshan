@@ -133,7 +133,7 @@ pub fn human(n: f64) -> String {
         n = 0.0;
     }
     let units = ["B", "KB", "MB", "GB", "TB"];
-    for (i, unit) in units.iter().enumerate() {
+    for (_i, unit) in units.iter().enumerate() {
         if n < 1024.0 || *unit == "TB" {
             return if *unit == "B" || *unit == "KB" {
                 format!("{:.0} {}", n, unit)

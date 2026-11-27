@@ -4,7 +4,6 @@
 // 不做：不写 config.json —— 改模型那条路由不在本泳道。
 
 use super::util::{fnum, round1, str_or};
-use crate::paths::Ctx;
 use crate::routes::common::{peek, CtxState};
 use axum::extract::State;
 use axum::http::{HeaderMap, Uri};
@@ -127,7 +126,7 @@ async fn probe(base: &str, key: &str, timeout: Duration) -> (bool, Vec<String>, 
     if base.is_empty() {
         return (false, Vec::new(), "没填地址".to_string());
     }
-    let mut reason;
+    let reason;
     match get_json(&format!("{}/models", openai_root(&base)), key, timeout).await {
         Ok(data) => {
             let models: Vec<String> = data

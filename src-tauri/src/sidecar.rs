@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// 职责：拉起 / 复用本机 Python 服务，等到 /api/ping 真的应答再返回地址。
-// 不做：不写配置、不选端口、不解析业务响应——端口与令牌一律由 Python 写进 config.json。
+// 职责：拉起 / 复用本机服务端（moshan-server，Rust），等到 /api/ping 真的应答再返回地址。
+// 不做：不写配置、不选端口、不解析业务响应——端口与令牌由服务自举时写进 config.json。
 
 use crate::paths;
 use std::io::{Read, Write};
@@ -78,8 +78,9 @@ fn wait_ready(timeout: Duration) -> Option<String> {
     None
 }
 
-/// 找可执行体：显式覆盖 → 与主程序同目录（打包后 Tauri 把 externalBin 放这里）
-/// → 开发态 binaries/moshan-<triple> → 开发态 python3 launcher.py。
+/// 找可执行体：显式覆盖 → 与主程序同目录（打包后 Tauri 把 externalBin 放这里，
+/// 名字会去掉三元组后缀）→ 开发态 binaries/moshan-<triple> → 最后才退回
+/// 开发态 python3 launcher.py（只在还没 stage 过 Rust 二进制时用）。
 fn program() -> Result<(PathBuf, Vec<String>), BootError> {
     if let Some(p) = std::env::var_os("MOSHAN_SIDECAR") {
         return Ok((PathBuf::from(p), vec![]));
@@ -112,7 +113,8 @@ fn program() -> Result<(PathBuf, Vec<String>), BootError> {
         }
     }
 
-    // 开发态便利：没打 sidecar 时直接跑源码，省掉每次 PyInstaller 的几分钟。
+    // 开发态兜底：没 stage 过 Rust 二进制时跑旧的 Python 实现。
+    // 正常路径永远不会走到这里 —— 服务端已经全量 Rust。
     let launcher = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("moshan")

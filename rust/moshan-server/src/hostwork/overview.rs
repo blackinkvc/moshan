@@ -17,7 +17,7 @@ use super::procs_state;
 use super::procnames;
 use super::quota;
 use super::spec;
-use super::util::{self, fnum, py_int, round_n, round1, round2, str_or, truthy};
+use super::util::{self, fnum, py_int, round_n, str_or};
 use crate::paths::Ctx;
 use serde_json::{json, Map, Value};
 use std::path::PathBuf;
@@ -374,7 +374,7 @@ pub fn overview(ctx: &Ctx, range_key: &str, fresh: bool) -> Value {
     let mut by_day: Vec<(String, Map<String, Value>)> = Vec::new();
     let mut by_model: Vec<(String, Map<String, Value>)> = Vec::new();
 
-    let mut add_day = |by_day: &mut Vec<(String, Map<String, Value>)>,
+    let add_day = |by_day: &mut Vec<(String, Map<String, Value>)>,
                        day: &str,
                        src: &Map<String, Value>| {
         let pos = match by_day.iter().position(|(d, _)| d == day) {

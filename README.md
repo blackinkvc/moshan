@@ -84,9 +84,9 @@
 | Android | `Moshan-<版本>-android.apk` | **控制器**：不跑本机服务，连到已配对的桌面机 |
 | 网页版 | 无需下载 | 服务跑起来后浏览器直接开 `http://127.0.0.1:<端口>` |
 
-安装包自带 Python 运行时，**不需要另外装 Python、也不需要装 Node**。
+安装包自带服务端本体（Rust 编译的单文件），**不需要另外装 Python、也不需要装 Node**。
 
-**网页版与桌面壳是同一个服务。** 桌面壳（Tauri）只负责开窗口、拉起本机 Python 服务、
+**网页版与桌面壳是同一个服务。** 桌面壳（Tauri）只负责开窗口、拉起本机服务端、
 退出时收掉进程；业务与接口全在服务里。所以两者可以并存：壳开着的时候，浏览器打开同一端口
 看到的是同一份数据，不存在「网页版和桌面版数据不同步」。想只用浏览器，装安装包后直接访问
 `http://127.0.0.1:8323` 即可（端口以 `state/config.json` 里的 `local_port` 为准）。
@@ -287,26 +287,29 @@ Windows 上运行中的 exe 被锁。强行做要「拉新进程 → 旧进程�
 
 ## 从源码运行
 
-需要 Python 3.11+（打包用的是 3.11，3.10 一般也能跑）。
+需要 Rust（stable）。服务端已全量 Rust 重写，源码态起服务只要一条命令：
 
 ```bash
 git clone https://github.com/blackinkvc/moshan.git
 cd moshan
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/python moshan/launcher.py
+cargo run --release --manifest-path rust/Cargo.toml
 ```
 
-Windows 把 `.venv/bin/` 换成 `.venv\Scripts\`。
-
-启动器做四件事：建目录骨架 → 选一个可用端口 → 后台等端口就绪再开浏览器 → 同进程起服务。
+自举做四件事：建目录骨架 → 发令牌 → 选一个可用端口 → 写 `state/config.json`；
+加 `MOSHAN_OPEN=1` 会再开一次浏览器。
 
 调试时常用开关：
 
 ```bash
-MOSHAN_NO_BROWSER=1 .venv/bin/python moshan/launcher.py   # 不自动开浏览器
-MOSHAN_HOME=/tmp/moshan-test .venv/bin/python moshan/launcher.py   # 数据全放临时目录
+MOSHAN_OPEN=1 cargo run --release --manifest-path rust/Cargo.toml   # 启动后开浏览器
+MOSHAN_HOME=/tmp/moshan-test cargo run --release --manifest-path rust/Cargo.toml  # 数据全放临时目录
+MOSHAN_NO_SCHED=1 cargo run --release --manifest-path rust/Cargo.toml  # 关掉后台循环
 ```
+
+桌面壳：`bash scripts/stage-sidecar.sh && cd src-tauri && cargo tauri build`。
+
+旧 Python 实现仍在 `moshan/` 里，用途只有一个：当逐字节对拍的对照组
+（`python3 scripts/rust-parity.py --all-get --seed`）。它不再是运行路径。
 
 跑一遍自检（语法、导入冒烟、硬编码路径扫描、版本号一致性）：
 

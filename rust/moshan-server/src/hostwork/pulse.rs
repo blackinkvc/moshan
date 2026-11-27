@@ -2,7 +2,6 @@
 // 职责：节奏账（hostwork.pulse）—— 日行 / 7×24 热力 / 每周分层 / 范畴 opts。
 // 不做：不扫 jsonl（读 agg.days / act / hw 与 sessions 表的 space）；20 秒缓存。
 
-use chrono::Timelike;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;

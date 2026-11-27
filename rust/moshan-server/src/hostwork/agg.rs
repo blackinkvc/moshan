@@ -858,7 +858,7 @@ fn scan_file(path: &Path, prev: Option<&Value>) -> Value {
                 && prev_agg.as_ref().map(|a| a.is_object()).unwrap_or(false)
         })
         .unwrap_or(false);
-    let (mut off, mut agg) = if same {
+    let (off, mut agg) = if same {
         let off = prev.and_then(|p| p.get("off")).map(py_int).unwrap_or(0);
         let a = prev_agg.unwrap();
         (off, a.as_object().cloned().unwrap_or_else(new_agg))

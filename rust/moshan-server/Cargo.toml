@@ -14,7 +14,22 @@ path = "src/main.rs"
 # 并行施工时，A 泳道的半成品不会挡住 B 泳道的 cargo check —— 否则任何一个文件
 # 写坏都会让所有人停在同一条报错上。全部迁完后把这里删掉（或 default 置全开）。
 [features]
-default = []
+# 全量默认：`cargo build --release` 出来的就是完整服务。
+# 单条泳道仍可 `--no-default-features --features lane_xx` 单独编，
+# 用于定位某条泳道的问题（不然任何一处编译错都会挡住所有人）。
+default = [
+    "lane_u",
+    "lane_w4b",
+    "lane_w4c",
+    "lane_w5a",
+    "lane_w5b",
+    "lane_w5d",
+    "lane_w5e",
+    "lane_w6a",
+    "lane_w6b",
+    "lane_w7a",
+    "lane_w7b",
+]
 lane_w4b = []
 lane_w4c = []
 lane_w5a = []

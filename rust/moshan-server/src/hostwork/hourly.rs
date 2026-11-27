@@ -17,10 +17,6 @@
 //   · 桶只留最近 30 天；渲染时补齐 24 个空桶。
 #![allow(dead_code)]
 
-use axum::extract::State;
-use axum::http::{HeaderMap, Uri};
-use axum::response::{IntoResponse, Response};
-use axum::Json;
 use chrono::{Local, TimeZone};
 use serde_json::{json, Map, Value};
 use std::collections::HashSet;

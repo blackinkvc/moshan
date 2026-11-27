@@ -52,7 +52,7 @@ static ROUNDS: Mutex<Option<Vec<(String, RoundsCache)>>> = Mutex::new(None);
 /// `_rounds_compute`：真算一遍逐轮记录。
 fn rounds_compute(ctx: &Ctx, range_key: &str) -> Value {
     let days = range_days(range_key);
-    let since_ms = if days == 0 {
+    let _since_ms = if days == 0 {
         0.0
     } else {
         (now_secs() - days as f64 * 86400.0) * 1000.0

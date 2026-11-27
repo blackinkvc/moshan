@@ -250,7 +250,7 @@ async fn read(State(ctx): CtxState, headers: HeaderMap, uri: Uri) -> Response {
     let q = common::q(&uri, "q");
     let client = common::q(&uri, "client");
     let root = data_root(&ctx);
-    let ctx2 = ctx.clone();
+    let _ctx2 = ctx.clone();
     let out = tokio::task::spawn_blocking(move || {
         bus::read(&root, &ns, &since, limit, &q, &client)
     })
