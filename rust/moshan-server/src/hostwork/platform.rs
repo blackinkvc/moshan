@@ -1515,9 +1515,14 @@ pub fn file_mtime(md: &std::fs::Metadata) -> f64 {
 /// `st_ino`：只用来判断「同一个路径上是不是换了个文件」。
 ///
 /// - POSIX：真 inode 号。
-/// - Windows：NTFS 文件索引号（`file_index()`），换文件就变，语义对得上。
+/// - Windows：退一步用「最后写入时间」（FILETIME）。
+///   `MetadataExt::file_index()` 至今仍是 nightly（feature `windows_by_handle`），
+///   stable 上编不过 —— 曾经的实现就卡在这里，Windows 包因此发不出去。
+///   换成 last_write_time 是**安全方向**：同一文件被追加或替换时它必变，
+///   宁可多重扫一次，也绝不会把两个不同文件当成同一个续读。
+///   （恒返回 0 会踩那个坑：`prev_ino == ino` 恒成立，新文件更大时会被当成旧文件接着读。）
 /// - `sim_windows`：在 mac 上过类型，拿不到 Windows 的 `MetadataExt`，
-///   返回 0 —— 退化成「每次都当新文件重扫」，只影响增量缓存命中率，不影响结果。
+///   返回 0 —— 只在跑 `--features sim_windows` 的类型检查时出现，不影响真实平台。
 #[cfg(all(unix, not(feature = "sim_windows")))]
 pub fn file_inode(md: &std::fs::Metadata) -> u64 {
     use std::os::unix::fs::MetadataExt;
@@ -1527,7 +1532,7 @@ pub fn file_inode(md: &std::fs::Metadata) -> u64 {
 #[cfg(windows)]
 pub fn file_inode(md: &std::fs::Metadata) -> u64 {
     use std::os::windows::fs::MetadataExt;
-    md.file_index().unwrap_or(0)
+    md.last_write_time()
 }
 
 #[cfg(any(feature = "sim_windows", not(any(unix, windows))))]

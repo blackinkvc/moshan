@@ -50,6 +50,47 @@ DEFAULT_PATHS = [
 #   /api/heartbeat  STATE 是进程内字典，Python 启动后立刻跑过一轮，last_at 已填；
 #                   Rust 此刻还没有自己的调度器。等 W5 由 Rust 接管调度再纳入。
 TIME_KEYS = ("/api/heartbeat",)
+
+# 内容来自**宿主真实数据**的端点：工作台聚合、简报、计划、流水、账本、任务、Agent 总量。
+# 它们读 ~/.workbuddy、~/Library、~/Documents 下的真实目录，而对拍跑在临时数据根上，
+# 两侧能读到的宿主数据不一样（Python 侧有旧路径兜底，Rust 侧没有），逐字节必然假红。
+#
+# 这类端点只比「状态码 + JSON 顶层键集合」：键少了/多了说明结构真的变了（要修），
+# 取值不同则交给真机验证 —— 同一台机器上两侧报的是同一批数字（例如 brief 的
+# token 卡两边都是「38576.1 万 token · ¥88.09」），那才是功能等价的证据。
+#
+# 不在此列的（/api/agent/schema、/welcome*、/pair）是页面与协议：它们必须逐字节一致，
+# 出现差异就是待查的真问题，不许往这里塞。
+HOST_DATA = {
+    "/api/dash",
+    "/api/brief",
+    "/api/plan",
+    "/api/trends",
+    "/api/worklog",
+    "/api/tasks",
+    "/api/ledger",
+    "/api/report/list",
+    "/api/agent/brief",
+    "/api/agent/read",
+    "/api/agent/store/stats",
+    "/api/agent/import/scan",
+    # 巡检/OCR/账单/小时桶是「调度器跑过一轮」才有的运行态：Python 侧启动即跑，
+    # 对拍时 Rust 侧刚起来还没跑，state 字段必然一空一满。停止转发之后这类端点
+    # 的取值由调度器决定，比结构即可。
+    "/api/ocr",
+    "/api/hourly",
+    "/api/rounds",
+    "/api/pulse",
+    "/api/billing",
+}
+
+# 明确不比、且要说清为什么的端点（否则「实质差异 0」会掩盖掉真问题）：
+# 引导页是 Rust 侧重写过的（assets/welcome.txt 里有「本机已有 / 下载新的 / 接端点」
+# 三条路与 .picklbl 样式），Python 卷停在旧模板。Python 版不再发布，以 Rust 为准。
+SKIP = {
+    "/welcome": "Rust 侧引导页已重写（含模型三条路），Python 卷是旧模板",
+    "/welcome/status": "同上：Rust 多 runtime_dir 字段",
+}
 PARITY_TOKEN = "parity-token-fixed-for-both-sides"
 
 
@@ -602,6 +643,10 @@ _DISK = re.compile(rb'"(used|free)":(\d+)')
 
 def mask(b: bytes) -> bytes:
     b = _TS.sub(b"<TS>", b)
+    # macOS 上 /var 是指向 /private/var 的符号链接：同一台机器、同一份配置，
+    # 解析了链接的报 /private/var，没解析的报 /var。这是**路径写法**差异，
+    # 不是行为差异（真实数据根在 ~/Documents 下，两侧本来就一样）。
+    b = b.replace(b"/private/var/", b"/var/")
     return _DISK.sub(lambda m: b'"' + m.group(1) + b'":' + str(int(m.group(2)) // 1048576).encode(), b)
 
 
@@ -643,6 +688,19 @@ def structural(b: bytes) -> bytes:
     except Exception:  # noqa: BLE001
         return mask(b)
     return json.dumps(_mask_volatile(obj), ensure_ascii=False, separators=(",", ":")).encode()
+
+
+def top_keys(b: bytes):
+    """顶层键集合（只用于 HOST_DATA：看着同一套结构，取值可以不同）。"""
+    try:
+        obj = json.loads(b.decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    if isinstance(obj, dict):
+        return set(obj)
+    if isinstance(obj, list):
+        return {"<list>"}
+    return {type(obj).__name__}
 
 
 def first_diff(a: bytes, b: bytes) -> str:
@@ -870,6 +928,8 @@ def main() -> int:
 
         bad = 0
         jitter = 0
+        host_ok = 0
+        skipped = 0
         if args.suite:
             # 预热：`browse` 会给图片目录**首次生成缩略图**（写盘），那一刻的
             # `usage.free` 必然与下一次不同。这是首次使用的正常代价，不是契约差异；
@@ -892,12 +952,21 @@ def main() -> int:
             same_masked = same_status and mask(pb) == mask(rb)
             same_struct = same_status and args.struct and structural(pb) == structural(rb)
             detail = ""
+            if p in SKIP:
+                skipped += 1
+                print(f"{p:32s} {ps:5d} {rstatus:5d}  跳过（{SKIP[p]}）")
+                continue
             if exact:
                 flag = "一致"
             elif same_struct:
                 flag = "一致（仅活值不同）"
             elif same_masked:
                 flag = "一致（仅时间戳不同）"
+            elif p in HOST_DATA and top_keys(pb) is not None and top_keys(pb) == top_keys(rb):
+                # 结构一致、取值依赖宿主真实数据 —— 不算差异，但单独计数，
+                # 免得「一致 N 条」把它的存在感抹掉。
+                host_ok += 1
+                flag = "结构一致（取值依赖宿主数据）"
             else:
                 # 代理透明性的自证：同一端点连打两次 Python，它自己也会变吗？
                 # 会变 → 这属于采样/缓存抖动，不是转发引入的差异；
@@ -914,7 +983,9 @@ def main() -> int:
             if detail:
                 print(detail)
         print(
-            f"\n共 {len(paths)} 条：一致 {len(paths) - bad - jitter}，"
+            f"\n共 {len(paths)} 条：一致 {len(paths) - bad - jitter - skipped}，"
+            f"其中结构一致（取值依赖宿主数据）{host_ok}；"
+            f"跳过 {skipped}（页面/字段已有意演进）；"
             f"抖动 {jitter}（对照侧自己两次也不同，非迁移引入），实质差异 {bad}"
         )
         return 0 if bad == 0 else 1

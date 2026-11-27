@@ -1,0 +1,8 @@
+{
+  "name": "moshan-desktop",
+  "private": true,
+  "description": "墨山中台的桌面壳（Tauri）。前端是纯静态文件（frontend/），没有构建步骤 —— 这个文件只给 Tauri CLI 与 npm 一个锚点：`tauri android build` 的 gradle 脚本会调 npx，没有它会报 ENOENT package.json。",
+  "scripts": {
+    "tauri": "tauri"
+  }
+}

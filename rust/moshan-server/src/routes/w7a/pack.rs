@@ -13,7 +13,6 @@ use axum::http::{HeaderMap, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Map, Value};
-use std::ffi::CString;
 use std::path::{Path, PathBuf};
 
 const MANIFEST: &str = "plugin.json";
@@ -66,78 +65,39 @@ fn plugins_json(cfg: &Value) -> PathBuf {
 
 // ---------------------------------------------------------------- zip 读
 
-#[repr(C)]
-struct ZStream {
-    next_in: *const u8,
-    avail_in: u32,
-    total_in: u64,
-    next_out: *mut u8,
-    avail_out: u32,
-    total_out: u64,
-    msg: *const std::os::raw::c_char,
-    state: *mut std::os::raw::c_void,
-    zalloc: *const std::os::raw::c_void,
-    zfree: *const std::os::raw::c_void,
-    opaque: *mut std::os::raw::c_void,
-    data_type: i32,
-    adler: u64,
-    reserved: u64,
-}
-
-#[link(name = "z")]
-extern "C" {
-    fn inflateInit2_(
-        strm: *mut ZStream,
-        window_bits: i32,
-        version: *const std::os::raw::c_char,
-        stream_size: i32,
-    ) -> i32;
-    fn inflate(strm: *mut ZStream, flush: i32) -> i32;
-    fn inflateEnd(strm: *mut ZStream) -> i32;
-}
-
-const Z_OK: i32 = 0;
-const Z_STREAM_END: i32 = 1;
-const Z_FINISH: i32 = 4;
-
+// 解压 zip 里 method 8（deflate）的条目。
+//
+// **这里刻意不用 `#[link(name = "z")]`**：那是 macOS / Linux 的系统 zlib，
+// Windows 上没有名为 z 的库，链接阶段直接
+// `LNK1181: cannot open input file 'z.lib'` —— Windows 包就是因为这一行发不出去。
+//
+// 解压是确定性的（同一条 deflate 流只有一种展开结果），用 flate2 的纯 Rust 后端
+// 与系统 zlib 逐字节一致。只有**压缩**才需要锁死具体实现（见 `routes/u/zipw.rs`，
+// 那份限 `target_os = "macos"`，因为要和 Python 的 zlib 输出对齐）。
 fn inflate_raw(input: &[u8], expected: usize) -> Option<Vec<u8>> {
-    let version = CString::new("1.2.12").unwrap();
-    let mut z: ZStream = unsafe { std::mem::zeroed() };
-    let rc = unsafe {
-        inflateInit2_(
-            &mut z,
-            -15,
-            version.as_ptr(),
-            std::mem::size_of::<ZStream>() as i32,
-        )
-    };
-    if rc != Z_OK {
-        return None;
-    }
-    z.next_in = input.as_ptr();
-    z.avail_in = input.len() as u32;
+    use flate2::{Decompress, FlushDecompress, Status};
+
+    let mut d = Decompress::new(false); // false = raw deflate（windowBits -15）
     let mut out: Vec<u8> = Vec::with_capacity(expected.min(64 * 1024 * 1024));
     let mut buf = vec![0u8; 65536];
     loop {
-        z.next_out = buf.as_mut_ptr();
-        z.avail_out = buf.len() as u32;
-        let r = unsafe { inflate(&mut z, Z_FINISH) };
-        let produced = buf.len() - z.avail_out as usize;
-        out.extend_from_slice(&buf[..produced]);
-        if r == Z_STREAM_END {
-            break;
+        let (in0, out0) = (d.total_in(), d.total_out());
+        let rest = input.get(in0 as usize..).unwrap_or(&[]);
+        let st = d.decompress(rest, &mut buf, FlushDecompress::Finish).ok()?;
+        let produced = (d.total_out() - out0) as usize;
+        if produced > 0 {
+            out.extend_from_slice(&buf[..produced]);
         }
-        if r != Z_OK {
-            unsafe { inflateEnd(&mut z) };
-            return None;
-        }
-        if produced == 0 {
-            unsafe { inflateEnd(&mut z) };
-            return None;
+        match st {
+            Status::StreamEnd => return Some(out),
+            _ => {
+                // 一轮既没吃进输入也没产出 = 流截断或损坏，退出，别死循环。
+                if produced == 0 && d.total_in() == in0 {
+                    return None;
+                }
+            }
         }
     }
-    unsafe { inflateEnd(&mut z) };
-    Some(out)
 }
 
 struct ZipEntry {
