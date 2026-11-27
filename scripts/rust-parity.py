@@ -600,11 +600,20 @@ VOLATILE = {
 }
 
 
+def _volatile_key(k: str) -> bool:
+    """键名本身就是「时刻」的，一律算活值：`at` / `updated_at` / `scan_ts` …
+    这条规则比逐个列举可靠 —— 漏一个就会天天红，红了就没人看了。"""
+    return k in VOLATILE or k.endswith("_at") or k.endswith("_ts") or k.endswith("_ms")
+
+
 def _mask_volatile(obj):
     if isinstance(obj, dict):
         out = {}
         for k, v in obj.items():
-            out[k] = "<V>" if (k in VOLATILE and not isinstance(v, (dict, list))) else _mask_volatile(v)
+            if _volatile_key(k) and not isinstance(v, (dict, list)):
+                out[k] = "<V>"
+            else:
+                out[k] = _mask_volatile(v)
         return out
     if isinstance(obj, list):
         return [_mask_volatile(x) for x in obj]

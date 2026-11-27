@@ -85,6 +85,9 @@ w2 15 步、w3 27 步、w4 16 步、w4c 46 步、w5b 52 步全为 0；w4b 68 步
   流程与文案（真要替换，用原来的 Python 更新器或手动安装）。测试只覆盖失败分支。
 - **灰测 / 虫巢**：Python 主服务本就没挂这两套（`fleet.register()` 被注释、`gray` 无人 import），
   迁完后默认同样不挂，需要时用角色开关打开。
+- **`/api/llm` 的模型↔进程归属**：Python 会把「哪个进程加载了哪个模型」算进 `rss_gb`，
+  再按内存倒序；Rust 侧这项归属只在能读到进程表时才算得出，读不到就退化成按名字排序，
+  于是同分模型的先后可能不同。
 - **OCR 收尾**（`post_process` / `refetch_missing`）：只跑 `ocr.py --sweep`，
   `classified/summarized/img_fixed` 恒 0，其余字段与 Python 一致。
 - **平台**：只在本机 macOS 上实测过；Windows/Linux 分支按源码与文档实现，未在真机跑过。
