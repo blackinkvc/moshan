@@ -146,7 +146,23 @@ fn trash_by_url(ctx: &Ctx, url: &str, keep: &Path) -> Vec<String> {
 
 // ---------------------------------------------------------------- 后台任务
 
-fn do_job(ctx: Arc<Ctx>, jid: String, text: String, hint: String) {
+/// 微信入站才回推：网页端点「存」不该往手机推。
+///
+/// 每个终态都会把 `message` 写成一句人话，这里原样念回去 ——
+/// 「好一条回一条」就是这么来的。发不出去不影响任务本身。
+fn say_if(push: bool, jid: &str) {
+    if !push {
+        return;
+    }
+    if let Some(j) = jobs::links().get(jid) {
+        let m = py::s_of(j.get("message"));
+        if !m.is_empty() {
+            let _ = crate::wechat::send(&m);
+        }
+    }
+}
+
+fn do_job(ctx: Arc<Ctx>, jid: String, text: String, hint: String, push: bool) {
     let store = jobs::links();
     // `with self._sem:` 在 `_do` 之前：拿不到槽位就停在 queued
     let _slot = store.sem().acquire();
@@ -168,6 +184,7 @@ fn do_job(ctx: Arc<Ctx>, jid: String, text: String, hint: String) {
             ],
             jobs::LINK_TERMINAL,
         );
+        say_if(push, &jid);
         return;
     }
     let argv = vec![
@@ -189,6 +206,7 @@ fn do_job(ctx: Arc<Ctx>, jid: String, text: String, hint: String) {
             ],
             jobs::LINK_TERMINAL,
         );
+        say_if(push, &jid);
         return;
     };
     let data = parse_array(&out);
@@ -202,6 +220,7 @@ fn do_job(ctx: Arc<Ctx>, jid: String, text: String, hint: String) {
             &[("state", json!("error")), ("message", json!(py::trunc(&detail, 300)))],
             jobs::LINK_TERMINAL,
         );
+        say_if(push, &jid);
         return;
     }
     let r = &data[0];
@@ -227,6 +246,7 @@ fn do_job(ctx: Arc<Ctx>, jid: String, text: String, hint: String) {
             ],
             jobs::LINK_TERMINAL,
         );
+        say_if(push, &jid);
         return;
     }
     if !r.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
@@ -240,6 +260,7 @@ fn do_job(ctx: Arc<Ctx>, jid: String, text: String, hint: String) {
             ],
             jobs::LINK_TERMINAL,
         );
+        say_if(push, &jid);
         return;
     }
     let saved = r.get("saved").and_then(|v| v.as_array()).cloned().unwrap_or_default();
@@ -290,10 +311,12 @@ fn do_job(ctx: Arc<Ctx>, jid: String, text: String, hint: String) {
                 ],
                 jobs::LINK_TERMINAL,
             );
+            say_if(push, &jid);
             return;
         }
         if v.mode == "article" {
             promote(&ctx, &jid, &py::s_of(r.get("url")), &dir_name, &platform, &v.why);
+            say_if(push, &jid);
             return;
         }
     }
@@ -331,6 +354,7 @@ fn do_job(ctx: Arc<Ctx>, jid: String, text: String, hint: String) {
         ],
         jobs::LINK_TERMINAL,
     );
+    say_if(push, &jid);
 }
 
 fn parse_array(stdout: &str) -> Vec<Value> {
@@ -692,7 +716,10 @@ fn promote(ctx: &Ctx, jid: &str, url: &str, dir_name: &str, platform: &str, why:
 }
 
 /// `LinkBox.start`：返回任务快照（或 `{"error": ...}`）。
-pub fn start(ctx: &Arc<Ctx>, text: &str, hint: &str) -> Value {
+///
+/// `push` 决定抓完要不要把结果念回微信：`/api/link` 传 false（网页端点的不必打扰手机），
+/// `/api/intake` 传 true（微信来的每条都要有回音）。
+pub fn start(ctx: &Arc<Ctx>, text: &str, hint: &str, push: bool) -> Value {
     let store = jobs::links();
     let text: String = text.trim().chars().take(MAX_TEXT).collect();
     if text.is_empty() {
@@ -740,7 +767,7 @@ pub fn start(ctx: &Arc<Ctx>, text: &str, hint: &str) -> Value {
     let jid2 = jid.clone();
     let text2 = text.clone();
     let hint2 = hint.to_string();
-    std::thread::spawn(move || do_job(ctx2, jid2, text2, hint2));
+    std::thread::spawn(move || do_job(ctx2, jid2, text2, hint2, push));
     store.settle(&jid);
     store.get(&jid).map(Value::Object).unwrap_or_else(|| json!({"error": "任务创建失败"}))
 }
@@ -767,7 +794,7 @@ pub async fn create(
         let mut jobs_out: Vec<Value> = Vec::new();
         for u in urls {
             let hint2 = if hint.is_empty() { text.clone() } else { hint.clone() };
-            let j = start(&ctx, &u, &hint2);
+            let j = start(&ctx, &u, &hint2, false);
             // Python 是 `if not j.get("error")`：空串也算没有错
             if py::s_of(j.get("error")).is_empty()
                 && !j.get("dup").and_then(|v| v.as_bool()).unwrap_or(false)
@@ -782,7 +809,7 @@ pub async fn create(
         }
         return Json(json!({"multi": jobs_out.len(), "jobs": jobs_out})).into_response();
     }
-    let job = start(&ctx, &text, &hint);
+    let job = start(&ctx, &text, &hint, false);
     let err = py::s_of(job.get("error"));
     if !err.is_empty() {
         return http_err(400, &err);

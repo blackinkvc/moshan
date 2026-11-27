@@ -355,7 +355,7 @@ fn run_job(ctx: Arc<Ctx>, jid: String, text: String, hint: String) {
         let job = store.get(&jid).unwrap_or_default();
         let url = py::s_of(job.get("url"));
         if !url.is_empty() {
-            let _ = link::start(&ctx, &url, "存图");
+            let _ = link::start(&ctx, &url, "存图", false);
             store.set(
                 &jid,
                 &[

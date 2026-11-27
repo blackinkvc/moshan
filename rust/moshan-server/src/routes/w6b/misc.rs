@@ -11,8 +11,9 @@
 //     Python 逐字对齐；模型可用时的输出本身不做逐字节保证（模型不全确定）。
 //   · `/api/chat` 的「收件箱有什么」快问快答逐字对齐；真问模型时只走纯对话一轮，
 //     `/mcp` 的工具循环没有搬 —— 端点没工具时 Python 也只跑一轮，口径一致。
-//   · `/api/intake` 搬的是入站前半程（抽链接 / 判存图还是文章 / 回执文案）。
-//     抓取那半在 cuntu 子进程里，Rust 不接；因此带链接的响应当前只给 count + receipt。
+//   · `/api/intake` 搬的是入站前半程（抽链接 / 回执文案），抓取交给 w4c 的
+//     linkbox 移植版（`link::start`）——**这是本文件唯一一处跨泳道调用**：
+//     2026-11-27 之前这里只回执不抓取，微信发来的链接一条都没进库。
 
 use super::util::{self, collapse, cut, pystr, s_or, truthy};
 use crate::paths::Ctx;
@@ -878,7 +879,7 @@ fn cn_date(text: &str, today: chrono::NaiveDate) -> (String, String) {
         regex::Regex::new(r"(20\d{2})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})").unwrap()
     });
     let r2 = R2.get_or_init(|| regex::Regex::new(r"(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]").unwrap());
-    let r3 = R3.get_or_init(|| regex::Regex::new(r"(?<!\d)(\d{1,2})[/／](\d{1,2})(?!\d)").unwrap());
+    let r3 = R3.get_or_init(|| regex::Regex::new(r"(\d{1,2})[/／](\d{1,2})").unwrap());
     let r4 = R4.get_or_init(|| {
         regex::Regex::new(r"(下周|礼拜|周|星期)([一二三四五六日天])").unwrap()
     });
@@ -895,7 +896,8 @@ fn cn_date(text: &str, today: chrono::NaiveDate) -> (String, String) {
         let s = format!("{:04}-{:02}-{:02}", today.year(), m, d);
         return (ok_date(&json!(s)), c.get(0).map(|m| m.as_str()).unwrap_or("").to_string());
     }
-    if let Some(c) = r3.captures(text) {
+    // 取第一个「前后都不是数字」的命中：`120/7` 里的 `20/7` 不该被算成日期。
+    if let Some(c) = r3.captures_iter(text).find(|c| bounded(c, text)) {
         let m: u32 = c[1].parse().unwrap_or(0);
         let d: u32 = c[2].parse().unwrap_or(0);
         let s = format!("{:04}-{:02}-{:02}", today.year(), m, d);
@@ -1037,6 +1039,20 @@ fn ev_norm(d: &Value, today: chrono::NaiveDate) -> Value {
 }
 
 /// `_ev_rule(text, today)`：正则兜底，也是「硬字段」的裁判。
+/// `(?<!\d)…(?!\d)` 的替身。
+///
+/// `regex` crate **不支持前后瞻**，`Regex::new` 会返回 Err，`.unwrap()` 直接把线程打死；
+/// 表现为接口连接被掐断、curl 拿到空响应，日志里只有一行 panic。
+/// 这里把「边界判定」从正则挪到代码里：主体照常匹配，再看首尾字符。
+fn bounded<'a>(c: &regex::Captures<'a>, text: &str) -> bool {
+    let m = c.get(0).unwrap();
+    let before_ok = m.start() == 0
+        || !text[..m.start()].chars().next_back().map(|ch| ch.is_numeric()).unwrap_or(false);
+    let after_ok = m.end() == text.len()
+        || !text[m.end()..].chars().next().map(|ch| ch.is_numeric()).unwrap_or(false);
+    before_ok && after_ok
+}
+
 fn ev_rule(text: &str, today: chrono::NaiveDate) -> Value {
     let mut out = ev_norm(&json!({}), today);
     let (date, _) = cn_date(text, today);
@@ -1045,9 +1061,10 @@ fn ev_rule(text: &str, today: chrono::NaiveDate) -> Value {
     }
 
     static HMR: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let hm_re = HMR.get_or_init(|| regex::Regex::new(r"(?<!\d)(\d{1,2})[:：](\d{2})(?!\d)").unwrap());
+    let hm_re = HMR.get_or_init(|| regex::Regex::new(r"(\d{1,2})[:：](\d{2})").unwrap());
     let hms: Vec<(String, String)> = hm_re
         .captures_iter(text)
+        .filter(|c| bounded(c, text))
         .map(|c| (c[1].to_string(), c[2].to_string()))
         .collect();
     if !hms.is_empty() {
@@ -1495,16 +1512,49 @@ async fn intake_route(State(ctx): CtxState, headers: HeaderMap, uri: Uri, body: 
         cut(if v.is_empty() { &text } else { &v }, 300)
     };
     let _want = keyword_of(&_hint);
-    // 抓取在 cuntu 子进程里（Python 那条链），Rust 不接；这里只给入站回执。
-    // 形状照 Python：`{ok, batch, count, receipt}`。batch 是 `b{毫秒%1e9}`，
-    // 没有队列可查（`_watch` 那半没迁），但字段得在 —— 客户端按它去对账。
+    let hint_all = if _hint.is_empty() { text.clone() } else { _hint.clone() };
     let n = urls.len();
     let bid = format!("b{}", util::now_ms() % 1_000_000_000);
     crate::storage::log(&ctx, json!({"event": "intake", "n": n, "batch": bid}));
+
+    // 抓取这个动作以前根本没发生：只回一句「排上队了」，然后什么都不做
+    // （`_watch` 那半没迁过来，2026-11-27 用户一口气丢了 14 条链接）。
+    // 现在交给 w4c 的 linkbox 移植版：一条 url 一个后台任务，抓完由它念回微信。
+    let (mut live, mut dup, mut refused) = (0usize, 0usize, 0usize);
+    #[cfg(feature = "lane_w4c")]
+    for u in &urls {
+        let j = crate::routes::w4c::link::start(&ctx, u, &hint_all, true);
+        if !s_or(j.get("error").unwrap_or(&Value::Null)).is_empty() {
+            refused += 1;
+            continue;
+        }
+        if j.get("dup").and_then(|v| v.as_bool()).unwrap_or(false) {
+            dup += 1;
+        } else {
+            live += 1;
+            crate::storage::log(
+                &ctx,
+                json!({"event": "link_start", "id": j.get("id"),
+                       "head": cut(u.as_str(), 80), "url": u}),
+            );
+        }
+    }
+    #[cfg(not(feature = "lane_w4c"))]
+    {
+        // 单泳道编译（只开 w6b）时退化成原来的空壳，至少回执照旧。
+        live = n;
+        let _ = (&hint_all, &mut dup, &mut refused);
+    }
+    crate::storage::log(
+        &ctx,
+        json!({"event": "intake_queued", "live": live, "dup": dup,
+               "refused": refused, "batch": bid}),
+    );
+
     let mut o = Map::new();
     o.insert("ok".into(), json!(true));
     o.insert("batch".into(), json!(bid));
-    o.insert("count".into(), json!(n));
-    o.insert("receipt".into(), json!(receipt_text(n, 0, 0)));
+    o.insert("count".into(), json!(live));
+    o.insert("receipt".into(), json!(receipt_text(live, dup, 0)));
     Json(Value::Object(o)).into_response()
 }
