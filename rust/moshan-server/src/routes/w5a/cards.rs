@@ -315,6 +315,22 @@ fn auto_view_apps(ctx: &Ctx) -> Vec<Value> {
     out
 }
 
+/// 口袋自己监听的端口：`local_port`（回环明文）→ `plain_port` → `port` → 8325。
+///
+/// 三处服务表原本都写死 8321（Python 版口袋的口）。全 Rust 之后实际监听的
+/// 是 local_port（本机 8325 / LAN 8327），于是「服务方阵」「插件列表」永远
+/// 把口袋报成掉线（2026-11-28 用户看到的就是「巡检很多不对」）。
+pub fn pocket_port(ctx: &Ctx) -> i64 {
+    for k in ["local_port", "plain_port", "port"] {
+        if let Some(n) = ctx.cfg.get(k).and_then(|v| v.as_u64()) {
+            if n > 0 && n < 65536 {
+                return n as i64;
+            }
+        }
+    }
+    8325
+}
+
 /// `_all_specs()`：内置 + plugins.json（同 id 覆盖）+ 卡片自报。
 pub fn all_specs(ctx: &Ctx) -> Vec<Value> {
     let mut specs: Vec<Value> = BUILTIN_APPS
@@ -325,7 +341,8 @@ pub fn all_specs(ctx: &Ctx) -> Vec<Value> {
             m.insert("name".into(), json!(a.name));
             m.insert("scope".into(), json!(a.scope));
             m.insert("port".into(), match a.port { Some(p) => json!(p), None => Value::Null });
-            m.insert("svc_port".into(), match a.svc_port { Some(p) => json!(p), None => Value::Null });
+            let svc = if a.id == "pocket" { Some(pocket_port(ctx)) } else { a.svc_port };
+            m.insert("svc_port".into(), match svc { Some(p) => json!(p), None => Value::Null });
             if let Some(s) = a.svc_name {
                 m.insert("svc_name".into(), json!(s));
             }

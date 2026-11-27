@@ -334,6 +334,16 @@ fn auto_view_apps(ctx: &Ctx) -> Vec<Value> {
 /// `_all_specs`：plugins.json > BUILTIN_APPS > 卡片自报。
 fn all_specs(ctx: &Ctx) -> Vec<Value> {
     let mut specs: Vec<Value> = builtin_apps().clone();
+    // 口袋的 svc_port 在常量里写的是 8321（Python 版的口），全 Rust 之后实际监听
+    // local_port（本机 8325 / LAN 8327），不改就会被永远判「掉线」。
+    let pp = crate::routes::w5a::cards::pocket_port(ctx);
+    for b in specs.iter_mut() {
+        if b.get("id").and_then(|v| v.as_str()) == Some("pocket") {
+            if let Some(o) = b.as_object_mut() {
+                o.insert("svc_port".into(), json!(pp));
+            }
+        }
+    }
     for p in read_plugins(ctx) {
         let pid = p.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let mut merged = false;

@@ -3,7 +3,7 @@
 <head>
 <!-- 页面版本戳：服务端拿它跟包里那份比，旧了会自动备份并换新。
      改这个文件时把日期往后挪一格，别原地不动，否则老机器收不到。 -->
-<meta name="moshan-page" content="2026-11-27b">
+<meta name="moshan-page" content="2026-11-28a">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
@@ -9643,7 +9643,9 @@ async function loadTasks(force) {
   ATK.loading = true;
   ATK.loadingAt = Date.now();
   try {
-    ATK.data = await api('/api/tasks?range=7d', { timeout: 20000 });
+    // range=all：以前写死 7d，于是「母任务」「任务清单」最多只回溯一周 ——
+    // 用户要的是「不止看到今天」。全量也只有 200 多 KB，跟整页 60 秒刷新一个量级。
+    ATK.data = await api('/api/tasks?range=all', { timeout: 20000 });
     if (ATK.data && ATK.data.ok === false) throw new Error(ATK.data.error || '接口报错');
     ATK.err = '';
   } catch (e) {
@@ -13445,22 +13447,28 @@ function renderAgt() {
   const box = $('agtBody');
   if (!box) return;
   if (!hsNeed(box, 'agtStat')) return;
+  // 以前这里把 tok=0 且 secs=0 的 agent 整条滤掉、再 slice(0,6)，于是
+  // 「分 agent」只剩两三个（TRAE 有 259 条提示词但本地不记 token，一直被隐藏）。
+  // 现在：有记录（prompts/secs/tok 任一 > 0）就列，'.hs-rows' 自己滚。
   const list = ((HS.data || {}).agents || [])
-    .filter(x => (Number(x.tok) || 0) > 0 || (Number(x.secs) || 0) > 0)
-    .slice().sort((a, b) => (Number(b.tok) || 0) - (Number(a.tok) || 0));
+    .filter(x => (Number(x.tok) || 0) > 0 || (Number(x.secs) || 0) > 0 || (Number(x.prompts) || 0) > 0)
+    .slice().sort((a, b) => (Number(b.tok) || 0) - (Number(a.tok) || 0)
+      || (Number(b.prompts) || 0) - (Number(a.prompts) || 0));
   if (!list.length) {
     $('agtStat').textContent = '—';
     box.innerHTML = '<div class="hr-empty"><span>还没有 agent 记录</span></div>';
     return;
   }
   const max = Math.max.apply(null, list.map(x => Number(x.tok) || 0).concat([1]));
-  const rows = list.slice(0, 6).map(x => {
+  const rows = list.map(x => {
     const tok = Number(x.tok) || 0;
+    const tokTxt = tok ? hwTokN(tok) : '—';
     return '<div class="hs-row" title="' + esc(x.name + ' · ' + x.prompts + ' 条 · '
-      + hsHm(x.secs) + ' · ' + hwTokN(tok) + ' token') + '">'
+      + (Number(x.secs) ? hsHm(x.secs) : '无耗时账') + ' · ' + (tok ? hwTokN(tok) + ' token' : '本地没记 token'))
+      + '">'
       + '<span class="nm">' + esc(x.name) + '</span>'
       + '<span class="bb"><i style="width:' + (tok / max * 100).toFixed(1) + '%"></i></span>'
-      + '<span class="vv">' + esc(hsHM(x.secs) + ' · ' + hwTokN(tok)) + '</span></div>';
+      + '<span class="vv">' + esc((Number(x.secs) ? hsHM(x.secs) : '—') + ' · ' + tokTxt) + '</span></div>';
   }).join('');
   const sumP = list.reduce((s, x) => s + (Number(x.prompts) || 0), 0);
   box.innerHTML = '<div class="hs-top"><span class="n">' + list.length + '<em>个 agent</em></span>'
