@@ -124,13 +124,13 @@ pub fn read_flow(ctx: &Ctx) -> Value {
 
     let mut days: Vec<Value> = Vec::new();
     if key.is_some() {
-        // Python 只在 `流水/_build.py` 存在时才解析底稿；没有它就回退 流水.json。
-        // 这里同口径：没有 builder 脚本就当底稿读不出来（否则会把一份
-        // Python 根本没采用的 md 当真源，字段立刻分叉）。
-        if flow_dir(ctx).join("_build.py").exists() {
-            if let Ok(text) = std::fs::read_to_string(&src) {
-                days = parse_md(&text, &flow_path(ctx));
-            }
+        // 底稿 md 就是真源：它在就解析它。
+        // （以前这里要求 `流水/_build.py` 存在才解析 —— 那是 Python 时代的开关。
+        //   builder 现在没人跑了，拿一个死脚本的存在与否决定运行时行为，
+        //   等于把真源锁死在最后一次 build 出来的 json 上：卡片上的月份条
+        //   会停在旧数字，点进去却看到现场解析的 md，两处永远对不上。）
+        if let Ok(text) = std::fs::read_to_string(&src) {
+            days = parse_md(&text, &flow_path(ctx));
         }
     }
     let note;
@@ -662,6 +662,192 @@ pub fn flow_add(ctx: &Ctx, text: &str, day: &str) -> Value {
 }
 
 // ---------------------------------------------------------------- md 解析
+//
+// 规则照抄 `09-个人工作台/流水/_build.py` 的 parse_lines —— 底稿是手写的，
+// 同一份文件里混着三种写法（早期 `## 0427` + `1. xxx`、中期 `## 0511周一`、
+// 现在 `## 2026-11-16-周一`），任何一条不认就会把整天内容丢进「无日期小节」，
+// 于是卡片上切月没反应、日期也不成序（真出现过：11 月 21 天全空、47 个无日期块）。
+
+/// 中文月份 → 数字。`# 四月` 这种一级标题只提供「当前在第几月」，不含年份。
+fn cn_month(s: &str) -> Option<u32> {
+    Some(match s {
+        "一" => 1,
+        "二" => 2,
+        "三" => 3,
+        "四" => 4,
+        "五" => 5,
+        "六" => 6,
+        "七" => 7,
+        "八" => 8,
+        "九" => 9,
+        "十" => 10,
+        "十一" => 11,
+        "十二" => 12,
+        _ => return None,
+    })
+}
+
+/// 缩进宽度：Tab 当 4 个空格（与 `_build.py` 的 `indent.replace("\t","    ")` 一致）。
+/// 返回 (列宽, 去掉缩进后的正文)。
+fn split_indent(line: &str) -> (usize, &str) {
+    let mut col = 0usize;
+    let mut idx = 0usize;
+    for (i, c) in line.char_indices() {
+        match c {
+            ' ' => col += 1,
+            '\t' => col += 4,
+            _ => break,
+        }
+        idx = i + c.len_utf8();
+    }
+    (col, &line[idx..])
+}
+
+/// `[x] 正文`（有序列表和圆点列表后面都可能挂一个勾）
+fn leading_box(s: &str) -> Option<(bool, &str)> {
+    let b = s.trim_start().strip_prefix('[')?;
+    let mut ch = b.chars();
+    let mark = ch.next()?;
+    let done = match mark {
+        'x' | 'X' => true,
+        ' ' => false,
+        _ => return None,
+    };
+    let rest = b[mark.len_utf8()..].strip_prefix(']')?;
+    Some((done, rest.trim_start()))
+}
+
+/// `- [x] 正文` / `* [ ] 正文`：返回 (是否已完成, 正文)。
+fn item_box(body: &str) -> Option<(bool, &str)> {
+    let b = body.strip_prefix("- ").or_else(|| body.strip_prefix("* "))?;
+    leading_box(b)
+}
+
+/// `1. 正文` / `1、正文`：返回正文（后面可能还挂 `[x]`）。
+fn item_num(body: &str) -> Option<&str> {
+    let end = body
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(body.len());
+    if end == 0 {
+        return None;
+    }
+    let rest = &body[end..];
+    let rest = rest.strip_prefix('.').or_else(|| rest.strip_prefix('、'))?;
+    Some(rest.trim_start())
+}
+
+/// `- 正文` / `* 正文`
+fn item_bullet(body: &str) -> Option<&str> {
+    body.strip_prefix("- ")
+        .or_else(|| body.strip_prefix("* "))
+        .map(str::trim_start)
+}
+
+/// `_flow_clip`：分组名太泛的只在短标题上认（「咨询」写进一句长话里不是分类）。
+const NARROW_CAT: &[&str] = &["咨询", "服饰", "服装", "机车", "FA", "fa"];
+
+/// 板块：命中即归这一类，先具体后宽泛。
+const CATS: &[(&str, &[&str])] = &[
+    ("墨禽", &["墨禽", "咨询", "FA", "fa"]),
+    ("墨一", &["墨一"]),
+    ("墨襄", &["墨襄", "服饰", "服装"]),
+    ("炽奔", &["炽奔", "机车"]),
+    ("墨鱼", &["墨鱼"]),
+    ("墨跖", &["墨跖"]),
+    ("行程", &["行程"]),
+    ("装修", &["装修"]),
+];
+
+/// 顶层单写一条时（如 `3. 红驼`）靠项目名反推所属板块：只在前一条无法继承时才用。
+const PROJECTS: &[(&str, &[&str])] = &[
+    (
+        "墨禽",
+        &[
+            "红驼", "威华", "晶澜", "海越", "驭风拓界", "中木", "超力", "瑞诵", "江门健雅",
+            "金雨滴", "桐乡", "崇福镇", "天境生物", "百雀", "增程",
+        ],
+    ),
+    ("墨一", &["磐德", "磐徳", "万银"]),
+    ("炽奔", &["军刀", "小象"]),
+];
+
+fn categorise(text: &str, inherit: &str, level: usize) -> String {
+    let head = text.trim();
+    for (name, keys) in CATS {
+        for k in *keys {
+            if head.contains(k) {
+                if NARROW_CAT.contains(k) && head.chars().count() > 12 {
+                    continue;
+                }
+                return (*name).to_string();
+            }
+        }
+    }
+    if level == 0 && inherit == "其他" {
+        for (name, keys) in PROJECTS {
+            if keys.iter().any(|k| head.contains(k)) {
+                return (*name).to_string();
+            }
+        }
+    }
+    inherit.to_string()
+}
+
+/// `clean`：摘掉 ✅完成日期 / 🆔块号 / ~~删除线~~ / @提及，只留正文。
+fn clean(text: &str) -> (String, Option<String>, Option<String>) {
+    let mut s = text.to_string();
+    let mut done_at: Option<String> = None;
+    let mut block: Option<String> = None;
+
+    if let Some(pos) = s.find('✅') {
+        let after = s[pos + '✅'.len_utf8()..].trim_start();
+        let cand: String = after.chars().take(10).collect();
+        let is_date = cand.len() == 10
+            && cand.chars().filter(|c| *c == '-').count() == 2
+            && cand.chars().all(|c| c.is_ascii_digit() || c == '-');
+        if is_date {
+            done_at = Some(cand.clone());
+            let tail = &after[cand.len()..];
+            s = format!("{}{}", &s[..pos], tail);
+        }
+    }
+    if let Some(pos) = s.find('🆔') {
+        let after = s[pos + '🆔'.len_utf8()..].trim().to_string();
+        if !after.is_empty() {
+            block = Some(after);
+        }
+        s.truncate(pos);
+    }
+
+    s = s.replace("~~", "");
+    // `@反重力猫头鹰⏰2026-11-20` 这类提醒尾巴：整段（含前面空格）去掉
+    const TAG: &str = "@反重力猫头鹰⏰";
+    while let Some(pos) = s.find(TAG) {
+        let mut start = pos;
+        while start > 0 {
+            let c = s[..start].chars().next_back().unwrap_or(' ');
+            if c.is_whitespace() {
+                start -= c.len_utf8();
+            } else {
+                break;
+            }
+        }
+        let mut end = pos + TAG.len();
+        for (i, c) in s[end..].char_indices() {
+            if c.is_whitespace() {
+                break;
+            }
+            end = pos + TAG.len() + i + c.len_utf8();
+        }
+        s = format!("{}{}", &s[..start], &s[end..]);
+    }
+
+    let t = s
+        .trim()
+        .trim_matches(|c: char| " ，,、".contains(c))
+        .to_string();
+    (t, done_at, block)
+}
 
 fn parse_md(text: &str, json_path: &Path) -> Vec<Value> {
     // json 里同（日期, 文本）的 id 优先复用 —— _build.py 写 json 用的就是那种 id
@@ -680,7 +866,9 @@ fn parse_md(text: &str, json_path: &Path) -> Vec<Value> {
 
     let mut days: Vec<Value> = Vec::new();
     let mut cur: Option<Value> = None;
-    let mut year: Option<i32> = None;
+    let mut month_no: u32 = 0;      // `# 十一月` 给的下文月份，MMDD 靠它推年份
+    let mut stack: Vec<usize> = Vec::new();   // 缩进栈，决定 level
+    let mut day_cat = String::from("其他");    // 当天继承的分类
     let mut seq: usize = 0;
 
     let push_cur = |days: &mut Vec<Value>, cur: &mut Option<Value>| {
@@ -691,107 +879,207 @@ fn parse_md(text: &str, json_path: &Path) -> Vec<Value> {
 
     for raw in text.split('\n') {
         let line = raw.trim_end();
-        if let Some(rest) = line.strip_prefix("## ") {
-            push_cur(&mut days, &mut cur);
-            seq = 0;
-            let body = rest.trim();
-            // 日期头：2026-09-01 / 09-01 / 2026-9-1（后面可能跟「周X」或标题）
-            let head_len = body
-                .chars()
-                .take_while(|c| c.is_ascii_digit() || *c == '-')
-                .count();
-            let token: String = body.chars().take(head_len).collect();
-            let parts: Vec<&str> = token.split('-').filter(|s| !s.is_empty()).collect();
-            let parsed: Option<String> = match parts.len() {
-                3 => {
-                    let date = format!(
-                        "{}-{:0>2}-{:0>2}",
-                        parts[0],
-                        parts[1].parse::<u32>().unwrap_or(0),
-                        parts[2].parse::<u32>().unwrap_or(0)
-                    );
-                    parse_day(&date).map(|_| date)
+        if line.trim().is_empty() {
+            continue;
+        }
+        // 一级标题：`# 四月` 只提供月份上下文，`# 重要待办事项` 才另起一个无日期块
+        if line.starts_with("# ") && !line.starts_with("## ") {
+            let name = line[2..].trim();
+            if let Some(m) = name.strip_suffix('月') {
+                if let Some(n) = cn_month(m) {
+                    month_no = n;
+                } else if let Ok(n) = m.parse::<u32>() {
+                    month_no = n;
                 }
-                2 => {
-                    let m: u32 = parts[0].parse().unwrap_or(0);
-                    let d: u32 = parts[1].parse().unwrap_or(0);
-                    let y = year.unwrap_or_else(|| chrono::Datelike::year(&chrono::Local::now()));
-                    chrono::NaiveDate::from_ymd_opt(y, m, d)
-                        .map(|dd| dd.format("%Y-%m-%d").to_string())
-                }
-                _ => None,
-            };
-            match parsed {
-                Some(date) => {
-                    year = date
-                        .get(0..4)
-                        .and_then(|s| s.parse::<i32>().ok())
-                        .or(year);
-                    cur = Some(json!({
-                        "date": date,
-                        "month": clip(&date, 7),
-                        "items": [],
-                    }));
-                }
-                None => {
-                    // 无日期小节（AI项目 / 重要待办）：只留标题和条目
-                    cur = Some(json!({ "title": body.to_string(), "items": [] }));
-                }
+            }
+            if name.contains("待办") {
+                push_cur(&mut days, &mut cur);
+                cur = Some(json!({ "title": name.to_string(), "items": [] }));
+                stack.clear();
+                day_cat = "其他".to_string();
+                seq = 0;
             }
             continue;
         }
-        if line.starts_with("# ") {
+        if let Some(rest) = line.strip_prefix("## ") {
             push_cur(&mut days, &mut cur);
+            let title = rest.trim();
+            cur = Some(match head_date(title, month_no) {
+                Some(date) => json!({
+                    "date": date,
+                    "month": clip(&date, 7),
+                    "title": title.to_string(),
+                    "items": [],
+                }),
+                // 无日期小节（AI项目 / 重要待办）：单独成块，前端排在日历之后
+                None => json!({ "title": title.to_string(), "items": [] }),
+            });
+            stack.clear();
+            day_cat = "其他".to_string();
+            seq = 0;
             continue;
         }
         let Some(day) = cur.as_mut() else { continue };
-        let indent = line.chars().take_while(|c| *c == ' ').count();
-        let body = &line[indent..];
-        let (box_, rest) = if let Some(r) = body.strip_prefix("- [x] ") {
-            (Some(true), r)
-        } else if let Some(r) = body.strip_prefix("- [X] ") {
-            (Some(true), r)
-        } else if let Some(r) = body.strip_prefix("- [ ] ") {
-            (Some(false), r)
-        } else if let Some(r) = body.strip_prefix("- ") {
-            (None, r)
-        } else if let Some(r) = body.strip_prefix("- [x]") {
-            (Some(true), r)
-        } else {
-            continue;
-        };
-        let rest = rest.trim().to_string();
-        if rest.is_empty() || rest == "（无记录）" {
-            continue;
-        }
-        // 尾部 `分类`
-        let mut text = rest.clone();
-        let mut cat = String::new();
-        if let Some(pos) = rest.rfind("`") {
-            if rest[..pos].ends_with("  ") {
-                cat = rest[pos + 1..].trim_end_matches('`').trim().to_string();
-                text = rest[..pos].trim_end().to_string();
+
+        let (indent, body) = split_indent(line);
+        let mut done: Option<bool> = None;
+        let mut raw_text: Option<String> = None;
+        if let Some((d, r)) = item_box(body) {
+            done = Some(d);
+            raw_text = Some(r.to_string());
+        } else if let Some(r) = item_num(body) {
+            // `1. 行程：…` / `1. [x] …` —— 底稿 8 月之后全是这种有序列表
+            match leading_box(r) {
+                Some((d, x)) => {
+                    done = Some(d);
+                    raw_text = Some(x.to_string());
+                }
+                None => raw_text = Some(r.to_string()),
+            }
+        } else if let Some(r) = item_bullet(body) {
+            match leading_box(r) {
+                Some((d, x)) => {
+                    done = Some(d);
+                    raw_text = Some(x.to_string());
+                }
+                None => raw_text = Some(r.to_string()),
             }
         }
-        let level = indent / 2;
-        let date = str_or(day.get("date"));
+
+        if raw_text.is_none() {
+            // 纯文本段落：接到上一条后面（底稿里长句常被手动折行）
+            let seg = line.trim().to_string();
+            let mut appended = false;
+            if let Some(items) = day.get_mut("items").and_then(|v| v.as_array_mut()) {
+                if let Some(last) = items.last_mut() {
+                    let prev = str_or(last.get("text"));
+                    if let Value::Object(m) = last {
+                        let joined = format!("{prev} {seg}");
+                        m.insert("text".into(), json!(joined.trim()));
+                    }
+                    appended = true;
+                }
+            }
+            if appended {
+                continue;
+            }
+            raw_text = Some(seg);
+        }
+
+        let (mut text, done_at, block) = clean(&raw_text.unwrap_or_default());
+        // 按月镜像的写法是 `正文  \`分类\``；底稿没有，但读回来要认
+        let mut cat_hint = String::new();
+        if let Some(pos) = text.rfind('`') {
+            if text[..pos].ends_with("  ") {
+                cat_hint = text[pos + 1..].trim_end_matches('`').trim().to_string();
+                text = text[..pos].trim_end().to_string();
+            }
+        }
+        if text.is_empty() || text == "（无记录）" {
+            continue;
+        }
+
+        // level 来自缩进栈：只有比前一行更深才算下一层，不是「缩进 ÷ 2」
+        while stack.last().map(|t| indent <= *t).unwrap_or(false) {
+            stack.pop();
+        }
+        let level = stack.len();
+        stack.push(indent);
+
+        let cat = if cat_hint.is_empty() {
+            categorise(&text, &day_cat, level)
+        } else {
+            cat_hint
+        };
+        if level == 0 {
+            day_cat = cat.clone();
+        }
+
         seq += 1;
-        let mut id = id_of.get(&mark_key(&date, &text)).cloned().unwrap_or_default();
+        let date = str_or(day.get("date"));
+        let mut id = id_of
+            .get(&mark_key(&date, &text))
+            .cloned()
+            .unwrap_or_default();
         if id.is_empty() {
-            id = format!("{}-{}", date.replace('-', ""), seq);
+            // `_build.py` 的写法：20260427-001
+            id = format!("{}-{:03}", date.replace('-', ""), seq);
         }
         let mut item = Map::new();
         item.insert("id".into(), json!(id));
         item.insert("text".into(), json!(text));
-        item.insert("done".into(), box_.map(Value::Bool).unwrap_or(Value::Null));
+        item.insert(
+            "done".into(),
+            done.map(Value::Bool).unwrap_or(Value::Null),
+        );
         item.insert("level".into(), json!(level));
         item.insert("cat".into(), json!(cat));
+        if let Some(v) = done_at {
+            item.insert("done_at".into(), json!(v));
+        }
+        if let Some(v) = block {
+            item.insert("block".into(), json!(v));
+        }
         if let Some(items) = day.get_mut("items").and_then(|v| v.as_array_mut()) {
             items.push(Value::Object(item));
         }
     }
     push_cur(&mut days, &mut cur);
     days
+}
+
+/// `_build.py:parse_date` —— 标题 → `YYYY-MM-DD`。
+/// 认 `2026-11-16-周一`、`0427`、`0511周一`、`0622 周一`、`11-16`。
+fn head_date(title: &str, cur_month: u32) -> Option<String> {
+    let head: String = title
+        .trim()
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '-')
+        .collect();
+    if head.is_empty() {
+        return None;
+    }
+    let parts: Vec<&str> = head.split('-').filter(|s| !s.is_empty()).collect();
+    let now = chrono::Datelike::year(&chrono::Local::now());
+    let fmt = |y: i32, m: u32, d: u32| {
+        chrono::NaiveDate::from_ymd_opt(y, m, d).map(|x| x.format("%Y-%m-%d").to_string())
+    };
+    match parts.len() {
+        3 => fmt(
+            parts[0].parse().ok()?,
+            parts[1].parse().ok()?,
+            parts[2].parse().ok()?,
+        ),
+        // MMDD / MDD：`## 0427`、`## 0511周一`（周几直接粘在后面）
+        // 年份按「不早于当前段月份就是今年」推 —— 底稿是越写越新的流水账
+        1 => {
+            let t = parts[0];
+            let (ms, ds) = match t.len() {
+                4 => (&t[0..2], &t[2..4]),
+                3 => (&t[0..1], &t[1..3]),
+                _ => return None,
+            };
+            field_ymd(ms, ds, cur_month, now, &fmt)
+        }
+        2 => field_ymd(parts[0], parts[1], cur_month, now, &fmt),
+        _ => None,
+    }
+}
+
+fn field_ymd(
+    ms: &str,
+    ds: &str,
+    cur_month: u32,
+    now: i32,
+    fmt: &dyn Fn(i32, u32, u32) -> Option<String>,
+) -> Option<String> {
+    let m: u32 = ms.parse().ok()?;
+    let d: u32 = ds.parse().ok()?;
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    let y = if cur_month > 0 && m < cur_month { now + 1 } else { now };
+    fmt(y, m, d)
 }
 
 // ---------------------------------------------------------------- 路由

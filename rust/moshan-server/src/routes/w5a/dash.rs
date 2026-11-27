@@ -792,13 +792,15 @@ fn flow_counts(days: &[Value]) -> Map<String, Value> {
 fn flow_summary(ctx: &Ctx) -> Value {
     let root = root_of(ctx);
     let src = flow_src_path(&root);
-    // 手写 md 的解析在 09-个人工作台/流水/_build.py 里（一个 Python 脚本）。
-    // 这里只做 json 兜底：底稿解析不出来时 Python 走的也是这条路。
-    let d = load_obj(&flow_dir(&root).join("流水.json"));
-    let mut days: Vec<Value> = match d.get("days") {
-        Some(Value::Array(a)) => a.clone(),
-        _ => Vec::new(),
-    };
+    // 单一数据源：和 /api/flow 走同一个底稿解析器（w5b::flow::read_flow）。
+    // 以前这里读 `流水.json` —— 那是 `流水/_build.py` 的产物，全 Rust 之后没人
+    // 再跑它，本机就停在 11-19 那份（落后 9 天）。于是月份条的数字是旧的，
+    // 点进某个月却是现场解析的 md，两处对不上。
+    let mut days: Vec<Value> = crate::routes::w5b::flow::read_flow(ctx)
+        .get("days")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
     for day in days.iter_mut() {
         if let Value::Object(m) = day {
             if let Some(Value::Array(items)) = m.get_mut("items") {
