@@ -3,7 +3,7 @@
 <head>
 <!-- 页面版本戳：服务端拿它跟包里那份比，旧了会自动备份并换新。
      改这个文件时把日期往后挪一格，别原地不动，否则老机器收不到。 -->
-<meta name="moshan-page" content="2026-11-28a">
+<meta name="moshan-page" content="2026-11-28b">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
@@ -7522,6 +7522,12 @@ async function onSvcClick(e) {
   }
 
   if (s.up) {
+    // 点服务格子也默认留在中台里 —— 跟点插件胶囊落到同一个内嵌舞台，
+    // 只有反代不认的（网关、ollama、qdrant 这些没有网页界面 / 不在清单里的）才交给浏览器。
+    // href 是「/dash?v=ops」这种中台自己的页：直接切页，连反代都不用走。
+    if (s.href && s.href.charAt(0) === '/' && s.href.charAt(1) !== '/') { location.href = s.href; return; }
+    const b = (APPS.builtin || []).find(x => x.id === s.id && x.port);
+    if (b) { openEmbed(b.id, b.name || nm, s.href || b.url); return; }
     const url = s.href || (s.port ? 'http://127.0.0.1:' + s.port + '/' : '');
     if (url) window.open(url, '_blank', 'noopener');
     return;
@@ -19204,6 +19210,21 @@ function embedUrl(pid, raw) {
   return '/px/' + encodeURIComponent(pid) + path + '?' + params.toString();
 }
 
+/* 这条入口的页面其实是**另一个插件**代出的。
+   被「炼化」进来的桌面应用（Hindsight / Orca / Desktop-Overlay）自己没有端口：
+   port 是 null，url 指向炼化服务的 /a/<id>。拿它自己的 id 去反代是 /px/hindsight/…
+   —— 那个 pid 没有端口，反代只会回 404。正确的 pid 是 url 端口对应的那个插件。
+   2026-11-28：之前这里走 window.open，点开就是独立窗口，等于没炼化。 */
+function hostPid(raw) {
+  try {
+    const u = new URL(raw || '', location.origin);
+    if (!/^https?:$/.test(u.protocol)) return '';
+    const port = u.port || (u.protocol === 'https:' ? '443' : '80');
+    const hit = (APPS.builtin || []).find(x => x.port && String(x.port) === String(port) && x.id);
+    return hit ? hit.id : '';
+  } catch (e) { return ''; }
+}
+
 function embedStage() {
   let st = document.getElementById('embStage');
   if (st) return st;
@@ -19247,6 +19268,20 @@ function closeEmbed() {
   try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { }
 }
 
+/* 散落在卡片里的 `http://127.0.0.1:<插件端口>/…` 链接（空态那句「打开媒体墙 →」之类），
+   点了也默认留在中台里 —— 否则从工作台点出去就变成一个浏览器标签，回来又得重新找。
+   只认「本来就开新标签」且端口对得上插件清单的；外部站点、中台自己的相对路径、
+   舞台右上角那个「在浏览器里打开」都不拦。 */
+document.addEventListener('click', e => {
+  const el = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+  if (!el || el.target !== '_blank' || el.id === 'embOut') return;
+  const hp = hostPid(el.getAttribute('href'));
+  if (!hp) return;
+  const b = (APPS.builtin || []).find(x => x.id === hp);
+  e.preventDefault();
+  openEmbed(hp, (b && b.name) || hp, el.getAttribute('href'));
+}, true);
+
 /* 点一个插件：有端口的没开就先拉起，外部应用直接交给系统 open */
 async function launchEntry(id, isBuiltin) {
   const a = (isBuiltin ? APPS.builtin : APPS.custom).find(x => x.id === id);
@@ -19282,9 +19317,16 @@ async function launchEntry(id, isBuiltin) {
     return;
   }
   // 有端口的插件：在中台里铺一层打开（同源反代）。
-  // 只有跨机器（配了 host）的才交给浏览器 —— 那台机器上的服务本机反代不到。
+  // 跨机器（配了 host）的也走这条：反代是**服务端**去请求，host 由
+  // w6a::apps::plugin_host 自己读，本机浏览器不需要能直连那台机器。
+  // （原先写 `a.port && !a.host`，于是 taskboard 这种挂在别台机器上的插件
+  //   一点就被甩到浏览器，回来上下文全丢 —— 用户要的是默认都在中台里开。）
   if (isBuiltin && a.up) {
-    if (a.port && !a.host) { openEmbed(a.id, a.name, a.url); return; }
+    if (a.port) { openEmbed(a.id, a.name, a.url); return; }
+    // 没有端口、但页面由别的插件代出（炼化进来的桌面应用）：还是在中台里开。
+    const hp = hostPid(a.url);
+    if (hp) { openEmbed(hp, a.name, a.url); return; }
+    // 真的反代不到（既没端口也没代出的插件）：才交给浏览器。
     window.open(a.url || '/', '_blank', 'noopener'); return;
   }
 
@@ -19299,8 +19341,10 @@ async function launchEntry(id, isBuiltin) {
       toast(a.name + ' 正在扫盘，稍等再点');
     } else if (r.ok) {
       if (isBuiltin && r.url) {
-        if (a.host) window.open(r.url, '_blank', 'noopener');
-        else openEmbed(a.id, a.name, r.url);
+        // 刚拉起来的也一样留在中台里（跨机器、炼化应用都能反代）。
+        const pid = (a.port ? a.id : '') || hostPid(r.url);
+        if (pid) openEmbed(pid, a.name, r.url);
+        else window.open(r.url, '_blank', 'noopener');
       } else if (!isBuiltin) {
         toast('已打开 ' + a.name);
       }
