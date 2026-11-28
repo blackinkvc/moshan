@@ -3,12 +3,19 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [0.3.14] - 2026-11-28
 
-**修两件「Rust 版发不出去」的事：Windows 编译不过、macOS 包签名不完整 ——
-它们让 Tauri 线在 CI 里从没成功过，用户下载到的其实一直是 Python 打包的那条旧线。**
+**两件事：Rust 版终于能发出去了（Windows 编译不过、macOS 包签名不完整），
+以及机器刚起来那一分钟不再报「没读到这台机器」。**
 
 ### 修复
+- **开机头一分钟「花费与用量」直接报错**：`/api/overview` 冷启动要扫一遍会话流水，
+  实测 18.7 秒，而前端等 25 秒——更要紧的是**那个 8 秒超时从来没生效过**：
+  `api()` 内部用 `ctl.signal` 整个覆盖了调用方传进来的 `signal`，外面那层
+  `setTimeout(abort)` 永远不触发，实际超时恒为 25 秒，一旦扫描超过 25 秒就只剩一句
+  「没读到这台机器」。现在 `api()` 会把外部 signal 接进自己的控制器（不再静默覆盖），
+  读宿主资源改为显式 `timeout: 25000`；超时与网络类失败**再补一轮**（窗口 60 秒），
+  等待文案分三种：首次扫描中 / 读不到 / 正在读，不再把「还在扫」说成「没有」。
 - **Windows 包根本编译不过**：`hostwork/platform.rs` 用 `MetadataExt::file_index()`
   取 inode，而它至今仍是 nightly（feature `windows_by_handle`，issue #63010），
   stable 工具链直接 `error[E0658]`。改用 stable 的 `last_write_time()` 当伪 inode，
