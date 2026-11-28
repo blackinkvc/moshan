@@ -7,7 +7,15 @@ use serde_json::Value;
 use std::path::PathBuf;
 
 pub const APP_NAME: &str = "Moshan";
-pub const VERSION: &str = "0.3.13";
+/// 版本号从 Cargo 拿，不再手写。
+///
+/// 原来这里是字面量 `"0.3.13"`，而 `scripts/bump-version.sh` 只改 `VERSION` 与
+/// `moshan/version.py` —— 于是 Rust 版的 `/api/about` 与更新器一直报着上一个版本号。
+/// 后果是**更新器把自己当成旧版**：装好 0.3.14 仍读到「最新 0.3.14 > 当前 0.3.13」，
+/// 一直提示更新，点下去装的还是同一版。
+/// `Cargo.toml` 用的是 `version.workspace = true`，锚在 `rust/Cargo.toml` 的
+/// `workspace.package.version`，bump 脚本会改它，所以这里跟着走就不会再对不上。
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_REPO: &str = "blackinkvc/moshan";
 
 pub struct Ctx {
