@@ -74,6 +74,24 @@ for path, pat, rep in targets:
     io.open(path, "w", encoding="utf-8").write(s2)
 EOF
 
+# Cargo.lock 里本仓 crate 的 version 也记着旧号。不改 cargo 会自己刷新（构建没带
+# --locked），但本地一 build 工作区就脏，看着像改过代码 —— 顺手一起改掉。
+python3 - "${NEW}" <<'EOF'
+import io, re, sys
+new = sys.argv[1]
+for path, pkg in [("rust/Cargo.lock", "moshan-server"),
+                  ("src-tauri/Cargo.lock", "moshan-desktop")]:
+    try:
+        s = io.open(path, encoding="utf-8").read()
+    except FileNotFoundError:
+        continue
+    s2, n = re.subn(r'(name = "%s"\nversion = ")[^"]*(")' % re.escape(pkg),
+                    lambda m: m.group(1) + new + m.group(2), s, count=1)
+    if n != 1:
+        sys.exit("%s 里没找到 %s 的版本行" % (path, pkg))
+    io.open(path, "w", encoding="utf-8").write(s2)
+EOF
+
 # CHANGELOG，没有该版本段落就插一条
 TODAY=$(date +%F)
 if grep -q "^## \[${NEW}\]" CHANGELOG.md; then

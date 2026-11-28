@@ -336,14 +336,39 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      - name: 确认产物真的下来了
+        # 防的是「job 绿了但什么都没挂上」这种假成功：softprops 匹配不到文件时
+        # 只打提示、退出码仍 0。这里先数一遍，数量不对就直接红。
+        run: |
+          set -eu
+          echo "== 实际解出来的目录结构 =="
+          find artifacts -maxdepth 2 -type d | sort
+          echo "== 待附加的生产物 =="
+          find artifacts -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.deb' \
+            -o -name '*.AppImage' -o -name '*.apk' \) -printf '%10s  %p\n' | sort -k2
+          N=$(find artifacts -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.deb' \
+            -o -name '*.AppImage' -o -name '*.apk' \) | wc -l)
+          echo "共 ${N} 个"
+          if [ "${N}" -lt 3 ]; then
+            echo "::error::待附加产物只有 ${N} 个（至少该有 mac 的 dmg、windows 的 exe、linux 的 deb/AppImage）"
+            exit 1
+          fi
+
       - name: 附加资产
         uses: softprops/action-gh-release@v2
         with:
           # 复用 build.yml 已经建好的那个 Release，只追加资产。
           tag_name: ${{ github.ref_name }}
+          # **必须用 `**/` 递归**：upload-artifact 不是按文件名拍平的，它保留 glob
+          # 第一个通配符之前的公共前缀之后的结构 —— 上传的
+          # `.../bundle/dmg/*.dmg`、`.../bundle/nsis/*.exe` 解出来是
+          # `artifacts/dmg/…`、`artifacts/nsis/…`。原来写成 `artifacts/*.dmg`，
+          # 五个模式一个都没匹配上，而 action 只是打「🤔 Pattern does not match any
+          # files」的提示、**退出码仍是 0** —— job 显示绿色，Release 上一个 Rust 包
+          # 都没有，看着像「已经发了」。
           files: |
-            artifacts/*.dmg
-            artifacts/*.exe
-            artifacts/*.deb
-            artifacts/*.AppImage
-            artifacts/*.apk
+            artifacts/**/*.dmg
+            artifacts/**/*.exe
+            artifacts/**/*.deb
+            artifacts/**/*.AppImage
+            artifacts/**/*.apk
