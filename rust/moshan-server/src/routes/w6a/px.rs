@@ -165,7 +165,9 @@ async fn forward(
     // 页面上就是「图不出来、链接点了没反应」。相对路径不用管（同源后自动对）。
     let payload = if ctype.starts_with("text/html") {
         match std::str::from_utf8(&payload) {
-            Ok(s) => Bytes::from(rewrite_refs(s, &pid).into_bytes()),
+            // 顺序不能反：`rewrite_refs` 认 `="/`，而注入脚本里有 `==="/"`（含 `="/`），
+            // 先注入会被它改成 `="/px/…`，把 JS 弄坏。所以先改属性、最后注入。
+            Ok(s) => Bytes::from(inject_boot(&rewrite_refs(s, &pid), &pid).into_bytes()),
             Err(_) => payload,
         }
     } else {
@@ -245,3 +247,54 @@ fn rewrite_refs(text: &str, pid: &str) -> String {
     }
     out
 }
+
+/// 注入到插件页最前面的启动补丁：把 `fetch` 与 `XMLHttpRequest` 包一层，
+/// 凡是**以单个 `/` 开头**的请求都补上 `/px/<插件>` 前缀。
+///
+/// 为什么必须在运行时补，而不像 `rewrite_refs` 那样改文本：`fetch('/api/x')` 是
+/// JS 字符串，正则改容易把语法弄坏（模板串、`'\n'` 都可能被误伤）；而绝对路径的
+/// 语义是确定的 —— 同一个页面在插件自己的端口上 `/` 就是它的根，进了 iframe 却成了
+/// 中台的根，必须补前缀才对。
+///
+/// 真实后果（2026-11-28 用户报「虫巢思维一片 undefined」）：那页有 19 处
+/// `fetch('/api/fleet/…')`，嵌进来后全打到中台。中台没有 `/api/fleet/overview`，
+/// 回 404 `{"detail":"Not Found"}`；页面只判 401 不判 404，于是把这个对象当数据
+/// 渲染 —— 界面上就是「在线 undefined / 共 undefined 台」+「还没有任何设备上报」。
+fn inject_boot(text: &str, pid: &str) -> String {
+    let boot = BOOT_JS.replace("__PX__", &format!("/px/{pid}"));
+    // 插在 `<head>` 之后，保证早于页面自己的脚本；没有 head 就退到 `<html…>`、
+    // 再不行就 `<body…>`；连这些都没有（片段）就放最前面 —— 总之别让页面里
+    // 第一段脚本先跑起来。
+    for anchor in ["<head>", "<head ", "<html>", "<html ", "<body>", "<body "] {
+        if let Some(i) = text.find(anchor) {
+            if let Some(off) = text[i..].find('>') {
+                // 锚点标签本身留着，插在它的 `>` 之后
+                let at = i + off + 1;
+                let mut out = String::with_capacity(text.len() + boot.len());
+                out.push_str(&text[..at]);
+                out.push_str(&boot);
+                out.push_str(&text[at..]);
+                return out;
+            }
+        }
+    }
+    let mut out = String::with_capacity(text.len() + boot.len());
+    out.push_str(&boot);
+    out.push_str(text);
+    out
+}
+
+/// 注入脚本本体。用 `__PX__` 占位而不是 `format!`，省掉 JS 里成片的 `{{`。
+const BOOT_JS: &str = r##"<script>(function(){
+var P="__PX__";
+function fx(u){
+  if(typeof u!=="string")return u;
+  if(u.charAt(0)!=="/"||u.charAt(1)==="/")return u;
+  if(u===P||u.indexOf(P+"/")===0)return u;
+  return P+u;
+}
+var F=window.fetch;
+if(F)window.fetch=function(u,o){return F.call(this,fx(u),o)};
+var X=window.XMLHttpRequest&&window.XMLHttpRequest.prototype;
+if(X&&X.open){var o=X.open;X.open=function(m,u){var a=[].slice.call(arguments);a[1]=fx(u);return o.apply(this,a)}}
+})();</script>"##;
