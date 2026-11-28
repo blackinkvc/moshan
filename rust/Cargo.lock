@@ -849,7 +849,7 @@ dependencies = [
 
 [[package]]
 name = "moshan-server"
-version = "0.3.15"
+version = "0.3.16"
 dependencies = [
  "axum",
  "base64 0.22.1",

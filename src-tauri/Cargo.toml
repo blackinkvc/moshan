@@ -1,6 +1,6 @@
 [package]
 name = "moshan-desktop"
-version = "0.3.15"
+version = "0.3.16"
 description = "墨山中台桌面壳（Tauri）"
 authors = ["Moshan contributors"]
 license = "MIT OR Apache-2.0"
