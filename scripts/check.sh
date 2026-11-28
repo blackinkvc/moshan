@@ -153,10 +153,22 @@ V1=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' moshan/version.py | head -1)
 V2=$(head -1 VERSION 2>/dev/null | tr -d '[:space:]')
 V3=$(sed -n 's/.*"version": "\([^"]*\)".*/\1/p' src-tauri/tauri.conf.json 2>/dev/null | head -1)
 V4=$(sed -n 's/^version = "\([^"]*\)"/\1/p' src-tauri/Cargo.toml 2>/dev/null | head -1)
-if [ -n "$V1" ] && [ "$V1" = "$V2" ] && [ "$V1" = "$V3" ] && [ "$V1" = "$V4" ]; then
-  ok "version.py / VERSION / tauri.conf.json / Cargo.toml 一致：$V1"
+# 第五处：Rust 服务端的版本锚。`paths::VERSION` 经 `env!("CARGO_PKG_VERSION")` 取自
+# 这里，/api/about 和更新器报的都是它 —— 原来这处没人查，于是发出过「装的是新版、
+# 自称上一版」的包，更新器会一直提示更新。
+V5=$(sed -n 's/^version = "\([^"]*\)"/\1/p' rust/Cargo.toml 2>/dev/null | head -1)
+if [ -n "$V1" ] && [ "$V1" = "$V2" ] && [ "$V1" = "$V3" ] && [ "$V1" = "$V4" ] &&
+   { [ -z "$V5" ] || [ "$V1" = "$V5" ]; }; then
+  ok "version.py / VERSION / tauri.conf.json / Cargo.toml / rust 一致：$V1"
 else
-  bad "版本号不一致：version.py=$V1 / VERSION=$V2 / tauri.conf.json=$V3 / Cargo.toml=$V4"
+  bad "版本号不一致：version.py=$V1 / VERSION=$V2 / tauri.conf.json=$V3 / Cargo.toml=$V4 / rust/Cargo.toml=$V5"
+fi
+
+# Rust 侧别再写回字面量：字面量 bump 脚本改不到，装好新版仍自称旧版。
+if grep -qE '^pub const VERSION: &str = "[0-9]' rust/moshan-server/src/paths.rs 2>/dev/null; then
+  bad "paths.rs 的 VERSION 又写成字面量了，改回 env!(\"CARGO_PKG_VERSION\")"
+else
+  ok "Rust 侧版本号取自 CARGO_PKG_VERSION（没有手写的字面量）"
 fi
 
 say "== 7. 自述通道（任何 agent 都能报）=="

@@ -4,9 +4,14 @@
 # 用法：bash scripts/bump-version.sh 0.2.0
 #
 # 会改：
-#   VERSION              根目录的纯版本号文件（CI 与打包脚本读它）
-#   moshan/version.py    VERSION = "0.2.0"（程序运行时读它）
-#   CHANGELOG.md         插入 ## [0.2.0] - YYYY-MM-DD 段落（若尚不存在）
+#   VERSION                   根目录的纯版本号文件（CI 与打包脚本读它）
+#   moshan/version.py         VERSION = "0.2.0"（Python 线运行时读它）
+#   src-tauri/tauri.conf.json 桌面壳的 version（Tauri 用它命名安装包）
+#   src-tauri/Cargo.toml      桌面壳 crate 的 version
+#   rust/Cargo.toml           workspace.package.version —— Rust 服务端经
+#                             `env!("CARGO_PKG_VERSION")` 读它，/api/about 与
+#                             更新器报的版本就是这个，漏改=自称上一版
+#   CHANGELOG.md              插入 ## [0.2.0] - YYYY-MM-DD 段落（若尚不存在）
 #
 # 不会做：打 tag、提交。这两步由你确认内容后手动执行，避免误发版。
 set -eu
@@ -48,6 +53,45 @@ if n != 1:
 io.open(p, "w", encoding="utf-8").write(s2)
 EOF
 
+# Tauri 壳与 Rust 工作区。这三处原先只有 check.sh 会查，bump 脚本不管 ——
+# 每次发版都得手改，漏一次就是「Rust 版自称上一版」，更新器会一直提示更新。
+python3 - "${NEW}" <<'EOF'
+import io, re, sys
+new = sys.argv[1]
+targets = [
+    ("src-tauri/tauri.conf.json", r'"version"\s*:\s*"[^"]*"', '"version": "%s"' % new),
+    ("src-tauri/Cargo.toml", r'(?m)^version = "[^"]*"', 'version = "%s"' % new),
+    ("rust/Cargo.toml", r'(?m)^version = "[^"]*"', 'version = "%s"' % new),
+]
+for path, pat, rep in targets:
+    try:
+        s = io.open(path, encoding="utf-8").read()
+    except FileNotFoundError:
+        continue          # 只跑 Python 线时没有 src-tauri/rust，跳过即可
+    s2, n = re.subn(pat, rep, s, count=1)
+    if n != 1:
+        sys.exit("%s 里没找到版本号行" % path)
+    io.open(path, "w", encoding="utf-8").write(s2)
+EOF
+
+# Cargo.lock 里本仓 crate 的 version 也记着旧号。不改 cargo 会自己刷新（构建没带
+# --locked），但本地一 build 工作区就脏，看着像改过代码 —— 顺手一起改掉。
+python3 - "${NEW}" <<'EOF'
+import io, re, sys
+new = sys.argv[1]
+for path, pkg in [("rust/Cargo.lock", "moshan-server"),
+                  ("src-tauri/Cargo.lock", "moshan-desktop")]:
+    try:
+        s = io.open(path, encoding="utf-8").read()
+    except FileNotFoundError:
+        continue
+    s2, n = re.subn(r'(name = "%s"\nversion = ")[^"]*(")' % re.escape(pkg),
+                    lambda m: m.group(1) + new + m.group(2), s, count=1)
+    if n != 1:
+        sys.exit("%s 里没找到 %s 的版本行" % (path, pkg))
+    io.open(path, "w", encoding="utf-8").write(s2)
+EOF
+
 # CHANGELOG，没有该版本段落就插一条
 TODAY=$(date +%F)
 if grep -q "^## \[${NEW}\]" CHANGELOG.md; then
@@ -86,6 +130,9 @@ echo
 echo "==> 结果"
 echo "    VERSION:        $(cat VERSION)"
 echo "    version.py:     $(sed -n 's/^VERSION = "\(.*\)"/\1/p' moshan/version.py | head -1)"
+echo "    tauri.conf:     $(sed -n 's/.*"version": "\([^"]*\)".*/\1/p' src-tauri/tauri.conf.json 2>/dev/null | head -1)"
+echo "    cargo(壳):      $(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml 2>/dev/null | head -1)"
+echo "    cargo(服务端):  $(sed -n 's/^version = "\(.*\)"/\1/p' rust/Cargo.toml 2>/dev/null | head -1)"
 echo "    CHANGELOG:      $(grep -c "^## \[${NEW}\]" CHANGELOG.md) 处 ${NEW} 段落"
 echo
 echo "接着做：1) 补 CHANGELOG 内容  2) bash scripts/check.sh  3) 提交"

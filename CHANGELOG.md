@@ -3,6 +3,30 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.15] - 2026-11-28
+
+**两个「看着成功」的失败：0.3.14 的 Rust 包会自称 0.3.13（更新器于是永远提示更新），
+而 Tauri 的安装包其实一个都没挂上 Release —— job 是绿的，资产是空的。**
+
+### 修复
+- **Rust 版把版本号写死在源码里**：`paths::VERSION` 是字面量 `"0.3.13"`，而
+  `bump-version.sh` 只改 `VERSION` 与 `moshan/version.py`。`/api/about` 和更新器读的
+  都是 `paths::VERSION`，于是装好 0.3.14 后更新器读到「最新 0.3.14 > 当前 0.3.13」，
+  一直提示更新，点下去装的还是同一版。改为 `env!("CARGO_PKG_VERSION")` —— Cargo 走
+  `version.workspace = true`，锚在 `rust/Cargo.toml`，bump 脚本会改它，版本号从此一个源。
+- **Tauri 产物一个都没挂上 Release**：`upload-artifact` 不按文件名拍平，它保留 glob 第一个
+  通配符之前公共前缀之后的结构，于是解出来是 `artifacts/dmg/…`、`artifacts/nsis/…`。
+  attach 写的是 `artifacts/*.dmg`，只查一层，五个模式全不匹配 —— 而
+  `softprops/action-gh-release` 遇到空匹配**只打提示、退出码仍是 0**，job 显示绿色，
+  Release 上只有旧线那四个文件。改成 `artifacts/**/*` 递归，并加一步「先数一遍产物，
+  少于 3 个直接红」，下次再错会红在 CI 而不是红在用户桌面。
+
+### 工具
+- `bump-version.sh` 补上原先漏掉的三处版本号：`src-tauri/tauri.conf.json`、
+  `src-tauri/Cargo.toml`、`rust/Cargo.toml`，并在结果里逐项回显。
+- `check.sh` 第 6 节把 `rust/Cargo.toml` 纳入一致性比较，另加一条断言：
+  `paths.rs` 的 VERSION 若再写回字面量就报红。
+
 ## [0.3.14] - 2026-11-28
 
 **两件事：Rust 版终于能发出去了（Windows 编译不过、macOS 包签名不完整），
